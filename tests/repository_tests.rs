@@ -2,8 +2,10 @@
 use maowbot::{
     Database,
     models::{User, Platform, PlatformIdentity},
-    repositories::{Repository, UserRepository, PlatformIdentityRepository},
+    repositories::sqlite::{UserRepository, PlatformIdentityRepository},
+    repositories::Repository,
 };
+
 use chrono::Utc;
 use serde_json::json;
 use uuid::Uuid;
@@ -19,11 +21,11 @@ async fn test_user_repository() -> anyhow::Result<()> {
     let db = setup_test_db().await;
     let repo = UserRepository::new(db.pool().clone());
 
-    // Create test user
+    let now = Utc::now().naive_utc();
     let user = User {
         user_id: "test_user".to_string(),
-        created_at: Utc::now(),
-        last_seen: Utc::now(),
+        created_at: now,
+        last_seen: now,
         is_active: true,
     };
 
@@ -51,15 +53,30 @@ async fn test_user_repository() -> anyhow::Result<()> {
     Ok(())
 }
 
+
 #[tokio::test]
 async fn test_platform_identity_repository() -> anyhow::Result<()> {
     let db = setup_test_db().await;
     let repo = PlatformIdentityRepository::new(db.pool().clone());
 
-    // Create test platform identity
+    let now = Utc::now().naive_utc();
+
+    // First create the user
+    sqlx::query!(
+        r#"INSERT INTO users (user_id, created_at, last_seen, is_active)
+        VALUES (?, ?, ?, ?)"#,
+        "test_user",
+        now,
+        now,
+        true
+    )
+        .execute(db.pool())
+        .await?;
+
+    // Then create the platform identity
     let identity = PlatformIdentity {
         platform_identity_id: Uuid::new_v4().to_string(),
-        user_id: "test_user".to_string(),
+        user_id: "test_user".to_string(),  // Reference the user we just created
         platform: Platform::Twitch,
         platform_user_id: "twitch_123".to_string(),
         platform_username: "testuser".to_string(),
@@ -68,8 +85,8 @@ async fn test_platform_identity_repository() -> anyhow::Result<()> {
         platform_data: json!({
             "profile_image_url": "https://example.com/image.jpg"
         }),
-        created_at: Utc::now(),
-        last_updated: Utc::now(),
+        created_at: now,
+        last_updated: now,
     };
 
     // Test create

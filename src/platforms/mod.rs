@@ -1,7 +1,9 @@
 // src/platforms/mod.rs
 use async_trait::async_trait;
 use crate::Error;
+use mockall::automock;
 
+#[automock]  // Add this attribute
 #[async_trait]
 pub trait PlatformIntegration {
     async fn connect(&mut self) -> Result<(), Error>;

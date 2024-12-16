@@ -11,14 +11,19 @@ pub trait Repository<T> {
     async fn delete(&self, id: &str) -> Result<(), Error>;
 }
 
-pub trait PlatformIdentityRepository: Repository<PlatformIdentity> {
-    async fn get_by_platform(&self, platform: Platform, platform_user_id: &str)
-                             -> Result<Option<PlatformIdentity>, Error>;
-    async fn get_all_for_user(&self, user_id: &str)
-                              -> Result<Vec<PlatformIdentity>, Error>;
+#[async_trait]
+pub trait PlatformIdentityRepository {
+    fn get_by_platform(&self, platform: Platform, platform_user_id: &str)
+                       -> impl std::future::Future<Output = Result<Option<PlatformIdentity>, Error>> + Send;
+
+    fn get_all_for_user(&self, user_id: &str)
+                        -> impl std::future::Future<Output = Result<Vec<PlatformIdentity>, Error>> + Send;
 }
 
-pub mod user;
-mod platform_identity;
 
-pub use user::UserRepository;
+pub mod user;
+pub mod platform_identity;
+pub mod sqlite;
+
+// pub use user::*;
+// pub use platform_identity::*;
