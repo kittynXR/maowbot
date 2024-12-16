@@ -3,6 +3,7 @@ use sqlx::{Pool, Sqlite};
 use crate::Error;
 use crate::models::{PlatformIdentity, Platform};
 
+// Trait definitions
 #[async_trait]
 pub trait Repository<T> {
     async fn create(&self, item: &T) -> Result<(), Error>;
@@ -20,10 +21,5 @@ pub trait PlatformIdentityRepository {
                         -> impl std::future::Future<Output = Result<Vec<PlatformIdentity>, Error>> + Send;
 }
 
-
-pub mod user;
-pub mod platform_identity;
-pub mod sqlite;
-
-// pub use user::*;
-// pub use platform_identity::*;
+// Module declarations
+pub mod sqlite;  // Only need sqlite module here since implementations will be there

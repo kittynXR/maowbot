@@ -1,6 +1,8 @@
 // src/repositories/sqlite/user.rs
+
 use super::*;
 use crate::models::User;
+use crate::repositories::Repository;
 
 pub struct UserRepository {
     pool: Pool<Sqlite>

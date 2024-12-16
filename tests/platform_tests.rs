@@ -1,6 +1,6 @@
 // tests/platform_tests.rs
+
 use maowbot::{platforms::*, Error};
-use mockall::automock;
 use async_trait::async_trait;
 use maowbot::platforms::PlatformIntegration;
 

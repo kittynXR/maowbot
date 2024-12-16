@@ -1,6 +1,8 @@
 // src/repositories/sqlite/platform_identity.rs
+
 use super::*;
 use crate::models::{PlatformIdentity, Platform};
+use crate::repositories::Repository;
 
 pub struct PlatformIdentityRepository {
     pool: Pool<Sqlite>
