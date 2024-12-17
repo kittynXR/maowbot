@@ -1,6 +1,7 @@
+// src/repositories/mod.rs
 use async_trait::async_trait;
 use crate::Error;
-use crate::models::{PlatformIdentity, Platform};
+use crate::models::{Platform, PlatformIdentity, PlatformCredential};
 
 // Trait definitions
 #[async_trait]
@@ -20,5 +21,14 @@ pub trait PlatformIdentityRepository {
                         -> impl std::future::Future<Output = Result<Vec<PlatformIdentity>, Error>> + Send;
 }
 
+#[async_trait]
+pub trait CredentialsRepository {
+    async fn store_credentials(&self, creds: &PlatformCredential) -> Result<(), Error>;
+    async fn get_credentials(&self, platform: Platform, user_id: &str)
+                             -> Result<Option<PlatformCredential>, Error>;
+    async fn update_credentials(&self, creds: &PlatformCredential) -> Result<(), Error>;
+    async fn delete_credentials(&self, platform: Platform, user_id: &str) -> Result<(), Error>;
+}
+
 // Module declarations
-pub mod sqlite;  // Only need sqlite module here since implementations will be there
+pub mod sqlite;

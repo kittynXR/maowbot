@@ -1,3 +1,5 @@
+use std::fmt;
+use std::str::FromStr;
 use chrono::{NaiveDateTime};
 use serde::{Serialize, Deserialize};
 use serde_json::Value;
@@ -18,8 +20,8 @@ pub enum Platform {
     VRChat,
 }
 
-impl std::fmt::Display for Platform {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Display for Platform {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Platform::Twitch => write!(f, "twitch"),
             Platform::Discord => write!(f, "discord"),
@@ -28,7 +30,20 @@ impl std::fmt::Display for Platform {
     }
 }
 
-impl std::str::FromStr for Platform {
+impl fmt::Display for CredentialType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            CredentialType::OAuth2 => write!(f, "oauth2"),
+            CredentialType::APIKey => write!(f, "apikey"),
+            CredentialType::BearerToken => write!(f, "bearer"),
+            CredentialType::JWT => write!(f, "jwt"),
+            CredentialType::VerifiableCredential => write!(f, "vc"),
+            CredentialType::Custom(s) => write!(f, "custom:{}", s),
+        }
+    }
+}
+
+impl FromStr for Platform {
     type Err = String;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
@@ -37,6 +52,24 @@ impl std::str::FromStr for Platform {
             "discord" => Ok(Platform::Discord),
             "vrchat" => Ok(Platform::VRChat),
             _ => Err(format!("Unknown platform: {}", s)),
+        }
+    }
+}
+
+impl FromStr for CredentialType {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "oauth2" => Ok(CredentialType::OAuth2),
+            "apikey" => Ok(CredentialType::APIKey),
+            "bearer" => Ok(CredentialType::BearerToken),
+            "jwt" => Ok(CredentialType::JWT),
+            "vc" => Ok(CredentialType::VerifiableCredential),
+            s if s.starts_with("custom:") => {
+                Ok(CredentialType::Custom(s[7..].to_string()))
+            }
+            _ => Err(format!("Invalid credential type: {}", s))
         }
     }
 }
@@ -59,4 +92,28 @@ pub struct PlatformIdentity {
     pub platform_data: Value,
     pub created_at: NaiveDateTime,
     pub last_updated: NaiveDateTime,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub enum CredentialType {
+    OAuth2,
+    APIKey,
+    BearerToken,
+    JWT,
+    VerifiableCredential,
+    Custom(String),
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct PlatformCredential {
+    pub credential_id: String,
+    pub platform: Platform,
+    pub credential_type: CredentialType,
+    pub user_id: String,
+    pub primary_token: String,
+    pub refresh_token: Option<String>,
+    pub additional_data: Option<serde_json::Value>,
+    pub expires_at: Option<NaiveDateTime>,
+    pub created_at: NaiveDateTime,
+    pub updated_at: NaiveDateTime,
 }

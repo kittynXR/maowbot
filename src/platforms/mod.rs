@@ -1,17 +1,35 @@
 // src/platforms/mod.rs
+mod twitch;
+mod discord;
+
 use async_trait::async_trait;
 use crate::Error;
-use mockall::automock;
 
-#[automock]  // Add this attribute
+#[derive(Debug, Clone, PartialEq)]
+pub enum ConnectionStatus {
+    Connected,
+    Disconnected,
+    Reconnecting,
+    Error(String),
+}
+
+#[cfg_attr(test, mockall::automock)]
 #[async_trait]
-pub trait PlatformIntegration {
+pub trait PlatformAuth {
+    async fn authenticate(&mut self) -> Result<(), Error>;
+    async fn refresh_auth(&mut self) -> Result<(), Error>;
+    async fn revoke_auth(&mut self) -> Result<(), Error>;
+    async fn is_authenticated(&self) -> Result<bool, Error>;
+}
+
+#[async_trait]
+pub trait PlatformIntegration: PlatformAuth {
     async fn connect(&mut self) -> Result<(), Error>;
     async fn disconnect(&mut self) -> Result<(), Error>;
     async fn send_message(&self, channel: &str, message: &str) -> Result<(), Error>;
+    async fn get_connection_status(&self) -> Result<ConnectionStatus, Error>;
 }
 
-// Platform-specific traits
 #[async_trait]
 pub trait ChatPlatform: PlatformIntegration {
     async fn join_channel(&self, channel: &str) -> Result<(), Error>;

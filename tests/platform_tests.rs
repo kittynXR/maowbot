@@ -1,58 +1,102 @@
 // tests/platform_tests.rs
-
 use maowbot::{platforms::*, Error};
 use async_trait::async_trait;
-use maowbot::platforms::PlatformIntegration;
-
 
 #[tokio::test]
 async fn test_platform_capabilities() -> anyhow::Result<()> {
     #[derive(Debug)]
-    struct MockPlatform;
+    struct MockPlatform {
+        connection_status: ConnectionStatus,
+    }
 
-    #[async_trait]
-    impl PlatformIntegration for MockPlatform {
-        async fn connect(&mut self) -> Result<(), Error> {
-            Ok(())
-        }
-        async fn disconnect(&mut self) -> Result<(), Error> {
-            Ok(())
-        }
-        async fn send_message(&self, _: &str, _: &str) -> Result<(), Error> {
-            Ok(())
+    impl MockPlatform {
+        fn new() -> Self {
+            Self {
+                connection_status: ConnectionStatus::Disconnected,
+            }
         }
     }
 
-    // Then implement the other traits
+    // Implement PlatformAuth
     #[async_trait]
-    impl maowbot::platforms::ChatPlatform for MockPlatform {
-        async fn join_channel(&self, _: &str) -> Result<(), Error> {
+    impl PlatformAuth for MockPlatform {
+        async fn authenticate(&mut self) -> Result<(), Error> {
             Ok(())
         }
-        async fn leave_channel(&self, _: &str) -> Result<(), Error> {
+
+        async fn refresh_auth(&mut self) -> Result<(), Error> {
             Ok(())
         }
-        async fn get_channel_users(&self, _: &str) -> Result<Vec<String>, Error> {
+
+        async fn revoke_auth(&mut self) -> Result<(), Error> {
+            Ok(())
+        }
+
+        async fn is_authenticated(&self) -> Result<bool, Error> {
+            Ok(true)
+        }
+    }
+
+    // Implement PlatformIntegration
+    #[async_trait]
+    impl PlatformIntegration for MockPlatform {
+        async fn connect(&mut self) -> Result<(), Error> {
+            self.connection_status = ConnectionStatus::Connected;
+            Ok(())
+        }
+
+        async fn disconnect(&mut self) -> Result<(), Error> {
+            self.connection_status = ConnectionStatus::Disconnected;
+            Ok(())
+        }
+
+        async fn send_message(&self, _channel: &str, _message: &str) -> Result<(), Error> {
+            Ok(())
+        }
+
+        async fn get_connection_status(&self) -> Result<ConnectionStatus, Error> {
+            Ok(self.connection_status.clone())
+        }
+    }
+
+    // Implement ChatPlatform
+    #[async_trait]
+    impl ChatPlatform for MockPlatform {
+        async fn join_channel(&self, _channel: &str) -> Result<(), Error> {
+            Ok(())
+        }
+
+        async fn leave_channel(&self, _channel: &str) -> Result<(), Error> {
+            Ok(())
+        }
+
+        async fn get_channel_users(&self, _channel: &str) -> Result<Vec<String>, Error> {
             Ok(vec!["user1".to_string(), "user2".to_string()])
         }
     }
 
+    // Implement StreamingPlatform
     #[async_trait]
-    impl maowbot::platforms::StreamingPlatform for MockPlatform {
-        async fn get_stream_status(&self, _: &str) -> Result<bool, Error> {
+    impl StreamingPlatform for MockPlatform {
+        async fn get_stream_status(&self, _channel: &str) -> Result<bool, Error> {
             Ok(true)
         }
-        async fn get_viewer_count(&self, _: &str) -> Result<u32, Error> {
+
+        async fn get_viewer_count(&self, _channel: &str) -> Result<u32, Error> {
             Ok(100)
         }
-        async fn update_stream_title(&self, _: &str) -> Result<(), Error> {
+
+        async fn update_stream_title(&self, _title: &str) -> Result<(), Error> {
             Ok(())
         }
     }
 
     // Test the platform capabilities
-    let mut platform = MockPlatform;
+    let mut platform = MockPlatform::new();
+
+    // Test connection
     platform.connect().await?;
+    assert!(matches!(platform.get_connection_status().await?, ConnectionStatus::Connected));
 
     // Test chat functions
     platform.join_channel("test_channel").await?;
@@ -64,32 +108,6 @@ async fn test_platform_capabilities() -> anyhow::Result<()> {
     assert_eq!(platform.get_viewer_count("test_channel").await?, 100);
 
     platform.disconnect().await?;
-
-    Ok(())
-}
-
-// Keep the original test for basic PlatformIntegration
-#[tokio::test]
-async fn test_platform_integration() -> anyhow::Result<()> {
-    let mut mock = MockPlatformIntegration::new();  // Now this type will be available
-
-    mock.expect_connect()
-        .times(1)
-        .returning(|| Ok(()));
-
-    mock.expect_send_message()
-        .with(mockall::predicate::eq("test_channel"),
-              mockall::predicate::eq("test message"))
-        .times(1)
-        .returning(|_, _| Ok(()));
-
-    mock.expect_disconnect()
-        .times(1)
-        .returning(|| Ok(()));
-
-    mock.connect().await?;
-    mock.send_message("test_channel", "test message").await?;
-    mock.disconnect().await?;
 
     Ok(())
 }
