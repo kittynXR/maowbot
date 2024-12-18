@@ -60,8 +60,11 @@ impl CredentialsRepository for SqliteCredentialsRepository {
         Ok(())
     }
 
-    async fn get_credentials(&self, platform: Platform, user_id: &str)
-                             -> Result<Option<PlatformCredential>, Error> {
+    async fn get_credentials(
+        &self,
+        platform: &Platform,
+        user_id: &str
+    ) -> Result<Option<PlatformCredential>, Error> {
         let platform_str = platform.to_string();
 
         let record = sqlx::query!(
@@ -76,8 +79,6 @@ impl CredentialsRepository for SqliteCredentialsRepository {
         match record {
             Some(r) => {
                 let decrypted_token = self.encryptor.decrypt(&r.primary_token)?.to_string();
-                let credential_type = CredentialType::from_str(&r.credential_type)
-                    .map_err(Error::InvalidCredentialType)?;
 
                 let decrypted_refresh = if let Some(token_str) = &r.refresh_token {
                     Some(self.encryptor.decrypt(token_str)?.to_string())
@@ -94,8 +95,8 @@ impl CredentialsRepository for SqliteCredentialsRepository {
 
                 Ok(Some(PlatformCredential {
                     credential_id: r.credential_id,
-                    platform,
-                    credential_type,
+                    platform: platform.clone(),
+                    credential_type: r.credential_type.parse()?,
                     user_id: r.user_id,
                     primary_token: decrypted_token,
                     refresh_token: decrypted_refresh,
@@ -143,15 +144,19 @@ impl CredentialsRepository for SqliteCredentialsRepository {
         Ok(())
     }
 
-    async fn delete_credentials(&self, platform: Platform, user_id: &str) -> Result<(), Error> {
+    async fn delete_credentials(
+        &self,
+        platform: &Platform,
+        user_id: &str
+    ) -> Result<(), Error> {
         let platform_str = platform.to_string();
 
         sqlx::query!(
-        r#"DELETE FROM platform_credentials
-        WHERE platform = ? AND user_id = ?"#,
-        platform_str,
-        user_id
-    )
+            r#"DELETE FROM platform_credentials
+            WHERE platform = ? AND user_id = ?"#,
+            platform_str,
+            user_id
+        )
             .execute(&self.pool)
             .await?;
 

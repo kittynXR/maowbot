@@ -13,7 +13,7 @@ pub struct User {
 }
 
 // src/models/mod.rs
-#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, Hash, Eq, PartialEq)]
 pub enum Platform {
     Twitch,
     Discord,
@@ -94,7 +94,7 @@ pub struct PlatformIdentity {
     pub last_updated: NaiveDateTime,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub enum CredentialType {
     OAuth2,
     APIKey,

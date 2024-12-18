@@ -19,4 +19,16 @@ pub enum Error {
 
     #[error("Authentication error: {0}")]
     Auth(String),
+
+    #[error("HTTP error: {0}")]
+    Http(#[from] reqwest::Error),
+
+    #[error("Parse error: {0}")]
+    Parse(String),
+}
+
+impl From<String> for Error {
+    fn from(err: String) -> Self {
+        Error::Parse(err)
+    }
 }

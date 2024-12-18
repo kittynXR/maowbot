@@ -23,11 +23,21 @@ pub trait PlatformIdentityRepository {
 
 #[async_trait]
 pub trait CredentialsRepository {
-    async fn store_credentials(&self, creds: &PlatformCredential) -> Result<(), Error>;
-    async fn get_credentials(&self, platform: Platform, user_id: &str)
-                             -> Result<Option<PlatformCredential>, Error>;
-    async fn update_credentials(&self, creds: &PlatformCredential) -> Result<(), Error>;
-    async fn delete_credentials(&self, platform: Platform, user_id: &str) -> Result<(), Error>;
+    async fn store_credentials(&self, cred: &PlatformCredential) -> Result<(), Error>;
+
+    async fn get_credentials(
+        &self,
+        platform: &Platform,  // Change to borrow Platform
+        user_id: &str
+    ) -> Result<Option<PlatformCredential>, Error>;
+
+    async fn update_credentials(&self, cred: &PlatformCredential) -> Result<(), Error>;
+
+    async fn delete_credentials(
+        &self,
+        platform: &Platform,  // Change to borrow Platform
+        user_id: &str
+    ) -> Result<(), Error>;
 }
 
 // Module declarations
