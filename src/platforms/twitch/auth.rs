@@ -1,7 +1,5 @@
-// src/auth/platforms/twitch.rs
-use crate::auth::{AuthenticationPrompt, AuthenticationResponse, PlatformAuthenticator};
-use crate::models::{Platform, PlatformCredential, CredentialType};
-use crate::Error;
+// File: src/platforms/twitch/auth.rs
+
 use async_trait::async_trait;
 use oauth2::{
     AuthUrl, ClientId, ClientSecret, RedirectUrl, TokenUrl,
@@ -11,6 +9,10 @@ use oauth2::{
 use chrono::Utc;
 use serde_json::json;
 use uuid::Uuid;
+
+use crate::Error;
+use crate::models::{Platform, PlatformCredential, CredentialType};
+use crate::auth::{AuthenticationPrompt, AuthenticationResponse, PlatformAuthenticator};
 
 pub struct TwitchAuthenticator {
     client_id: String,

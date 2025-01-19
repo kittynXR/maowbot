@@ -1,20 +1,10 @@
-// src/auth/mod.rs
+// File: src/auth/mod.rs
 use async_trait::async_trait;
 use crate::Error;
-use crate::models::{Platform, PlatformCredential};
-use std::collections::HashMap;
 
-pub mod platforms;
 pub mod manager;
 
-pub use manager::AuthManager;
-
-pub use self::platforms::{
-    TwitchAuthenticator,
-    DiscordAuthenticator,
-    VRChatAuthenticator,
-};
-
+// The central traits you introduced
 #[derive(Debug, Clone)]
 pub enum AuthenticationPrompt {
     Browser { url: String },
@@ -22,16 +12,16 @@ pub enum AuthenticationPrompt {
     ApiKey { message: String },
     MultipleKeys { fields: Vec<String>, messages: Vec<String> },
     TwoFactor { message: String },
-    None
+    None,
 }
 
 #[derive(Debug)]
 pub enum AuthenticationResponse {
     Code(String),
     ApiKey(String),
-    MultipleKeys(HashMap<String, String>),
+    MultipleKeys(std::collections::HashMap<String, String>),
     TwoFactor(String),
-    None
+    None,
 }
 
 #[async_trait]
@@ -39,20 +29,19 @@ pub trait AuthenticationHandler {
     async fn handle_prompt(&self, prompt: AuthenticationPrompt) -> Result<AuthenticationResponse, Error>;
 }
 
+/// Each platform's authenticator will implement this.
 #[async_trait]
 pub trait PlatformAuthenticator: Send {
     async fn initialize(&mut self) -> Result<(), Error>;
-
     async fn start_authentication(&mut self) -> Result<AuthenticationPrompt, Error>;
-
     async fn complete_authentication(
         &mut self,
         response: AuthenticationResponse
-    ) -> Result<PlatformCredential, Error>;
-
-    async fn refresh(&mut self, credential: &PlatformCredential) -> Result<PlatformCredential, Error>;
-
-    async fn validate(&self, credential: &PlatformCredential) -> Result<bool, Error>;
-
-    async fn revoke(&mut self, credential: &PlatformCredential) -> Result<(), Error>;
+    ) -> Result<crate::models::PlatformCredential, Error>;
+    async fn refresh(&mut self, credential: &crate::models::PlatformCredential)
+                     -> Result<crate::models::PlatformCredential, Error>;
+    async fn validate(&self, credential: &crate::models::PlatformCredential) -> Result<bool, Error>;
+    async fn revoke(&mut self, credential: &crate::models::PlatformCredential) -> Result<(), Error>;
 }
+
+pub use manager::AuthManager;

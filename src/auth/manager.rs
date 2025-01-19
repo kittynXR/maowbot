@@ -1,4 +1,4 @@
-// src/auth/manager.rs
+// File: src/auth/manager.rs
 
 use std::collections::HashMap;
 use crate::auth::{AuthenticationHandler, PlatformAuthenticator};
@@ -39,25 +39,17 @@ impl AuthManager {
         let authenticator = self.authenticators.get_mut(&platform)
             .ok_or_else(|| Error::Platform(format!("No authenticator for {:?}", platform)))?;
 
-        // Initialize the authenticator
         authenticator.initialize().await?;
 
-        // Start authentication process
         let mut prompt = authenticator.start_authentication().await?;
-
         loop {
-            // Get response from auth handler
             let response = self.auth_handler.handle_prompt(prompt.clone()).await?;
-
-            // Try to complete authentication
             match authenticator.complete_authentication(response).await {
                 Ok(credential) => {
-                    // Store the credential
                     self.credentials_repo.store_credentials(&credential).await?;
                     return Ok(credential);
                 }
                 Err(Error::Auth(msg)) if msg == "2FA required" => {
-                    // Continue with 2FA
                     prompt = authenticator.start_authentication().await?;
                     continue;
                 }
@@ -72,34 +64,34 @@ impl AuthManager {
 
     pub async fn get_credentials(
         &self,
-        platform: &Platform,  // Change to borrow Platform
+        platform: &Platform,
         user_id: &str
     ) -> Result<Option<PlatformCredential>, Error> {
-        self.credentials_repo.get_credentials(&platform.clone(), user_id).await
+        self.credentials_repo.get_credentials(platform, user_id).await
     }
 
     pub async fn revoke_credentials(
-        &mut self,  // Need mut self for authenticators
-        platform: &Platform,  // Change to borrow Platform
+        &mut self,
+        platform: &Platform,
         user_id: &str
     ) -> Result<(), Error> {
-        if let Some(cred) = self.credentials_repo.get_credentials(&platform.clone(), user_id).await? {
+        if let Some(cred) = self.credentials_repo.get_credentials(platform, user_id).await? {
             let authenticator = self.authenticators.get_mut(platform)
                 .ok_or_else(|| Error::Platform(format!("No authenticator for {:?}", platform)))?;
 
             authenticator.revoke(&cred).await?;
-            self.credentials_repo.delete_credentials(&platform.clone(), user_id).await?;
+            self.credentials_repo.delete_credentials(platform, user_id).await?;
         }
         Ok(())
     }
 
     pub async fn refresh_platform_credentials(
-        &mut self,  // Need mut self for authenticators
-        platform: &Platform,  // Change to borrow Platform
+        &mut self,
+        platform: &Platform,
         user_id: &str
     ) -> Result<PlatformCredential, Error> {
         let cred = self.credentials_repo
-            .get_credentials(&platform.clone(), user_id).await?
+            .get_credentials(platform, user_id).await?
             .ok_or_else(|| Error::Auth("No credentials found".into()))?;
 
         let authenticator = self.authenticators.get_mut(platform)
@@ -112,7 +104,7 @@ impl AuthManager {
     }
 
     pub async fn validate_credentials(
-        &mut self,  // Need mut self for authenticators
+        &mut self,
         cred: &PlatformCredential
     ) -> Result<bool, Error> {
         let authenticator = self.authenticators.get_mut(&cred.platform)

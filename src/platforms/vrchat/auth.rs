@@ -1,11 +1,13 @@
-// src/auth/platforms/vrchat.rs
-use crate::auth::{AuthenticationPrompt, AuthenticationResponse, PlatformAuthenticator};
-use crate::models::{Platform, PlatformCredential, CredentialType};
-use crate::Error;
+// File: src/platforms/vrchat/auth.rs
+
 use async_trait::async_trait;
 use chrono::Utc;
 use serde_json::json;
 use uuid::Uuid;
+
+use crate::Error;
+use crate::auth::{AuthenticationPrompt, AuthenticationResponse, PlatformAuthenticator};
+use crate::models::{Platform, PlatformCredential, CredentialType};
 
 pub struct VRChatAuthenticator {
     username: Option<String>,
@@ -26,7 +28,6 @@ impl VRChatAuthenticator {
 #[async_trait]
 impl PlatformAuthenticator for VRChatAuthenticator {
     async fn initialize(&mut self) -> Result<(), Error> {
-        // Reset state for new authentication attempt
         self.username = None;
         self.password = None;
         self.two_factor_method = None;
@@ -39,7 +40,7 @@ impl PlatformAuthenticator for VRChatAuthenticator {
                 fields: vec!["username".into(), "password".into()],
                 messages: vec![
                     "Enter your VRChat username".into(),
-                    "Enter your VRChat password".into()
+                    "Enter your VRChat password".into(),
                 ],
             })
         } else {
@@ -58,9 +59,7 @@ impl PlatformAuthenticator for VRChatAuthenticator {
                 self.username = creds.get("username").cloned();
                 self.password = creds.get("password").cloned();
 
-                // In a real implementation, you'd make an initial auth request here
-                // to verify credentials and determine if 2FA is needed
-
+                // Potentially call VRChat here to see if 2FA is needed
                 Err(Error::Auth("2FA required".into()))
             }
             AuthenticationResponse::TwoFactor(code) => {
@@ -69,22 +68,19 @@ impl PlatformAuthenticator for VRChatAuthenticator {
                 let password = self.password.as_ref()
                     .ok_or_else(|| Error::Auth("Password not provided".into()))?;
 
-                // Here you would make the actual VRChat API call
-                // with username, password, and 2FA code
-                // For now, we'll create a mock credential
-
+                // Real VRChat API call would happen here
                 Ok(PlatformCredential {
                     credential_id: Uuid::new_v4().to_string(),
                     platform: Platform::VRChat,
                     credential_type: CredentialType::Custom("vrchat_auth".into()),
                     user_id: username.clone(),
-                    primary_token: "mock_auth_token".into(), // Would be real token from API
+                    primary_token: "mock_auth_token".into(),
                     refresh_token: None,
                     additional_data: Some(json!({
                         "username": username,
                         "has_2fa": true
                     })),
-                    expires_at: Some(Utc::now().naive_utc() + chrono::Duration::days(30)), // Example expiration
+                    expires_at: Some(Utc::now().naive_utc() + chrono::Duration::days(30)),
                     created_at: Utc::now().naive_utc(),
                     updated_at: Utc::now().naive_utc(),
                 })
@@ -93,20 +89,13 @@ impl PlatformAuthenticator for VRChatAuthenticator {
         }
     }
 
-    async fn refresh(&mut self, credential: &PlatformCredential) -> Result<PlatformCredential, Error> {
-        // VRChat typically requires re-authentication rather than refresh
-        // You might want to trigger a new auth flow here
+    async fn refresh(&mut self, _credential: &PlatformCredential) -> Result<PlatformCredential, Error> {
         Err(Error::Auth("VRChat requires re-authentication".into()))
     }
 
     async fn validate(&self, credential: &PlatformCredential) -> Result<bool, Error> {
-        // Here you would make a test API call to VRChat
-        // to verify the token is still valid
-
-        // Example implementation:
-        use reqwest::Client;
-
-        let client = Client::new();
+        // Example call to VRChat
+        let client = reqwest::Client::new();
         let response = client.get("https://api.vrchat.cloud/api/1/auth/user")
             .header("Cookie", format!("auth={}", credential.primary_token))
             .send()
@@ -116,12 +105,7 @@ impl PlatformAuthenticator for VRChatAuthenticator {
     }
 
     async fn revoke(&mut self, credential: &PlatformCredential) -> Result<(), Error> {
-        // Here you would call VRChat's logout endpoint
-        // to invalidate the current session
-
-        use reqwest::Client;
-
-        let client = Client::new();
+        let client = reqwest::Client::new();
         let response = client.get("https://api.vrchat.cloud/api/1/logout")
             .header("Cookie", format!("auth={}", credential.primary_token))
             .send()

@@ -7,7 +7,7 @@ use async_trait::async_trait;
 use std::collections::HashMap;
 use std::sync::Mutex;
 use chrono::Utc;
-use maowbot::auth::DiscordAuthenticator;
+use maowbot::platforms::discord::auth::DiscordAuthenticator;
 use maowbot::repositories::CredentialsRepository;
 
 // Make AuthenticationResponse cloneable

@@ -1,6 +1,4 @@
-// src/platforms/mod.rs
-mod twitch;
-mod discord;
+// File: src/platforms/mod.rs
 
 use async_trait::async_trait;
 use crate::Error;
@@ -49,3 +47,8 @@ pub trait VirtualPlatform: PlatformIntegration {
     async fn get_world_info(&self) -> Result<String, Error>;
     async fn get_instance_users(&self) -> Result<Vec<String>, Error>;
 }
+
+// Re-export submodules
+pub mod twitch;
+pub mod discord;
+pub mod vrchat;

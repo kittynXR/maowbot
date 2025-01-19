@@ -1,11 +1,13 @@
-// src/auth/platforms/discord.rs
-use crate::auth::{AuthenticationPrompt, AuthenticationResponse, PlatformAuthenticator};
-use crate::models::{Platform, PlatformCredential, CredentialType};
-use crate::Error;
+// File: src/platforms/discord/auth.rs
+
 use async_trait::async_trait;
 use chrono::Utc;
 use serde_json::json;
 use uuid::Uuid;
+
+use crate::Error;
+use crate::auth::{AuthenticationPrompt, AuthenticationResponse, PlatformAuthenticator};
+use crate::models::{Platform, PlatformCredential, CredentialType};
 
 pub struct DiscordAuthenticator {
     client_id: Option<String>,
@@ -57,19 +59,18 @@ impl PlatformAuthenticator for DiscordAuthenticator {
                 let bot_token = self.bot_token.as_ref()
                     .ok_or_else(|| Error::Auth("Bot token is required".into()))?;
 
-                // Create credential with bot token
                 Ok(PlatformCredential {
                     credential_id: Uuid::new_v4().to_string(),
                     platform: Platform::Discord,
                     credential_type: CredentialType::BearerToken,
-                    user_id: String::new(), // Will be populated after validation
+                    user_id: String::new(), // to be set post-validation
                     primary_token: bot_token.clone(),
                     refresh_token: None,
                     additional_data: Some(json!({
                         "client_id": self.client_id,
                         "client_secret": self.client_secret
                     })),
-                    expires_at: None, // Bot tokens don't expire
+                    expires_at: None,
                     created_at: Utc::now().naive_utc(),
                     updated_at: Utc::now().naive_utc(),
                 })
@@ -79,13 +80,12 @@ impl PlatformAuthenticator for DiscordAuthenticator {
     }
 
     async fn refresh(&mut self, credential: &PlatformCredential) -> Result<PlatformCredential, Error> {
-        // Discord bot tokens don't need refresh
+        // Discord bot tokens typically don't need refreshing
         Ok(credential.clone())
     }
 
     async fn validate(&self, credential: &PlatformCredential) -> Result<bool, Error> {
-        // Here you would typically make a test API call to Discord
-        // to verify the token is valid
+        // Example logic: call Discord's API to validate the token
         use reqwest::Client;
 
         let client = Client::new();
@@ -98,8 +98,7 @@ impl PlatformAuthenticator for DiscordAuthenticator {
     }
 
     async fn revoke(&mut self, _credential: &PlatformCredential) -> Result<(), Error> {
-        // Discord bot tokens can't be revoked - they need to be regenerated
-        // in the Discord Developer Portal
+        // Bot tokens can't be revoked programmatically; user must regenerate in the portal
         Ok(())
     }
 }
