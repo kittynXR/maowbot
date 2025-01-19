@@ -1,10 +1,11 @@
-// src/crypto/mod.rs
 use aes_gcm::{
     aead::{Aead, KeyInit},
     Aes256Gcm, Key, Nonce,
 };
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
-use rand::Rng;
+use rand::rngs::OsRng;
+use rand::RngCore;
+use std::convert::TryFrom;
 
 #[derive(thiserror::Error, Debug)]
 pub enum CryptoError {
@@ -29,8 +30,11 @@ impl Encryptor {
     }
 
     pub fn encrypt(&self, data: &str) -> Result<String, CryptoError> {
-        let mut rng = rand::rng();
-        let nonce_bytes: [u8; 12] = rng.random();
+        let mut nonce_bytes = [0u8; 12];
+        let mut rng = OsRng;
+        rng.fill_bytes(&mut nonce_bytes);
+
+        // Use try_from instead of from_slice
         let nonce = Nonce::try_from(&nonce_bytes[..])
             .map_err(|e| CryptoError::Encryption(e.to_string()))?;
 
@@ -38,8 +42,9 @@ impl Encryptor {
             .encrypt(&nonce, data.as_bytes())
             .map_err(|e| CryptoError::Encryption(e.to_string()))?;
 
-        let mut combined = nonce.to_vec();
+        let mut combined = nonce_bytes.to_vec();
         combined.extend(ciphertext);
+
         Ok(BASE64.encode(combined))
     }
 
@@ -48,11 +53,15 @@ impl Encryptor {
             .map_err(|e| CryptoError::Decryption(e.to_string()))?;
 
         if data.len() < 12 {
-            return Err(CryptoError::Decryption("Invalid data length".into()));
+            return Err(CryptoError::Decryption(
+                "Ciphertext too short or nonce missing".into()
+            ));
         }
 
-        let (nonce, ciphertext) = data.split_at(12);
-        let nonce = Nonce::try_from(nonce)
+        let (nonce_bytes, ciphertext) = data.split_at(12);
+
+        // Again, use try_from
+        let nonce = Nonce::try_from(nonce_bytes)
             .map_err(|e| CryptoError::Decryption(e.to_string()))?;
 
         let plaintext = self.cipher

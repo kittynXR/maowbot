@@ -7,15 +7,15 @@ use crate::models::{Platform, PlatformCredential};
 use crate::repositories::CredentialsRepository;
 
 pub struct AuthManager {
-    credentials_repo: Box<dyn CredentialsRepository>,
-    authenticators: HashMap<Platform, Box<dyn PlatformAuthenticator>>,
-    auth_handler: Box<dyn AuthenticationHandler>,
+    credentials_repo: Box<dyn CredentialsRepository + Send + Sync + 'static>,
+    authenticators: HashMap<Platform, Box<dyn PlatformAuthenticator + Send + Sync + 'static>>,
+    auth_handler: Box<dyn AuthenticationHandler + Send + Sync + 'static>,
 }
 
 impl AuthManager {
     pub fn new(
-        credentials_repo: Box<dyn CredentialsRepository>,
-        auth_handler: Box<dyn AuthenticationHandler>,
+        credentials_repo: Box<dyn CredentialsRepository + Send + Sync + 'static>,
+        auth_handler: Box<dyn AuthenticationHandler + Send + Sync + 'static>,
     ) -> Self {
         Self {
             credentials_repo,
@@ -27,7 +27,7 @@ impl AuthManager {
     pub fn register_authenticator(
         &mut self,
         platform: Platform,
-        authenticator: Box<dyn PlatformAuthenticator>
+        authenticator: Box<dyn PlatformAuthenticator + Send + Sync + 'static>,
     ) {
         self.authenticators.insert(platform, authenticator);
     }

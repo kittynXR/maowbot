@@ -22,7 +22,7 @@ pub trait PlatformIdentityRepository {
 }
 
 #[async_trait]
-pub trait CredentialsRepository {
+pub trait CredentialsRepository: Send + Sync {
     async fn store_credentials(&self, cred: &PlatformCredential) -> Result<(), Error>;
 
     async fn get_credentials(

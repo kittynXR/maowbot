@@ -25,8 +25,19 @@ pub enum AuthenticationResponse {
 }
 
 #[async_trait]
-pub trait AuthenticationHandler {
+pub trait AuthenticationHandler: Send + Sync {
     async fn handle_prompt(&self, prompt: AuthenticationPrompt) -> Result<AuthenticationResponse, Error>;
+}
+
+#[derive(Default)]
+pub struct StubAuthHandler;
+
+#[async_trait]
+impl AuthenticationHandler for StubAuthHandler {
+    async fn handle_prompt(&self, _prompt: AuthenticationPrompt) -> Result<AuthenticationResponse, Error> {
+        // Always just return "None" or something minimal
+        Ok(AuthenticationResponse::None)
+    }
 }
 
 /// Each platform's authenticator will implement this.
