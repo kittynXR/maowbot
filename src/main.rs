@@ -4,6 +4,9 @@ use tokio::task;
 use tracing::{info, error};
 use tracing_subscriber::FmtSubscriber;
 
+use maowbot::plugins::manager::PluginManager;
+use maowbot::plugins::protocol::BotToPlugin;
+
 use maowbot::tasks::credential_refresh;
 use maowbot::auth::{AuthManager, StubAuthHandler};
 use maowbot::crypto::Encryptor;
@@ -67,8 +70,31 @@ async fn main() -> anyhow::Result<()> {
         }
     });
 
+    //------------------------------------------
+    // 1. Create a PluginManager
+    //------------------------------------------
+    let plugin_manager = PluginManager::new();
+
+    //------------------------------------------
+    // 2. Spawn a task to listen for plugins
+    //------------------------------------------
+    let pm_clone = plugin_manager.clone();
+    tokio::spawn(async move {
+        // Listen on port 9999 for plugin connections.
+        // Or "0.0.0.0:9999" to allow remote PCs to connect
+        if let Err(e) = pm_clone.listen("0.0.0.0:9999").await {
+            error!("PluginManager error: {:?}", e);
+        }
+    });
+
     info!("Main logic initialization complete. Running...");
+
+    //------------------------------------------
+    // 3. Example: periodically broadcast a Tick event
+    //------------------------------------------
     loop {
-        tokio::time::sleep(Duration::from_secs(30)).await;
+        tokio::time::sleep(Duration::from_secs(10)).await;
+        plugin_manager.broadcast(BotToPlugin::Tick);
+        // Could also do a “chat event” broadcast, etc.
     }
 }

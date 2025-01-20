@@ -10,6 +10,8 @@ pub mod auth;
 pub mod http;
 pub mod tasks;
 
+pub mod plugins;
+
 pub use db::Database;
 pub use error::Error;
 pub use http::{HttpClient, DefaultHttpClient};
