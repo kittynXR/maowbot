@@ -7,6 +7,7 @@ use crate::repositories::CredentialsRepository;
 use crate::models::{Platform, PlatformCredential};
 use chrono::{Utc, Duration};
 
+#[derive(Clone)]
 pub struct SqliteCredentialsRepository {
     pool: Pool<Sqlite>,
     encryptor: Encryptor,

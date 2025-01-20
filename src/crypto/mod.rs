@@ -6,6 +6,7 @@ use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use rand::rngs::OsRng;
 use rand::RngCore;
 use std::convert::TryFrom;
+use std::sync::Arc;
 
 #[derive(thiserror::Error, Debug)]
 pub enum CryptoError {
@@ -17,8 +18,9 @@ pub enum CryptoError {
     KeyDerivation(String),
 }
 
+#[derive(Clone)]
 pub struct Encryptor {
-    cipher: Aes256Gcm,
+    cipher: Arc<Aes256Gcm>,
 }
 
 impl Encryptor {
@@ -26,7 +28,9 @@ impl Encryptor {
         let key = Key::<Aes256Gcm>::try_from(key)
             .map_err(|e| CryptoError::KeyDerivation(e.to_string()))?;
         let cipher = Aes256Gcm::new(&key);
-        Ok(Self { cipher })
+        Ok(Self {
+            cipher: Arc::new(cipher),
+        })
     }
 
     pub fn encrypt(&self, data: &str) -> Result<String, CryptoError> {
