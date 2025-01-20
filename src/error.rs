@@ -27,6 +27,12 @@ pub enum Error {
     Parse(String),
 }
 
+impl From<std::io::Error> for Error {
+    fn from(e: std::io::Error) -> Self {
+        Error::Platform(e.to_string())
+    }
+}
+
 impl From<String> for Error {
     fn from(err: String) -> Self {
         Error::Parse(err)
