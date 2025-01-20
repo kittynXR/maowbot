@@ -7,6 +7,7 @@ use serde_json::Value;
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct User {
     pub user_id: String,
+    pub global_username: Option<String>,
     pub created_at: NaiveDateTime,
     pub last_seen: NaiveDateTime,
     pub is_active: bool,
