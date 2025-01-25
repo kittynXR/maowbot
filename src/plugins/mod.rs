@@ -2,4 +2,4 @@
 
 pub mod protocol;
 pub mod manager;
-mod capabilities;
+pub mod capabilities;

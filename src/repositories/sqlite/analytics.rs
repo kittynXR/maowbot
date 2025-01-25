@@ -39,6 +39,18 @@ pub struct BotEvent {
     pub data: Option<Value>,
 }
 
+#[async_trait]
+pub trait AnalyticsRepo: Send + Sync + 'static {
+    async fn insert_chat_message(&self, msg: &ChatMessage) -> Result<(), Error>;
+}
+
+#[async_trait]
+impl AnalyticsRepo for SqliteAnalyticsRepository {
+    async fn insert_chat_message(&self, msg: &ChatMessage) -> Result<(), Error> {
+        self.insert_chat_message(msg).await
+    }
+}
+
 /// Main repository struct
 #[derive(Clone)]
 pub struct SqliteAnalyticsRepository {

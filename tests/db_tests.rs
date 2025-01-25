@@ -39,10 +39,12 @@ async fn test_database_connection() -> anyhow::Result<()> {
     let now = Utc::now().naive_utc();
     let user = User {
         user_id: "test_user".to_string(),
+        global_username: None,  // <= required
         created_at: now,
         last_seen: now,
         is_active: true,
     };
+
 
     // Insert a user
     sqlx::query!(
@@ -63,7 +65,7 @@ async fn test_database_connection() -> anyhow::Result<()> {
     let retrieved = sqlx::query_as!(
         User,
         r#"
-        SELECT user_id, created_at, last_seen, is_active
+        SELECT user_id, global_username, created_at, last_seen, is_active
         FROM users
         WHERE user_id = ?1
         "#,
@@ -84,9 +86,9 @@ async fn test_database_connection() -> anyhow::Result<()> {
 
 #[tokio::test]
 async fn test_migration() -> anyhow::Result<()> {
-    let db = Database::new("data/test.db").await?;
+    let db = Database::new(":memory:").await?;
     db.migrate().await?;
-    println!("Migrations applied successfully!");
+    println!("Migrations applied successfully (in memory)!");
     Ok(())
 }
 
@@ -109,6 +111,7 @@ async fn test_platform_identity() -> anyhow::Result<()> {
     // First create a user
     let user = User {
         user_id: "test_user".to_string(),
+        global_username: None,
         created_at: Utc::now().naive_utc(),
         last_seen: Utc::now().naive_utc(),
         is_active: true,

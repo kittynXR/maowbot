@@ -24,10 +24,12 @@ async fn test_user_repository() -> anyhow::Result<()> {
     let now = Utc::now().naive_utc();
     let user = User {
         user_id: "test_user".to_string(),
+        global_username: None,    // <-- add this line
         created_at: now,
         last_seen: now,
         is_active: true,
     };
+
 
     // Test create
     repo.create(&user).await?;

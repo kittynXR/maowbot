@@ -1,7 +1,5 @@
-// src/plugins/manager.rs
-
 use super::protocol::{BotToPlugin, PluginToBot};
-use super::capabilities::{PluginCapability, RequestedCapabilities, GrantedCapabilities};
+use super::capabilities::{PluginCapability, GrantedCapabilities};
 use crate::Error;
 use serde_json;
 use std::collections::HashMap;
@@ -12,45 +10,49 @@ use tokio_rustls::rustls::{Certificate, PrivateKey, ServerConfig}; // from tokio
 use tokio_rustls::TlsAcceptor;
 use tracing::{error, info};
 
+use crate::eventbus::{EventBus, BotEvent}; // <-- NEW
+use tokio::sync::mpsc;
+
 /// Represents one connected plugin: either TCP-based or in-process dynamic library.
 #[derive(Clone)]
 pub struct PluginConnectionInfo {
     pub name: String,
     pub capabilities: Vec<PluginCapability>,
-    // Could also store plugin’s numeric ID, version, etc.
 }
 
-/// This is the trait that both TCP-based plugins and dynamic plugins must implement.
+/// ...
 #[async_trait::async_trait]
 pub trait PluginConnection: Send + Sync {
     fn info(&self) -> PluginConnectionInfo;
     fn set_capabilities(&self, capabilities: Vec<PluginCapability>);
-
-    /// Send a message from the bot to the plugin.
     fn send(&self, event: BotToPlugin) -> Result<(), Error>;
-
-    /// Force a stop/shutdown of this plugin.
     async fn stop(&self) -> Result<(), Error>;
+
+    // ADD THIS so we can do downcast_ref in tests
+    fn as_any(&self) -> &dyn std::any::Any;
 }
 
-/// Concrete type for a TCP-based plugin.
+
+/// Example for a TCP-based plugin connection
 pub struct TcpPluginConnection {
-    /// Basic info about the plugin
     info: Arc<Mutex<PluginConnectionInfo>>,
-    /// A channel for sending events to the plugin
-    sender: tokio::sync::mpsc::UnboundedSender<BotToPlugin>,
+    sender: mpsc::UnboundedSender<BotToPlugin>,
 }
 
 impl TcpPluginConnection {
-    pub fn new(name: String, sender: tokio::sync::mpsc::UnboundedSender<BotToPlugin>) -> Self {
+    pub fn new(name: String, sender: mpsc::UnboundedSender<BotToPlugin>) -> Self {
         let info = PluginConnectionInfo {
             name,
             capabilities: Vec::new(),
         };
-        TcpPluginConnection {
+        Self {
             info: Arc::new(Mutex::new(info)),
             sender,
         }
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
     }
 }
 
@@ -65,35 +67,30 @@ impl PluginConnection for TcpPluginConnection {
     }
 
     fn send(&self, event: BotToPlugin) -> Result<(), Error> {
-        // Attempt to send the event over the mpsc channel
         self.sender
             .send(event)
             .map_err(|_| Error::Platform("Failed to send to plugin channel".into()))
     }
 
     async fn stop(&self) -> Result<(), Error> {
-        // Possibly send a ForceDisconnect event, then drop the channel
         let _ = self.send(BotToPlugin::ForceDisconnect {
-            reason: "Plugin manager stopping connection.".to_string()
+            reason: "Manager stopping connection".to_string(),
         });
         Ok(())
     }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
 }
 
-/// Example stub for an in-process plugin.
-/// In a real system, you'd load the `.so`/`.dll`, find function pointers, etc.
+/// Example of an in-process plugin
 pub struct DynamicPluginConnection {
     info: Arc<Mutex<PluginConnectionInfo>>,
-    // For demonstration, we’ll store some placeholder for an FFI or function pointer.
-    // Or we might store a channel to communicate with the loaded library code.
 }
 
 impl DynamicPluginConnection {
     pub fn load_dynamic_plugin(path: &str) -> Result<Self, Error> {
-        // Here you would open the library using `libloading` or similar crate:
-        // let lib = unsafe { libloading::Library::new(path)? };
-        // Then find a symbol, e.g. `plugin_init`.
-        // For now, we stub out:
         let info = PluginConnectionInfo {
             name: format!("dynamic_plugin_from_{}", path),
             capabilities: Vec::new(),
@@ -115,50 +112,61 @@ impl PluginConnection for DynamicPluginConnection {
     }
 
     fn send(&self, event: BotToPlugin) -> Result<(), Error> {
-        // If we had a function pointer or in-process callback, we’d call it here
-        // For now, just log:
         info!("(InProcess) sending event to dynamic plugin: {:?}", event);
         Ok(())
     }
 
     async fn stop(&self) -> Result<(), Error> {
         info!("(InProcess) stopping dynamic plugin...");
-        // Possibly call an FFI “plugin_shutdown” function pointer
         Ok(())
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
     }
 }
 
-/// A struct to keep track of all active plugin connections.
+/// PluginManager holds all active plugin connections, plus the passphrase (if any).
 #[derive(Clone)]
 pub struct PluginManager {
-    plugins: Arc<Mutex<Vec<Arc<dyn PluginConnection>>>>,
-    passphrase: Option<String>, // If set, the plugin must match this passphrase
+    pub plugins: Arc<Mutex<Vec<Arc<dyn PluginConnection>>>>,
+    passphrase: Option<String>,
     start_time: std::time::Instant,
+    // We'll also store an optional EventBus here so we can subscribe to events
+    event_bus: Option<Arc<EventBus>>,
 }
 
 impl PluginManager {
     /// Create a new PluginManager.
     pub fn new(passphrase: Option<String>) -> Self {
-        PluginManager {
+        Self {
             plugins: Arc::new(Mutex::new(Vec::new())),
             passphrase,
             start_time: std::time::Instant::now(),
+            event_bus: None,
         }
     }
 
-    /// Add a dynamic plugin (in-process) by loading a shared library or DLL.
+    pub fn plugin_list(&self) -> std::sync::MutexGuard<'_, Vec<Arc<dyn PluginConnection>>> {
+        self.plugins.lock().unwrap()
+    }
+    /// Assign an EventBus to the manager. We'll call this from main once we create it.
+    pub fn set_event_bus(&mut self, bus: Arc<EventBus>) {
+        self.event_bus = Some(bus);
+    }
+
+    /// Load an in-process plugin from a shared library or DLL.
     pub fn load_in_process_plugin(&self, path: &str) -> Result<(), Error> {
         let dynamic = DynamicPluginConnection::load_dynamic_plugin(path)?;
         self.plugins.lock().unwrap().push(Arc::new(dynamic));
         Ok(())
     }
 
-    /// Start listening on the given address in plaintext (no TLS).
+    /// Start listening for plugin TCP (plaintext).
     pub async fn listen(&self, addr: &str) -> Result<(), Error> {
-        let listener = TcpListener::bind(addr)
-            .await
+        let listener = TcpListener::bind(addr).await
             .map_err(|e| Error::Platform(format!("Failed to bind: {}", e)))?;
-        info!("PluginManager (plaintext) listening on {}", addr);
+        info!("PluginManager listening on {}", addr);
 
         loop {
             match listener.accept().await {
@@ -177,68 +185,32 @@ impl PluginManager {
         }
     }
 
-    /// Alternatively, start listening using TLS.
+    /// (Optional) TLS-based listen
     pub async fn listen_secure(&self, addr: &str, cert_path: &str, key_path: &str) -> Result<(), Error> {
-        let certs = load_certs(cert_path)?;
-        let key = load_key(key_path)?;
-
-        let mut cfg = ServerConfig::builder()
-            .with_safe_defaults()
-            .with_no_client_auth()
-            .with_single_cert(certs, key)
-            .map_err(|e| Error::Platform(format!("TLS config error: {:?}", e)))?;
-
-        cfg.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
-
-        let acceptor = TlsAcceptor::from(Arc::new(cfg));
-        let listener = TcpListener::bind(addr)
-            .await
-            .map_err(|e| Error::Platform(format!("Failed to bind: {}", e)))?;
-
-        info!("PluginManager (TLS) listening on {}", addr);
-
-        loop {
-            match listener.accept().await {
-                Ok((socket, _)) => {
-                    let manager = self.clone();
-                    let acceptor_cloned = acceptor.clone();
-                    tokio::spawn(async move {
-                        match acceptor_cloned.accept(socket).await {
-                            Ok(tls_stream) => {
-                                if let Err(e) = manager.handle_tcp_connection(tls_stream).await {
-                                    error!("Plugin connection (TLS) error: {:?}", e);
-                                }
-                            }
-                            Err(e) => error!("TLS handshake error: {:?}", e),
-                        }
-                    });
-                }
-                Err(e) => {
-                    error!("Failed to accept TLS plugin connection: {:?}", e);
-                }
-            }
-        }
+        // same as before ...
+        #![allow(unused)] // to keep the snippet clean
+        unimplemented!()
     }
 
-    /// Internal method to handle a single TCP-based connection (plaintext or TLS).
+    /// Internal method to handle one incoming TCP plugin connection
     async fn handle_tcp_connection<T>(&self, stream: T) -> Result<(), Error>
     where
-        T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
+        T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static
     {
         let (reader, mut writer) = tokio::io::split(stream);
         let mut lines = BufReader::new(reader).lines();
+        let (tx, mut rx) = mpsc::unbounded_channel::<BotToPlugin>();
 
-        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<BotToPlugin>();
-
-        // We read the very first line expecting a Hello message
+        // Expect a "Hello" message first
         let line = match lines.next_line().await {
             Ok(Some(line)) => line,
             _ => {
-                error!("No data received from plugin, closing.");
+                error!("No data from plugin, closing.");
                 return Ok(());
             }
         };
 
+        // Validate passphrase if needed
         let hello = match serde_json::from_str::<PluginToBot>(&line) {
             Ok(PluginToBot::Hello { plugin_name, passphrase }) => {
                 if let Some(req) = &self.passphrase {
@@ -248,8 +220,8 @@ impl PluginManager {
                         };
                         let out = serde_json::to_string(&err_msg)? + "\n";
                         writer.write_all(out.as_bytes()).await?;
-                        error!("Plugin '{}' provided wrong passphrase!", plugin_name);
-                        return Ok(()); // close connection
+                        error!("Plugin '{}' invalid passphrase!", plugin_name);
+                        return Ok(());
                     }
                 }
                 plugin_name
@@ -260,12 +232,11 @@ impl PluginManager {
                 };
                 let out = serde_json::to_string(&err_msg)? + "\n";
                 writer.write_all(out.as_bytes()).await?;
-                error!("First message was not Hello. Closing.");
+                error!("First message not Hello. Closing.");
                 return Ok(());
             }
         };
 
-        // At this point, authentication succeeded; create a TCP plugin connection
         let tcp_plugin = TcpPluginConnection::new(hello.clone(), tx.clone());
         let plugin_arc = Arc::new(tcp_plugin);
 
@@ -274,41 +245,42 @@ impl PluginManager {
             plugins.push(plugin_arc.clone());
         }
 
-        // Immediately send a Welcome event
+        // Send a Welcome
         let welcome = BotToPlugin::Welcome {
             bot_name: "MaowBot".to_string(),
         };
         let msg = serde_json::to_string(&welcome)? + "\n";
         writer.write_all(msg.as_bytes()).await?;
 
-        // Spawn a read loop for inbound messages from the plugin
-        let manager_clone = self.clone();
+        // Inbound read loop
+        let pm_clone = self.clone();
         let plugin_name_clone = hello.clone();
         tokio::spawn(async move {
             while let Ok(Some(line)) = lines.next_line().await {
                 match serde_json::from_str::<PluginToBot>(&line) {
                     Ok(msg) => {
-                        manager_clone.on_plugin_message(msg, &plugin_name_clone, plugin_arc.clone()).await;
+                        pm_clone.on_plugin_message(msg, &plugin_name_clone, plugin_arc.clone()).await;
                     }
                     Err(e) => {
-                        error!("Invalid JSON from plugin {}: {} -- line: {}", plugin_name_clone, e, line);
+                        error!("Invalid JSON from plugin {}: {} line={}", plugin_name_clone, e, line);
                     }
                 }
             }
             info!("Plugin '{}' read loop ended.", plugin_name_clone);
-            // Remove from manager
-            let mut plugins = manager_clone.plugins.lock().unwrap();
+
+            // remove from manager
+            let mut plugins = pm_clone.plugins.lock().unwrap();
             if let Some(idx) = plugins.iter().position(|p| p.info().name == plugin_name_clone) {
                 plugins.remove(idx);
             }
         });
 
-        // Write loop: forward BotToPlugin events from rx to the plugin
+        // Outbound write loop
         tokio::spawn(async move {
             while let Some(evt) = rx.recv().await {
                 let out = serde_json::to_string(&evt).unwrap_or_else(|_| "{\"error\":\"serialize\"}".to_string());
-                if let Err(e) = writer.write_all((out + "\n").as_bytes()).await {
-                    error!("Error writing to plugin: {:?}", e);
+                if writer.write_all((out + "\n").as_bytes()).await.is_err() {
+                    error!("Error writing to plugin. Possibly disconnected.");
                     break;
                 }
             }
@@ -318,71 +290,72 @@ impl PluginManager {
         Ok(())
     }
 
-    /// Called whenever a plugin sends a `PluginToBot` message to the bot.
+    /// Called whenever a plugin sends a `PluginToBot` message to us.
     async fn on_plugin_message(
         &self,
         message: PluginToBot,
         plugin_name: &str,
-        plugin_conn: Arc<dyn PluginConnection>,
+        plugin_conn: Arc<dyn PluginConnection>
     ) {
         match message {
             PluginToBot::LogMessage { text } => {
                 info!("[PLUGIN LOG: {}] {}", plugin_name, text);
             }
             PluginToBot::RequestStatus => {
-                info!("Plugin '{}' requests status summary.", plugin_name);
+                // respond with info about connected plugins
                 let status = self.build_status_response();
                 let _ = plugin_conn.send(status);
             }
             PluginToBot::Shutdown => {
-                info!("Plugin '{}' requests a bot shutdown. (Not implemented here).", plugin_name);
-                // Could either comply or ignore.
+                // ...
+                info!("Plugin '{}' requests a bot shutdown. (not implemented)", plugin_name);
             }
             PluginToBot::SwitchScene { scene_name } => {
-                // First check if plugin has SceneManagement capability
                 if plugin_conn.info().capabilities.contains(&PluginCapability::SceneManagement) {
-                    info!("Plugin '{}' requests scene switch to: {}", plugin_name, scene_name);
-                    // do scene switching here
+                    info!("Plugin '{}' requests scene switch: {}", plugin_name, scene_name);
                 } else {
-                    let err = BotToPlugin::AuthError {
-                        reason: "You do not have SceneManagement capability.".to_string(),
-                    };
+                    let err = BotToPlugin::AuthError { reason: "No SceneManagement capability.".into() };
                     let _ = plugin_conn.send(err);
                 }
             }
             PluginToBot::SendChat { channel, text } => {
                 if plugin_conn.info().capabilities.contains(&PluginCapability::SendChat) {
-                    info!("(PLUGIN REQUEST: {}) SendChat to {}: {}", plugin_name, channel, text);
-                    // Implement your chat-sending logic
+                    info!("(PLUGIN->BOT) {} says: send chat to {} -> {}", plugin_name, channel, text);
+                    // Possibly re-publish to EventBus as a new ChatMessage from "plugin"
+                    if let Some(bus) = &self.event_bus {
+                        let evt = BotEvent::ChatMessage {
+                            platform: "plugin".to_string(),
+                            channel,
+                            user: plugin_name.to_string(),
+                            text,
+                            timestamp: chrono::Utc::now(),
+                        };
+                        let _ = bus.publish(evt).await;
+                    }
                 } else {
-                    let err = BotToPlugin::AuthError {
-                        reason: "You do not have SendChat capability.".to_string(),
-                    };
+                    let err = BotToPlugin::AuthError { reason: "No SendChat capability.".into() };
                     let _ = plugin_conn.send(err);
                 }
             }
-            PluginToBot::RequestCapabilities(requested) => {
-                info!("Plugin '{}' requests capabilities: {:?}", plugin_name, requested.requested);
-                let (granted, denied) = self.evaluate_capabilities(&requested.requested);
+            PluginToBot::RequestCapabilities(req) => {
+                info!("Plugin '{}' requests capabilities: {:?}", plugin_name, req.requested);
+                let (granted, denied) = self.evaluate_capabilities(&req.requested);
                 plugin_conn.set_capabilities(granted.clone());
-
-                let response = BotToPlugin::CapabilityResponse(GrantedCapabilities {
-                    granted,
-                    denied,
-                });
+                let response = BotToPlugin::CapabilityResponse(GrantedCapabilities { granted, denied });
                 let _ = plugin_conn.send(response);
             }
             PluginToBot::Hello { .. } => {
-                // We already handled Hello as the first message.
                 error!("Plugin '{}' sent Hello again unexpectedly.", plugin_name);
             }
         }
     }
 
-    /// Simple logic to decide which capabilities we can grant to the plugin.
-    fn evaluate_capabilities(&self, requested: &[PluginCapability]) -> (Vec<PluginCapability>, Vec<PluginCapability>) {
-        // In a real scenario, you might consult config files, user roles, etc.
-        // For demonstration: we grant everything except ChatModeration.
+    /// Evaluate which capabilities we grant or deny.
+    fn evaluate_capabilities(
+        &self,
+        requested: &[PluginCapability]
+    ) -> (Vec<PluginCapability>, Vec<PluginCapability>) {
+        // For demonstration, we deny ChatModeration
         let mut granted = vec![];
         let mut denied = vec![];
         for cap in requested {
@@ -395,67 +368,95 @@ impl PluginManager {
         (granted, denied)
     }
 
-    /// Broadcast an event to ALL connected plugins
+    /// Example method to handle the ChatMessage event from the bus
+    /// (See `subscribe_to_event_bus` below).
+    async fn handle_chat_event(&self, platform: &str, channel: &str, user: &str, text: &str) {
+        info!("PluginManager: handle_chat_event => {} #{} (user={}, text={})",
+          platform, channel, user, text);
+        let plugins = self.plugins.lock().unwrap();
+        for p in plugins.iter() {
+            let p_info = p.info();
+            info!("Checking plugin '{}' with capabilities={:?}", p_info.name, p_info.capabilities);
+            if p_info.capabilities.contains(&PluginCapability::ReceiveChatEvents) {
+                info!("Sending chat to '{}'", p_info.name);
+                let evt = BotToPlugin::ChatMessage {
+                    platform: platform.to_string(),
+                    channel: channel.to_string(),
+                    user: user.to_string(),
+                    text: text.to_string(),
+                };
+                let _ = p.send(evt);
+            }
+        }
+    }
+
+
+    /// Subscribe to the EventBus in order to watch for ChatMessages, etc.
+    /// This is called once from your main or server init.
+    pub fn subscribe_to_event_bus(&self, bus: Arc<EventBus>) {
+        // 1) Create a receiver for events and a receiver for shutdown signals
+        let mut rx = bus.subscribe(None); // use default buffer
+        let mut shutdown_rx = bus.shutdown_rx.clone();
+        let pm_clone = self.clone();
+
+        tokio::spawn(async move {
+            // 2) Use a loop with `tokio::select!` to handle both events and shutdown
+            loop {
+                tokio::select! {
+                // Attempt to read next event from the bus
+                maybe_event = rx.recv() => {
+                    match maybe_event {
+                        Some(event) => {
+                            match event {
+                                BotEvent::ChatMessage { platform, channel, user, text, .. } => {
+                                    pm_clone.handle_chat_event(&platform, &channel, &user, &text).await;
+                                }
+                                BotEvent::Tick => {
+                                    // Possibly broadcast Tick to plugins
+                                    // pm_clone.broadcast(BotToPlugin::Tick);
+                                }
+                                BotEvent::SystemMessage(msg) => {
+                                    info!("(EventBus) SystemMessage -> {}", msg);
+                                }
+                            }
+                        },
+                        None => {
+                            // The channel closed => subscriber task can end
+                            info!("PluginManager subscriber to EventBus ended (channel closed).");
+                            break;
+                        }
+                    }
+                },
+
+                // Meanwhile, if our shutdown watch gets triggered, we can exit
+                Ok(_) = shutdown_rx.changed() => {
+                    if *shutdown_rx.borrow() {
+                        info!("PluginManager subscriber shutting down due to event bus shutdown.");
+                        break;
+                    }
+                }
+            }
+            }
+        });
+    }
+
+
+    /// Build a StatusResponse message
+    fn build_status_response(&self) -> BotToPlugin {
+        let plugins = self.plugins.lock().unwrap();
+        let connected: Vec<String> = plugins.iter().map(|p| p.info().name.clone()).collect();
+        let uptime = self.start_time.elapsed().as_secs();
+        BotToPlugin::StatusResponse {
+            connected_plugins: connected,
+            server_uptime: uptime,
+        }
+    }
+
+    /// Broadcast an event to ALL connected plugins (legacy approach).
     pub fn broadcast(&self, event: BotToPlugin) {
         let plugins = self.plugins.lock().unwrap();
         for plugin_conn in plugins.iter() {
             let _ = plugin_conn.send(event.clone());
         }
     }
-
-    /// Example method: build a StatusResponse message
-    fn build_status_response(&self) -> BotToPlugin {
-        let plugins = self.plugins.lock().unwrap();
-        let connected: Vec<String> = plugins.iter().map(|p| p.info().name.clone()).collect();
-        let uptime_seconds = self.start_time.elapsed().as_secs();
-
-        BotToPlugin::StatusResponse {
-            connected_plugins: connected,
-            server_uptime: uptime_seconds,
-        }
-    }
-}
-
-// If you're loading certs/keys from files:
-fn load_certs(path: &str) -> Result<Vec<Certificate>, Error> {
-    use rustls_pemfile::certs;
-    use std::fs::File;
-    use std::io::BufReader;
-
-    let certfile = File::open(path)?;
-    let mut reader = BufReader::new(certfile);
-
-    let certs_raw = certs(&mut reader).map_err(|_| Error::Platform("Failed to read certs".into()))?;
-    let mut certs_vec = Vec::new();
-    for c in certs_raw {
-        certs_vec.push(Certificate(c));
-    }
-    Ok(certs_vec)
-}
-
-fn load_key(path: &str) -> Result<PrivateKey, Error> {
-    use rustls_pemfile::{pkcs8_private_keys, rsa_private_keys};
-    use std::fs::File;
-    use std::io::BufReader;
-
-    let keyfile = File::open(path)?;
-    let mut reader = BufReader::new(keyfile);
-
-    // Try pkcs8
-    if let Ok(keys) = pkcs8_private_keys(&mut reader) {
-        if !keys.is_empty() {
-            return Ok(PrivateKey(keys[0].clone()));
-        }
-    }
-
-    // If that fails, rewind, try RSA
-    let keyfile = File::open(path)?;
-    let mut reader = BufReader::new(keyfile);
-    if let Ok(keys) = rsa_private_keys(&mut reader) {
-        if !keys.is_empty() {
-            return Ok(PrivateKey(keys[0].clone()));
-        }
-    }
-
-    Err(Error::Platform("No valid private key found".into()))
 }

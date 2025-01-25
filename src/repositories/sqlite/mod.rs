@@ -6,8 +6,8 @@ use async_trait::async_trait;
 
 pub mod user;
 pub mod platform_identity;
-mod credentials;
-mod analytics;
+pub mod credentials;
+pub mod analytics;
 
 pub mod link_requests;
 pub mod user_audit_log;

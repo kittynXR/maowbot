@@ -23,6 +23,10 @@ use maowbot::crypto::Encryptor;
 use maowbot::repositories::sqlite::SqliteCredentialsRepository;
 use maowbot::{Error};
 
+use maowbot::eventbus::{EventBus, BotEvent};
+use maowbot::eventbus::db_logger::spawn_db_logger_task;
+use maowbot::repositories::sqlite::analytics::SqliteAnalyticsRepository;
+
 /// Command-line arguments
 #[derive(Parser, Debug, Clone)]
 #[command(name = "maowbot")]
@@ -54,7 +58,7 @@ fn init_tracing() {
         .with_max_level(tracing::Level::DEBUG)
         .finish();
     tracing::subscriber::set_global_default(subscriber)
-        .expect("Failed to set global default subscriber for tracing");
+        .expect("Failed to set global default subscriber");
 }
 
 #[tokio::main]
@@ -79,80 +83,65 @@ async fn main() -> anyhow::Result<()> {
 
 /// Run only the server: set up DB, plugin manager, background tasks, etc.
 async fn run_server(args: Args) -> anyhow::Result<()> {
-    info!("Running in SERVER mode...");
-
-    // 1) Initialize the database
+    // 1) Setup DB
     let db = Database::new(&args.db_path).await?;
     db.migrate().await?;
-    info!("Database initialized and migrated successfully!");
-
-    // 2) Create the encryption key (placeholder: all zeros)
     let key = [0u8; 32];
     let encryptor = Encryptor::new(&key)?;
-
-    // 3) Create the credentials repository
     let creds_repo = SqliteCredentialsRepository::new(db.pool().clone(), encryptor);
 
-    // 4) Create AuthManager
+    // Example: create an AuthManager
     let auth_manager = AuthManager::new(
-        Box::new(creds_repo.clone()), // pass a clone if needed
+        Box::new(creds_repo.clone()),
         Box::new(StubAuthHandler::default())
     );
-    let auth_manager = Arc::new(Mutex::new(auth_manager));
 
-    // 5) Spawn a background task to refresh credentials
-    {
-        let creds_repo_clone = creds_repo.clone();
-        let auth_manager_clone = auth_manager.clone();
-
-        task::spawn(async move {
-            let check_interval = Duration::from_secs(300); // 5 minutes
-            loop {
-                let within_minutes = 10;
-                let mut am = auth_manager_clone.lock().await;
-                match credential_refresh::refresh_expiring_tokens(
-                    &creds_repo_clone,
-                    &mut am,
-                    within_minutes
-                ).await {
-                    Ok(_) => info!("Finished refresh_expiring_tokens cycle."),
-                    Err(e) => error!("Error refreshing tokens: {:?}", e),
-                }
-                tokio::time::sleep(check_interval).await;
-            }
-        });
-    }
-
-    // 6) Create plugin manager
+    // 2) Create plugin manager
     let plugin_manager = PluginManager::new(args.plugin_passphrase.clone());
 
-    // 6b) If user wants to load an in-process plugin, do it here
+    // 3) Create EventBus
+    let event_bus = Arc::new(EventBus::new());
+
+    // 4) DB Logger task
+    let analytics_repo = SqliteAnalyticsRepository::new(db.pool().clone());
+    // Batching with buffer=100, flush_interval=5s
+    spawn_db_logger_task(
+        &event_bus,
+        analytics_repo,
+        100,
+        5
+    );
+
+    // 5) PluginManager subscribes to the bus
+    plugin_manager.subscribe_to_event_bus(event_bus.clone());
+
+    // Also set event_bus on plugin manager so it can re-publish plugin messages:
+    {
+        let mut pm_ref = plugin_manager.clone();
+        pm_ref.set_event_bus(event_bus.clone());
+    }
+
+    // 6) If user requested an in-process plugin
     if let Some(path) = args.in_process_plugin.as_ref() {
-        match plugin_manager.load_in_process_plugin(path) {
-            Ok(_) => info!("Successfully loaded in-process plugin from '{}'", path),
-            Err(e) => error!("Failed to load in-process plugin: {:?}", e),
+        if let Err(e) = plugin_manager.load_in_process_plugin(path) {
+            error!("Failed to load in-process plugin: {:?}", e);
         }
     }
 
-    // 7) Start listening for plugin connections (plaintext).
-    //    You could also use plugin_manager.listen_secure(...) if you want TLS.
-    tokio::spawn({
-        let pm_clone = plugin_manager.clone();
-        async move {
-            let listen_addr = "0.0.0.0:9999";
-            info!("Server listening for plugins on {}", listen_addr);
-            if let Err(e) = pm_clone.listen(listen_addr).await {
-                error!("PluginManager error: {:?}", e);
-            }
+    // 7) Start listening for external plugin connections
+    let pm_clone = plugin_manager.clone();
+    let server_addr = args.server_addr.clone();
+    tokio::spawn(async move {
+        if let Err(e) = pm_clone.listen(&server_addr).await {
+            error!("PluginManager listen error: {:?}", e);
         }
     });
 
-    // 8) Main loop: periodically broadcast Tick events
-    info!("Server setup complete. Entering main loop...");
+    // 8) Periodically publish a “Tick” event for demonstration
     loop {
-        tokio::time::sleep(Duration::from_secs(10)).await;
-        plugin_manager.broadcast(BotToPlugin::Tick);
-        // Could also do other server logic here
+        tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+        let evt = BotEvent::Tick;
+        event_bus.publish(evt).await;
     }
 }
 
