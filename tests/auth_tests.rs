@@ -1,16 +1,23 @@
 // tests/auth_tests.rs
-use maowbot::{auth::{
-    AuthManager, AuthenticationPrompt, AuthenticationResponse,
-    AuthenticationHandler,
-}, models::{Platform, PlatformCredential, CredentialType}, Error};
+
+use maowbot::{
+    auth::{
+        AuthManager, AuthenticationPrompt, AuthenticationResponse,
+        AuthenticationHandler, PlatformAuthenticator,
+    },
+    models::{Platform, PlatformCredential, CredentialType},
+    repositories::CredentialsRepository,
+    Error,
+};
 use async_trait::async_trait;
+use tokio::sync::Mutex;  // switched to tokio::sync::Mutex
 use std::collections::HashMap;
-use std::sync::Mutex;
 use chrono::Utc;
 use maowbot::platforms::discord::auth::DiscordAuthenticator;
-use maowbot::repositories::CredentialsRepository;
+use std::sync::Arc;
 
-// Make AuthenticationResponse cloneable
+/// Make AuthenticationResponse cloneable by storing data in
+/// a simpler struct if needed. For now, we’ll just keep the test logic.
 #[derive(Clone)]
 struct TestAuthResponse {
     code: Option<String>,
@@ -38,13 +45,13 @@ impl AuthenticationHandler for MockAuthHandler {
 
 #[derive(Default)]
 struct MockCredentialsRepository {
-    credentials: Mutex<HashMap<(Platform, String), PlatformCredential>>,
+    credentials: Arc<Mutex<HashMap<(Platform, String), PlatformCredential>>>,
 }
 
 #[async_trait]
 impl CredentialsRepository for MockCredentialsRepository {
     async fn store_credentials(&self, cred: &PlatformCredential) -> Result<(), Error> {
-        let mut creds = self.credentials.lock().unwrap();
+        let mut creds = self.credentials.lock().await;
         creds.insert(
             (cred.platform.clone(), cred.user_id.clone()),
             cred.clone()
@@ -57,12 +64,12 @@ impl CredentialsRepository for MockCredentialsRepository {
         platform: &Platform,
         user_id: &str
     ) -> Result<Option<PlatformCredential>, Error> {
-        let creds = self.credentials.lock().unwrap();
+        let creds = self.credentials.lock().await;
         Ok(creds.get(&(platform.clone(), user_id.to_string())).cloned())
     }
 
     async fn update_credentials(&self, cred: &PlatformCredential) -> Result<(), Error> {
-        let mut creds = self.credentials.lock().unwrap();
+        let mut creds = self.credentials.lock().await;
         if creds.contains_key(&(cred.platform.clone(), cred.user_id.clone())) {
             creds.insert(
                 (cred.platform.clone(), cred.user_id.clone()),
@@ -79,7 +86,7 @@ impl CredentialsRepository for MockCredentialsRepository {
         platform: &Platform,
         user_id: &str
     ) -> Result<(), Error> {
-        let mut creds = self.credentials.lock().unwrap();
+        let mut creds = self.credentials.lock().await;
         match creds.remove(&(platform.clone(), user_id.to_string())) {
             Some(_) => Ok(()),
             None => Err(Error::Database(sqlx::Error::RowNotFound))
@@ -93,20 +100,14 @@ impl MockCredentialsRepository {
         Self::default()
     }
 
-    pub fn with_credential(self, cred: PlatformCredential) -> Self {
-        self.credentials.lock().unwrap().insert(
-            (cred.platform.clone(), cred.user_id.clone()),
-            cred
-        );
-        self
+    pub async fn credentials_count(&self) -> usize {
+        let creds = self.credentials.lock().await;
+        creds.len()
     }
 
-    pub fn credentials_count(&self) -> usize {
-        self.credentials.lock().unwrap().len()
-    }
-
-    pub fn contains_credential(&self, platform: Platform, user_id: &str) -> bool {
-        self.credentials.lock().unwrap().contains_key(&(platform, user_id.to_string()))
+    pub async fn contains_credential(&self, platform: Platform, user_id: &str) -> bool {
+        let creds = self.credentials.lock().await;
+        creds.contains_key(&(platform, user_id.to_string()))
     }
 }
 
@@ -130,8 +131,8 @@ async fn test_credential_storage_and_retrieval() -> Result<(), Error> {
 
     // Test storage
     creds_repo.store_credentials(&test_cred).await?;
-    assert_eq!(creds_repo.credentials_count(), 1);
-    assert!(creds_repo.contains_credential(Platform::Twitch, "test_user"));
+    assert_eq!(creds_repo.credentials_count().await, 1);
+    assert!(creds_repo.contains_credential(Platform::Twitch, "test_user").await);
 
     let retrieved = creds_repo.get_credentials(&Platform::Twitch, "test_user").await?;
     assert!(retrieved.is_some());
@@ -144,7 +145,7 @@ async fn test_credential_storage_and_retrieval() -> Result<(), Error> {
 }
 
 #[tokio::test]
-async fn test_invalid_platform() {
+async fn test_auth_manager_with_unregistered_platform() -> Result<(), Error> {
     let auth_handler = MockAuthHandler::default();
     let creds_repo = MockCredentialsRepository::default();
 
@@ -153,9 +154,10 @@ async fn test_invalid_platform() {
         Box::new(auth_handler),
     );
 
-    // Try to authenticate with unregistered platform
+    // Try to authenticate with a platform that is unregistered
     let result = auth_manager.authenticate_platform(Platform::VRChat).await;
     assert!(result.is_err());
+    Ok(())
 }
 
 #[tokio::test]
@@ -172,20 +174,7 @@ async fn test_error_scenarios() -> Result<(), Error> {
     let result = auth_manager.authenticate_platform(Platform::VRChat).await;
     assert!(matches!(result, Err(Error::Platform(_))));
 
-    // Test expired token refresh
-    let _expired_cred = PlatformCredential {
-        credential_id: "test_id".to_string(),
-        platform: Platform::Twitch,
-        credential_type: CredentialType::OAuth2,
-        user_id: "test_user".to_string(),
-        primary_token: "expired_token".to_string(),
-        refresh_token: None,
-        additional_data: None,
-        expires_at: Some(Utc::now().naive_utc()),
-        created_at: Utc::now().naive_utc(),
-        updated_at: Utc::now().naive_utc(),
-    };
-
+    // Test refreshing with no credentials stored => should fail
     let result = auth_manager.refresh_platform_credentials(&Platform::Twitch, "test_user").await;
     assert!(matches!(result, Err(Error::Auth(_))));
 
@@ -202,6 +191,7 @@ async fn test_discord_credentials() -> Result<(), Error> {
         Box::new(auth_handler),
     );
 
+    // Register DiscordAuthenticator
     auth_manager.register_authenticator(
         Platform::Discord,
         Box::new(DiscordAuthenticator::new()),

@@ -1,4 +1,5 @@
 // tests/credential_tests.rs
+
 use maowbot::{
     Database,
     models::*,
@@ -13,7 +14,7 @@ async fn setup_test_db() -> (Database, Encryptor) {
     let db = Database::new(":memory:").await.unwrap();
     db.migrate().await.unwrap();
 
-    // In production, this key should come from secure configuration
+    // In production, this key would come from secure config
     let key = [0u8; 32]; // Test key
     let encryptor = Encryptor::new(&key).unwrap();
 
@@ -25,13 +26,14 @@ async fn test_credential_storage() -> anyhow::Result<()> {
     let (db, encryptor) = setup_test_db().await;
     let repo = SqliteCredentialsRepository::new(db.pool().clone(), encryptor);
 
-    // Create timestamps first
     let now = Utc::now().naive_utc();
 
-    // First create the user
+    // Must insert a user first, due to the FOREIGN KEY constraint
     sqlx::query!(
-        r#"INSERT INTO users (user_id, created_at, last_seen, is_active)
-        VALUES (?, ?, ?, ?)"#,
+        r#"
+        INSERT INTO users (user_id, created_at, last_seen, is_active)
+        VALUES (?, ?, ?, ?)
+        "#,
         "test_user",
         now,
         now,
@@ -53,7 +55,7 @@ async fn test_credential_storage() -> anyhow::Result<()> {
         updated_at: now,
     };
 
-    // Test storing credentials
+    // Store credentials
     repo.store_credentials(&test_cred).await?;
 
     let retrieved = repo.get_credentials(&Platform::Twitch, "test_user")

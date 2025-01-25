@@ -1,11 +1,11 @@
 // tests/repository_tests.rs
+
 use maowbot::{
     Database,
     models::{User, Platform, PlatformIdentity},
     repositories::sqlite::{UserRepository, PlatformIdentityRepository},
     repositories::Repository,
 };
-
 use chrono::Utc;
 use serde_json::json;
 use uuid::Uuid;
@@ -24,22 +24,21 @@ async fn test_user_repository() -> anyhow::Result<()> {
     let now = Utc::now().naive_utc();
     let user = User {
         user_id: "test_user".to_string(),
-        global_username: None,    // <-- add this line
+        global_username: None,
         created_at: now,
         last_seen: now,
         is_active: true,
     };
 
-
-    // Test create
+    // create
     repo.create(&user).await?;
 
-    // Test get
+    // get
     let retrieved = repo.get(&user.user_id).await?.expect("User should exist");
     assert_eq!(user.user_id, retrieved.user_id);
     assert!(retrieved.is_active);
 
-    // Test update
+    // update
     let mut updated_user = user.clone();
     updated_user.is_active = false;
     repo.update(&updated_user).await?;
@@ -47,14 +46,13 @@ async fn test_user_repository() -> anyhow::Result<()> {
     let retrieved = repo.get(&user.user_id).await?.expect("User should exist");
     assert!(!retrieved.is_active);
 
-    // Test delete
+    // delete
     repo.delete(&user.user_id).await?;
     let retrieved = repo.get(&user.user_id).await?;
     assert!(retrieved.is_none());
 
     Ok(())
 }
-
 
 #[tokio::test]
 async fn test_platform_identity_repository() -> anyhow::Result<()> {
@@ -63,7 +61,7 @@ async fn test_platform_identity_repository() -> anyhow::Result<()> {
 
     let now = Utc::now().naive_utc();
 
-    // First create the user
+    // Must create the user row first because platform_identities.user_id references users.user_id
     sqlx::query!(
         r#"INSERT INTO users (user_id, created_at, last_seen, is_active)
         VALUES (?, ?, ?, ?)"#,
@@ -78,7 +76,7 @@ async fn test_platform_identity_repository() -> anyhow::Result<()> {
     // Then create the platform identity
     let identity = PlatformIdentity {
         platform_identity_id: Uuid::new_v4().to_string(),
-        user_id: "test_user".to_string(),  // Reference the user we just created
+        user_id: "test_user".to_string(),  // reference the user
         platform: Platform::Twitch,
         platform_user_id: "twitch_123".to_string(),
         platform_username: "testuser".to_string(),
@@ -91,26 +89,28 @@ async fn test_platform_identity_repository() -> anyhow::Result<()> {
         last_updated: now,
     };
 
-    // Test create
+    // create
     repo.create(&identity).await?;
 
-    // Test get
+    // get
     let retrieved = repo.get(&identity.platform_identity_id).await?
         .expect("Platform identity should exist");
     assert_eq!(identity.platform_identity_id, retrieved.platform_identity_id);
     assert_eq!(identity.platform_user_id, retrieved.platform_user_id);
 
-    // Test get_by_platform
-    let by_platform = repo.get_by_platform(Platform::Twitch, &identity.platform_user_id).await?
+    // get_by_platform
+    let by_platform = repo
+        .get_by_platform(Platform::Twitch, &identity.platform_user_id)
+        .await?
         .expect("Platform identity should exist");
     assert_eq!(identity.platform_identity_id, by_platform.platform_identity_id);
 
-    // Test get_all_for_user
+    // get_all_for_user
     let user_identities = repo.get_all_for_user(&identity.user_id).await?;
     assert_eq!(user_identities.len(), 1);
     assert_eq!(user_identities[0].platform_identity_id, identity.platform_identity_id);
 
-    // Test update
+    // update
     let mut updated_identity = identity.clone();
     updated_identity.platform_display_name = Some("Updated Test User".to_string());
     repo.update(&updated_identity).await?;
@@ -119,7 +119,7 @@ async fn test_platform_identity_repository() -> anyhow::Result<()> {
         .expect("Platform identity should exist");
     assert_eq!(retrieved.platform_display_name, Some("Updated Test User".to_string()));
 
-    // Test delete
+    // delete
     repo.delete(&identity.platform_identity_id).await?;
     let retrieved = repo.get(&identity.platform_identity_id).await?;
     assert!(retrieved.is_none());

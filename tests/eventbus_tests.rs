@@ -1,16 +1,19 @@
-//! tests/eventbus_tests.rs
-use std::sync::{Arc, Mutex};
+// tests/eventbus_tests.rs
+
+use std::sync::Arc;
 use async_trait::async_trait;
 use chrono::Utc;
 use tokio::time::Duration;
+use tokio::sync::Mutex;
 
-// Our crate modules
 use maowbot::Error;
 use maowbot::eventbus::{EventBus, BotEvent};
 use maowbot::eventbus::db_logger::spawn_db_logger_task;
 use maowbot::plugins::capabilities::PluginCapability;
-use maowbot::plugins::manager::{PluginManager, PluginConnection, PluginConnectionInfo};
-// For the analytics trait and data
+use maowbot::plugins::manager::{
+    PluginManager, PluginConnection, PluginConnectionInfo
+};
+use maowbot::plugins::protocol::BotToPlugin;
 use maowbot::repositories::sqlite::analytics::{ChatMessage, AnalyticsRepo};
 
 // ---------- Mock Analytics Repo ----------
@@ -30,7 +33,7 @@ impl MockAnalyticsRepo {
 #[async_trait]
 impl AnalyticsRepo for MockAnalyticsRepo {
     async fn insert_chat_message(&self, msg: &ChatMessage) -> Result<(), Error> {
-        let mut lock = self.messages.lock().unwrap();
+        let mut lock = self.messages.lock().await;
         lock.push(msg.clone());
         Ok(())
     }
@@ -45,16 +48,18 @@ struct MockPlugin {
 
 #[async_trait]
 impl PluginConnection for MockPlugin {
-    fn info(&self) -> PluginConnectionInfo {
-        self.info.lock().unwrap().clone()
+    async fn info(&self) -> PluginConnectionInfo {
+        let guard = self.info.lock().await;
+        guard.clone()
     }
 
-    fn set_capabilities(&self, caps: Vec<maowbot::plugins::capabilities::PluginCapability>) {
-        self.info.lock().unwrap().capabilities = caps;
+    async fn set_capabilities(&self, caps: Vec<PluginCapability>) {
+        let mut guard = self.info.lock().await;
+        guard.capabilities = caps;
     }
 
-    fn send(&self, event: maowbot::plugins::protocol::BotToPlugin) -> Result<(), Error> {
-        let mut lock = self.received.lock().unwrap();
+    async fn send(&self, event: BotToPlugin) -> Result<(), Error> {
+        let mut lock = self.received.lock().await;
         lock.push(format!("{:?}", event));
         Ok(())
     }
@@ -63,7 +68,6 @@ impl PluginConnection for MockPlugin {
         Ok(())
     }
 
-    // ADD the as_any method so we can downcast in the test
     fn as_any(&self) -> &dyn std::any::Any {
         self
     }
@@ -71,7 +75,7 @@ impl PluginConnection for MockPlugin {
 
 // ---------- The actual test ----------
 #[tokio::test]
-async fn test_eventbus_integration() {
+async fn test_eventbus_integration() -> Result<(), Error> {
     // 1) Create an EventBus
     let bus = Arc::new(EventBus::new());
 
@@ -84,19 +88,19 @@ async fn test_eventbus_integration() {
     // 4) Create a PluginManager, subscribe to bus
     let plugin_mgr = PluginManager::new(None);
     plugin_mgr.subscribe_to_event_bus(bus.clone());
-    // tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
-    // 5) Add a mock plugin
+    // 5) Add a mock plugin that can receive chat events
     let mock_plugin = MockPlugin {
         info: Arc::new(Mutex::new(PluginConnectionInfo {
             name: "mock_plugin".into(),
-            capabilities: vec![PluginCapability::ReceiveChatEvents], // add it here
+            capabilities: vec![PluginCapability::ReceiveChatEvents],
         })),
         received: Arc::new(Mutex::new(vec![])),
     };
 
+    // Instead of blocking_lock(), just lock().await
     {
-        let mut list = plugin_mgr.plugin_list();
+        let mut list = plugin_mgr.plugins.lock().await;
         list.push(Arc::new(mock_plugin.clone()) as Arc<dyn PluginConnection>);
     }
 
@@ -110,29 +114,22 @@ async fn test_eventbus_integration() {
     };
     bus.publish(evt).await;
 
-    // 7) Sleep a bit to ensure it's queued
+    // 7) Sleep briefly to ensure it’s logged/batched
     tokio::time::sleep(Duration::from_millis(50)).await;
 
     // 8) Trigger a final flush
     bus.shutdown();
     tokio::time::sleep(Duration::from_millis(50)).await;
 
-    // 9) Check the DB
-    let lock = mock_repo.messages.lock().unwrap();
+    // 9) Check that the DB logger inserted the message
+    let lock = mock_repo.messages.lock().await;
     assert_eq!(lock.len(), 1, "DB logger should have inserted 1 message");
     assert_eq!(lock[0].message_text, "hello world");
-    drop(lock);
 
-    // 10) Check the plugin
-    let plugins = plugin_mgr.plugin_list();
-    let plugin_dyn = plugins[0].clone();
-    // now downcast
-    let maybe_mock = plugin_dyn.as_any().downcast_ref::<MockPlugin>();
-    assert!(maybe_mock.is_some(), "Should be our MockPlugin");
-    let mock_ref = maybe_mock.unwrap();
-    let recvd = mock_ref.received.lock().unwrap();
+    // 10) Check the plugin’s received events
+    let recvd = mock_plugin.received.lock().await;
     assert_eq!(recvd.len(), 1, "Should have 1 inbound event");
     assert!(recvd[0].contains("ChatMessage"));
 
-    // done
+    Ok(())
 }

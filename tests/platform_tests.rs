@@ -1,9 +1,10 @@
 // tests/platform_tests.rs
+
 use maowbot::{platforms::*, Error};
 use async_trait::async_trait;
 
 #[tokio::test]
-async fn test_platform_capabilities() -> anyhow::Result<()> {
+async fn test_platform_capabilities() -> Result<(), Error> {
     #[derive(Debug)]
     struct MockPlatform {
         connection_status: ConnectionStatus,
@@ -108,6 +109,5 @@ async fn test_platform_capabilities() -> anyhow::Result<()> {
     assert_eq!(platform.get_viewer_count("test_channel").await?, 100);
 
     platform.disconnect().await?;
-
     Ok(())
 }
