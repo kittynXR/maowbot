@@ -8,6 +8,7 @@ use tokio::time::Duration;
 use maowbot::Error;
 use maowbot::eventbus::{EventBus, BotEvent};
 use maowbot::eventbus::db_logger::spawn_db_logger_task;
+use maowbot::plugins::capabilities::PluginCapability;
 use maowbot::plugins::manager::{PluginManager, PluginConnection, PluginConnectionInfo};
 // For the analytics trait and data
 use maowbot::repositories::sqlite::analytics::{ChatMessage, AnalyticsRepo};
@@ -89,10 +90,11 @@ async fn test_eventbus_integration() {
     let mock_plugin = MockPlugin {
         info: Arc::new(Mutex::new(PluginConnectionInfo {
             name: "mock_plugin".into(),
-            capabilities: vec![],
+            capabilities: vec![PluginCapability::ReceiveChatEvents], // add it here
         })),
         received: Arc::new(Mutex::new(vec![])),
     };
+
     {
         let mut list = plugin_mgr.plugin_list();
         list.push(Arc::new(mock_plugin.clone()) as Arc<dyn PluginConnection>);
