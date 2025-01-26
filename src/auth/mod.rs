@@ -3,6 +3,13 @@ use async_trait::async_trait;
 use crate::Error;
 
 pub mod manager;
+pub(crate) mod user_manager;
+
+pub use manager::AuthManager;
+pub use user_manager::{UserManager, DefaultUserManager};
+
+#[cfg(test)]
+mod user_manager_tests;
 
 // The central traits you introduced
 #[derive(Debug, Clone)]
@@ -54,5 +61,3 @@ pub trait PlatformAuthenticator: Send {
     async fn validate(&self, credential: &crate::models::PlatformCredential) -> Result<bool, Error>;
     async fn revoke(&mut self, credential: &crate::models::PlatformCredential) -> Result<(), Error>;
 }
-
-pub use manager::AuthManager;

@@ -11,6 +11,9 @@ pub mod analytics;
 
 pub mod link_requests;
 pub mod user_audit_log;
+pub mod user_analysis;
+
+pub use user_analysis::{SqliteUserAnalysisRepository, UserAnalysisRepository};
 
 pub use self::user::UserRepository;
 pub use self::platform_identity::PlatformIdentityRepository;

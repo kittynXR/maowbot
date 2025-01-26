@@ -1,3 +1,6 @@
+pub mod user_analysis;
+pub use user_analysis::UserAnalysis;
+
 use std::fmt;
 use std::str::FromStr;
 use chrono::{NaiveDateTime};
