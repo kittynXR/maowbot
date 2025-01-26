@@ -47,11 +47,10 @@ pub trait UserManager: Send + Sync {
 /// Struct stored in the in‐memory cache
 #[derive(Debug, Clone)]
 struct CachedUser {
-    user_id: String,
-    pub last_access: DateTime<Utc>,  // for TTL expiry
+    user: User,
+    last_access: DateTime<Utc>,
 }
 
-/// Concrete implementation with in-memory caching & TTL
 pub struct DefaultUserManager {
     user_repo: UserRepository,
     identity_repo: PlatformIdentityRepository,
@@ -78,7 +77,27 @@ impl DefaultUserManager {
         }
     }
 
-    /// Internal helper to remove any stale entries older than 24h
+    async fn insert_into_cache(
+        &self,
+        platform: Platform,
+        platform_user_id: &str,
+        user: &User
+    ) {
+        let mut lock = self.user_cache.lock().await;
+        lock.insert(
+            (platform, platform_user_id.to_string()),
+            CachedUser {
+                user: user.clone(),
+                last_access: Utc::now(),
+            }
+        );
+    }
+
+    pub async fn invalidate_user_in_cache(&self, platform: Platform, platform_user_id: &str) {
+        let mut lock = self.user_cache.lock().await;
+        lock.remove(&(platform, platform_user_id.to_string()));
+    }
+
     async fn prune_cache(&self) {
         let now = Utc::now();
         let mut guard = self.user_cache.lock().await;
@@ -117,86 +136,74 @@ impl UserManager for DefaultUserManager {
         platform_user_id: &str,
         platform_username: Option<&str>,
     ) -> Result<User, Error> {
-        // 1) Prune old entries
+
+        // 1) prune old entries
         self.prune_cache().await;
 
-        // 2) Check the in-memory cache first
+        // 2) check the in-memory cache
         {
             let mut cache_guard = self.user_cache.lock().await;
             if let Some(entry) = cache_guard.get_mut(&(platform.clone(), platform_user_id.to_string())) {
-                // Check if it’s still fresh (prune_cache removed stale ones, so it should be good).
-                // We can do a quick DB fetch if we need the entire `User` struct:
-                let user_id = entry.user_id.clone();
-                entry.last_access = Utc::now(); // update its last_access
-                drop(cache_guard);
-
-                if let Some(user) = self.user_repo.get(&user_id).await? {
-                    return Ok(user);
-                }
-                // if DB lookup fails, we’ll fall through and do creation logic
+                // Found in cache => just refresh last_access & return
+                entry.last_access = Utc::now();
+                // Return a clone of the user (so we don’t hold the lock)
+                return Ok(entry.user.clone());
             }
         }
 
-        // 3) Not found in the cache => check DB by platform_identities
+        // 3) If not in cache, try DB
         let existing_ident = self
             .identity_repo
             .get_by_platform(platform.clone(), platform_user_id)
             .await?;
 
-        if let Some(identity) = existing_ident {
-            // Found an identity => fetch the user
-            if let Some(db_user) = self.user_repo.get(&identity.user_id).await? {
-                // Insert into the cache
-                let mut cache_guard = self.user_cache.lock().await;
-                cache_guard.insert(
-                    (platform.clone(), platform_user_id.to_string()),
-                    CachedUser {
-                        user_id: db_user.user_id.clone(),
-                        last_access: Utc::now(),
-                    },
-                );
-                return Ok(db_user);
-            }
-        }
+        let user = if let Some(identity) = existing_ident {
+            // found in DB => fetch user
+            let db_user = self
+                .user_repo
+                .get(&identity.user_id)
+                .await?
+                .ok_or_else(|| Error::Database(sqlx::Error::RowNotFound))?;
 
-        // 4) Otherwise, create a new user + identity
-        let new_user_id = Uuid::new_v4().to_string();
-        let now = Utc::now().naive_utc();
-        let user = User {
-            user_id: new_user_id.clone(),
-            global_username: None,
-            created_at: now,
-            last_seen: now,
-            is_active: true,
-        };
-        self.user_repo.create(&user).await?;
+            // Store in cache
+            self.insert_into_cache(platform.clone(), platform_user_id, &db_user).await;
 
-        let new_identity = PlatformIdentity {
-            platform_identity_id: Uuid::new_v4().to_string(),
-            user_id: new_user_id.clone(),
-            platform: platform.clone(),
-            platform_user_id: platform_user_id.to_string(),
-            platform_username: platform_username.unwrap_or("unknown").to_string(),
-            platform_display_name: None,
-            platform_roles: vec![],
-            platform_data: serde_json::json!({}),
-            created_at: now,
-            last_updated: now,
-        };
-        self.identity_repo.create(&new_identity).await?;
-
-        // Optionally create a default user_analysis row
-        let _analysis = self.get_or_create_user_analysis(&new_user_id).await?;
-
-        // 5) Insert into the cache
-        let mut cache_guard = self.user_cache.lock().await;
-        cache_guard.insert(
-            (platform, platform_user_id.to_string()),
-            CachedUser {
+            db_user
+        } else {
+            // user + identity do not exist => create
+            let new_user_id = Uuid::new_v4().to_string();
+            let now = Utc::now().naive_utc();
+            let user = User {
                 user_id: new_user_id.clone(),
-                last_access: Utc::now(),
-            },
-        );
+                global_username: None,
+                created_at: now,
+                last_seen: now,
+                is_active: true,
+            };
+            self.user_repo.create(&user).await?;
+
+            let new_identity = PlatformIdentity {
+                platform_identity_id: Uuid::new_v4().to_string(),
+                user_id: new_user_id.clone(),
+                platform: platform.clone(),
+                platform_user_id: platform_user_id.to_string(),
+                platform_username: platform_username.unwrap_or("unknown").to_string(),
+                platform_display_name: None,
+                platform_roles: vec![],
+                platform_data: serde_json::json!({}),
+                created_at: now,
+                last_updated: now,
+            };
+            self.identity_repo.create(&new_identity).await?;
+
+            // also create user_analysis row if needed
+            let _analysis = self.get_or_create_user_analysis(&new_user_id).await?;
+
+            // insert to cache
+            self.insert_into_cache(platform.clone(), platform_user_id, &user).await;
+
+            user
+        };
 
         Ok(user)
     }
@@ -219,13 +226,21 @@ impl UserManager for DefaultUserManager {
         new_username: Option<&str>,
     ) -> Result<(), Error> {
         if let Some(mut user) = self.user_repo.get(user_id).await? {
-            user.last_seen = Utc::now().naive_utc();
+            user.last_seen = chrono::Utc::now().naive_utc();
             if let Some(name) = new_username {
                 user.global_username = Some(name.to_string());
             }
             self.user_repo.update(&user).await?;
+
+            // Invalidate: remove from cache so next get_or_create_user does a DB fetch
+            let mut lock = self.user_cache.lock().await;
+            lock.retain(|_key, cached| {
+                cached.user.user_id != user_id
+            });
         }
         Ok(())
     }
+
+
 }
 

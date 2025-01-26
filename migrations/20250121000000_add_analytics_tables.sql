@@ -7,7 +7,7 @@ CREATE TABLE IF NOT EXISTS chat_messages (
     channel TEXT NOT NULL,
     user_id TEXT NOT NULL,       -- references users(user_id)
     message_text TEXT NOT NULL,
-    timestamp TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    timestamp INTEGER NOT NULL DEFAULT CURRENT_TIMESTAMP,
     metadata TEXT,               -- JSON for roles, badges, any ephemeral info
     FOREIGN KEY (user_id) REFERENCES users(user_id)
 );
