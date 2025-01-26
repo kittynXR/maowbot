@@ -1,4 +1,4 @@
-use sqlx::{Pool, Sqlite};
+use sqlx::{Pool, Sqlite, Row};
 use crate::Error;
 use async_trait::async_trait;
 use chrono::{NaiveDateTime, Utc};
@@ -8,17 +8,16 @@ use uuid::Uuid;
 #[derive(Debug, Clone)]
 pub struct LinkRequest {
     pub link_request_id: String,
-    pub requesting_user_id: String,       // references users(user_id)
-    pub target_platform: Option<String>,  // e.g. "twitch"
+    pub requesting_user_id: String,
+    pub target_platform: Option<String>,
     pub target_platform_user_id: Option<String>,
     pub link_code: Option<String>,
-    pub status: String,                   // "pending", "approved", "denied", etc
+    pub status: String,
     pub created_at: NaiveDateTime,
     pub updated_at: NaiveDateTime,
 }
 
 impl LinkRequest {
-    /// Helper: create a new pending link request
     pub fn new(
         requesting_user_id: &str,
         target_platform: Option<&str>,
@@ -38,7 +37,6 @@ impl LinkRequest {
     }
 }
 
-/// Minimal trait for LinkRequests (you can fold this into `Repository` if you prefer)
 #[async_trait]
 pub trait LinkRequestsRepository {
     async fn create_link_request(&self, req: &LinkRequest) -> Result<(), Error>;
@@ -62,7 +60,7 @@ impl SqliteLinkRequestsRepository {
 #[async_trait]
 impl LinkRequestsRepository for SqliteLinkRequestsRepository {
     async fn create_link_request(&self, req: &LinkRequest) -> Result<(), Error> {
-        sqlx::query!(
+        sqlx::query(
             r#"
             INSERT INTO link_requests (
                 link_request_id,
@@ -75,23 +73,23 @@ impl LinkRequestsRepository for SqliteLinkRequestsRepository {
                 updated_at
             )
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            "#,
-            req.link_request_id,
-            req.requesting_user_id,
-            req.target_platform,
-            req.target_platform_user_id,
-            req.link_code,
-            req.status,
-            req.created_at,
-            req.updated_at
+            "#
         )
+            .bind(&req.link_request_id)
+            .bind(&req.requesting_user_id)
+            .bind(&req.target_platform)
+            .bind(&req.target_platform_user_id)
+            .bind(&req.link_code)
+            .bind(&req.status)
+            .bind(req.created_at)
+            .bind(req.updated_at)
             .execute(&self.pool)
             .await?;
         Ok(())
     }
 
     async fn get_link_request(&self, link_request_id: &str) -> Result<Option<LinkRequest>, Error> {
-        let row = sqlx::query!(
+        let row = sqlx::query(
             r#"
             SELECT link_request_id,
                    requesting_user_id,
@@ -103,22 +101,22 @@ impl LinkRequestsRepository for SqliteLinkRequestsRepository {
                    updated_at
             FROM link_requests
             WHERE link_request_id = ?
-            "#,
-            link_request_id
+            "#
         )
+            .bind(link_request_id)
             .fetch_optional(&self.pool)
             .await?;
 
         if let Some(r) = row {
             Ok(Some(LinkRequest {
-                link_request_id: r.link_request_id,
-                requesting_user_id: r.requesting_user_id,
-                target_platform: r.target_platform,
-                target_platform_user_id: r.target_platform_user_id,
-                link_code: r.link_code,
-                status: r.status,
-                created_at: r.created_at,
-                updated_at: r.updated_at,
+                link_request_id: r.try_get("link_request_id")?,
+                requesting_user_id: r.try_get("requesting_user_id")?,
+                target_platform: r.try_get("target_platform")?,
+                target_platform_user_id: r.try_get("target_platform_user_id")?,
+                link_code: r.try_get("link_code")?,
+                status: r.try_get("status")?,
+                created_at: r.try_get("created_at")?,
+                updated_at: r.try_get("updated_at")?,
             }))
         } else {
             Ok(None)
@@ -126,10 +124,9 @@ impl LinkRequestsRepository for SqliteLinkRequestsRepository {
     }
 
     async fn update_link_request(&self, req: &LinkRequest) -> Result<(), Error> {
-        // fix: create a local variable for updated_at so query! doesn't borrow a temp
         let now = Utc::now().naive_utc();
 
-        sqlx::query!(
+        sqlx::query(
             r#"
             UPDATE link_requests
             SET requesting_user_id = ?,
@@ -139,15 +136,15 @@ impl LinkRequestsRepository for SqliteLinkRequestsRepository {
                 status = ?,
                 updated_at = ?
             WHERE link_request_id = ?
-            "#,
-            req.requesting_user_id,
-            req.target_platform,
-            req.target_platform_user_id,
-            req.link_code,
-            req.status,
-            now, // we pass the local variable here
-            req.link_request_id
+            "#
         )
+            .bind(&req.requesting_user_id)
+            .bind(&req.target_platform)
+            .bind(&req.target_platform_user_id)
+            .bind(&req.link_code)
+            .bind(&req.status)
+            .bind(now)
+            .bind(&req.link_request_id)
             .execute(&self.pool)
             .await?;
 
@@ -155,10 +152,10 @@ impl LinkRequestsRepository for SqliteLinkRequestsRepository {
     }
 
     async fn delete_link_request(&self, link_request_id: &str) -> Result<(), Error> {
-        sqlx::query!(
-            "DELETE FROM link_requests WHERE link_request_id = ?",
-            link_request_id
+        sqlx::query(
+            "DELETE FROM link_requests WHERE link_request_id = ?"
         )
+            .bind(link_request_id)
             .execute(&self.pool)
             .await?;
         Ok(())

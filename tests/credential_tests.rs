@@ -9,6 +9,7 @@ use maowbot::{
 };
 use chrono::Utc;
 use uuid::Uuid;
+use sqlx::{Row};
 
 async fn setup_test_db() -> (Database, Encryptor) {
     let db = Database::new(":memory:").await.unwrap();
@@ -29,16 +30,16 @@ async fn test_credential_storage() -> anyhow::Result<()> {
     let now = Utc::now().naive_utc();
 
     // Must insert a user first, due to the FOREIGN KEY constraint
-    sqlx::query!(
+    sqlx::query(
         r#"
         INSERT INTO users (user_id, created_at, last_seen, is_active)
         VALUES (?, ?, ?, ?)
-        "#,
-        "test_user",
-        now,
-        now,
-        true
+        "#
     )
+        .bind("test_user")
+        .bind(now)
+        .bind(now)
+        .bind(true)
         .execute(db.pool())
         .await?;
 
@@ -58,6 +59,7 @@ async fn test_credential_storage() -> anyhow::Result<()> {
     // Store credentials
     repo.store_credentials(&test_cred).await?;
 
+    // Retrieve
     let retrieved = repo.get_credentials(&Platform::Twitch, "test_user")
         .await?
         .expect("Credentials should exist");

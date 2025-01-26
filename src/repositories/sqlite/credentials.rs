@@ -1,6 +1,6 @@
 //! src/repositories/sqlite/credentials.rs
 use std::str::FromStr;
-use sqlx::{Pool, Sqlite};
+use sqlx::{Pool, Sqlite, Row};
 use crate::Error;
 use crate::crypto::Encryptor;
 use crate::repositories::CredentialsRepository;
@@ -34,29 +34,30 @@ impl CredentialsRepository for SqliteCredentialsRepository {
             None => None,
         };
 
-        sqlx::query!(
-            r#"INSERT INTO platform_credentials
+        sqlx::query(
+            r#"
+            INSERT INTO platform_credentials
                (credential_id, platform, credential_type, user_id, primary_token,
                 refresh_token, additional_data, expires_at, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-               ON CONFLICT (platform, user_id) DO UPDATE SET
-                   primary_token = excluded.primary_token,
-                   refresh_token = excluded.refresh_token,
-                   additional_data = excluded.additional_data,
-                   expires_at = excluded.expires_at,
-                   updated_at = excluded.updated_at
-            "#,
-            creds.credential_id,
-            platform_str,
-            cred_type_str,
-            creds.user_id,
-            encrypted_token,
-            encrypted_refresh,
-            encrypted_data,
-            creds.expires_at,
-            creds.created_at,
-            creds.updated_at
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT (platform, user_id) DO UPDATE SET
+                primary_token = excluded.primary_token,
+                refresh_token = excluded.refresh_token,
+                additional_data = excluded.additional_data,
+                expires_at = excluded.expires_at,
+                updated_at = excluded.updated_at
+            "#
         )
+            .bind(&creds.credential_id)
+            .bind(&platform_str)
+            .bind(&cred_type_str)
+            .bind(&creds.user_id)
+            .bind(encrypted_token)
+            .bind(encrypted_refresh)
+            .bind(encrypted_data)
+            .bind(creds.expires_at)
+            .bind(creds.created_at)
+            .bind(creds.updated_at)
             .execute(&self.pool)
             .await?;
 
@@ -70,46 +71,59 @@ impl CredentialsRepository for SqliteCredentialsRepository {
     ) -> Result<Option<PlatformCredential>, Error> {
         let platform_str = platform.to_string();
 
-        let record = sqlx::query!(
-            r#"SELECT *
-               FROM platform_credentials
-               WHERE platform = ? AND user_id = ?
-            "#,
-            platform_str,
-            user_id
+        let row = sqlx::query(
+            r#"
+            SELECT
+                credential_id,
+                platform,
+                credential_type,
+                user_id,
+                primary_token,
+                refresh_token,
+                additional_data,
+                expires_at,
+                created_at,
+                updated_at
+            FROM platform_credentials
+            WHERE platform = ? AND user_id = ?
+            "#
         )
+            .bind(&platform_str)
+            .bind(user_id)
             .fetch_optional(&self.pool)
             .await?;
 
-        match record {
-            Some(r) => {
-                let decrypted_token = self.encryptor.decrypt(&r.primary_token)?;
-                let decrypted_refresh = if let Some(ref_token) = r.refresh_token {
-                    Some(self.encryptor.decrypt(&ref_token)?)
-                } else {
-                    None
-                };
-                let decrypted_data = if let Some(data_str) = r.additional_data {
-                    let json_str = self.encryptor.decrypt(&data_str)?;
-                    Some(serde_json::from_str(&json_str)?)
-                } else {
-                    None
-                };
+        if let Some(r) = row {
+            let decrypted_token = self.encryptor.decrypt(r.try_get("primary_token")?)?;
+            let refresh_opt: Option<String> = r.try_get("refresh_token")?;
+            let decrypted_refresh = if let Some(ref_token) = refresh_opt {
+                Some(self.encryptor.decrypt(&ref_token)?)
+            } else {
+                None
+            };
+            let data_opt: Option<String> = r.try_get("additional_data")?;
+            let decrypted_data = if let Some(data_str) = data_opt {
+                let json_str = self.encryptor.decrypt(&data_str)?;
+                Some(serde_json::from_str(&json_str)?)
+            } else {
+                None
+            };
 
-                Ok(Some(PlatformCredential {
-                    credential_id: r.credential_id,
-                    platform: platform.clone(),
-                    credential_type: r.credential_type.parse()?,
-                    user_id: r.user_id,
-                    primary_token: decrypted_token,
-                    refresh_token: decrypted_refresh,
-                    additional_data: decrypted_data,
-                    expires_at: r.expires_at,
-                    created_at: r.created_at,
-                    updated_at: r.updated_at,
-                }))
-            }
-            None => Ok(None),
+            Ok(Some(PlatformCredential {
+                credential_id: r.try_get("credential_id")?,
+                platform: Platform::from_str(&r.try_get::<String, _>("platform")?)
+                    .map_err(|e| Error::Platform(e.to_string()))?,
+                credential_type: r.try_get::<String, _>("credential_type")?.parse()?,
+                user_id: r.try_get("user_id")?,
+                primary_token: decrypted_token,
+                refresh_token: decrypted_refresh,
+                additional_data: decrypted_data,
+                expires_at: r.try_get("expires_at")?,
+                created_at: r.try_get("created_at")?,
+                updated_at: r.try_get("updated_at")?,
+            }))
+        } else {
+            Ok(None)
         }
     }
 
@@ -125,22 +139,24 @@ impl CredentialsRepository for SqliteCredentialsRepository {
             None => None,
         };
 
-        sqlx::query!(
-            r#"UPDATE platform_credentials
+        sqlx::query(
+            r#"
+            UPDATE platform_credentials
                SET primary_token = ?,
                    refresh_token = ?,
                    additional_data = ?,
                    expires_at = ?,
                    updated_at = ?
-               WHERE platform = ? AND user_id = ?"#,
-            encrypted_token,
-            encrypted_refresh,
-            encrypted_data,
-            creds.expires_at,
-            creds.updated_at,
-            platform_str,
-            creds.user_id
+            WHERE platform = ? AND user_id = ?
+            "#
         )
+            .bind(encrypted_token)
+            .bind(encrypted_refresh)
+            .bind(encrypted_data)
+            .bind(creds.expires_at)
+            .bind(creds.updated_at)
+            .bind(platform_str)
+            .bind(&creds.user_id)
             .execute(&self.pool)
             .await?;
 
@@ -154,13 +170,14 @@ impl CredentialsRepository for SqliteCredentialsRepository {
     ) -> Result<(), Error> {
         let platform_str = platform.to_string();
 
-        sqlx::query!(
-            r#"DELETE FROM platform_credentials
-               WHERE platform = ? AND user_id = ?
-            "#,
-            platform_str,
-            user_id
+        sqlx::query(
+            r#"
+            DELETE FROM platform_credentials
+            WHERE platform = ? AND user_id = ?
+            "#
         )
+            .bind(platform_str)
+            .bind(user_id)
             .execute(&self.pool)
             .await?;
 
@@ -170,8 +187,7 @@ impl CredentialsRepository for SqliteCredentialsRepository {
 
 impl SqliteCredentialsRepository {
     /// Returns all credentials that have an `expires_at` within the specified duration
-    /// from "now". For example, you can pass `Duration::minutes(10)` to get all tokens
-    /// expiring in the next 10 minutes.
+    /// from "now". For example, `Duration::minutes(10)` => all tokens expiring in next 10 min.
     pub async fn get_expiring_credentials(
         &self,
         within: Duration,
@@ -179,30 +195,40 @@ impl SqliteCredentialsRepository {
         let now = Utc::now().naive_utc();
         let cutoff = now + within;
 
-        // Retrieve any rows where expires_at <= cutoff
-        let rows = sqlx::query!(
-            r#"SELECT *
-               FROM platform_credentials
-               WHERE expires_at IS NOT NULL
-                 AND expires_at <= ?
-            "#,
-            cutoff
+        let rows = sqlx::query(
+            r#"
+            SELECT
+                credential_id,
+                platform,
+                credential_type,
+                user_id,
+                primary_token,
+                refresh_token,
+                additional_data,
+                expires_at,
+                created_at,
+                updated_at
+            FROM platform_credentials
+            WHERE expires_at IS NOT NULL
+              AND expires_at <= ?
+            "#
         )
+            .bind(cutoff)
             .fetch_all(&self.pool)
             .await?;
 
         let mut results = Vec::new();
-        for row in rows {
-            let platform = Platform::from_str(&row.platform)
-                .map_err(|e| Error::Platform(e.to_string()))?;
-
-            let decrypted_token = self.encryptor.decrypt(&row.primary_token)?;
-            let decrypted_refresh = if let Some(ref_token) = row.refresh_token {
-                Some(self.encryptor.decrypt(&ref_token)?)
+        for r in rows {
+            let platform_str: String = r.try_get("platform")?;
+            let decrypted_token = self.encryptor.decrypt(r.try_get("primary_token")?)?;
+            let ref_token_opt: Option<String> = r.try_get("refresh_token")?;
+            let decrypted_refresh = if let Some(s) = ref_token_opt {
+                Some(self.encryptor.decrypt(&s)?)
             } else {
                 None
             };
-            let decrypted_data = if let Some(data_str) = row.additional_data {
+            let data_opt: Option<String> = r.try_get("additional_data")?;
+            let decrypted_data = if let Some(data_str) = data_opt {
                 let json_str = self.encryptor.decrypt(&data_str)?;
                 Some(serde_json::from_str(&json_str)?)
             } else {
@@ -210,16 +236,17 @@ impl SqliteCredentialsRepository {
             };
 
             results.push(PlatformCredential {
-                credential_id: row.credential_id,
-                platform,
-                credential_type: row.credential_type.parse()?,
-                user_id: row.user_id,
+                credential_id: r.try_get("credential_id")?,
+                platform: Platform::from_str(&platform_str)
+                    .map_err(|e| Error::Platform(e.to_string()))?,
+                credential_type: r.try_get::<String, _>("credential_type")?.parse()?,
+                user_id: r.try_get("user_id")?,
                 primary_token: decrypted_token,
                 refresh_token: decrypted_refresh,
                 additional_data: decrypted_data,
-                expires_at: row.expires_at,
-                created_at: row.created_at,
-                updated_at: row.updated_at,
+                expires_at: r.try_get("expires_at")?,
+                created_at: r.try_get("created_at")?,
+                updated_at: r.try_get("updated_at")?,
             });
         }
 

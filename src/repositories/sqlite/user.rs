@@ -1,7 +1,9 @@
 use super::*;
 use crate::models::User;
 use crate::repositories::Repository;
+use crate::Error;
 use chrono::NaiveDateTime;
+use sqlx::{Pool, Sqlite, Row};
 
 pub struct UserRepository {
     pool: Pool<Sqlite>
@@ -13,53 +15,49 @@ impl UserRepository {
     }
 }
 
-#[async_trait]
+#[async_trait::async_trait]
 impl Repository<User> for UserRepository {
     async fn create(&self, user: &User) -> Result<(), Error> {
-        // Insert the new user, including global_username if provided
-        sqlx::query!(
+        sqlx::query(
             r#"
             INSERT INTO users (user_id, created_at, last_seen, is_active, global_username)
             VALUES (?, ?, ?, ?, ?)
-            "#,
-            user.user_id,
-            user.created_at,
-            user.last_seen,
-            user.is_active,         // if is_active is a real bool column in SQLite
-            user.global_username
+            "#
         )
+            .bind(&user.user_id)
+            .bind(user.created_at)
+            .bind(user.last_seen)
+            .bind(user.is_active)
+            .bind(&user.global_username)
             .execute(&self.pool)
             .await?;
         Ok(())
     }
 
     async fn get(&self, id: &str) -> Result<Option<User>, Error> {
-        // We'll explicitly tell SQLx that is_active is a bool
-        let row = sqlx::query!(
+        let row = sqlx::query(
             r#"
             SELECT
                 user_id,
+                global_username,
                 created_at,
                 last_seen,
-                -- Tell SQLx: "is_active AS `is_active: bool`"
-                is_active AS `is_active: bool`,
-                global_username
+                is_active
             FROM users
             WHERE user_id = ?
-            "#,
-            id
+            "#
         )
+            .bind(id)
             .fetch_optional(&self.pool)
             .await?;
 
         if let Some(r) = row {
             Ok(Some(User {
-                user_id: r.user_id,
-                created_at: r.created_at,
-                last_seen: r.last_seen,
-                // Now `r.is_active` is already a bool, no need for != 0
-                is_active: r.is_active,
-                global_username: r.global_username,
+                user_id: r.try_get("user_id")?,
+                global_username: r.try_get("global_username")?,
+                created_at: r.try_get("created_at")?,
+                last_seen: r.try_get("last_seen")?,
+                is_active: r.try_get("is_active")?,
             }))
         } else {
             Ok(None)
@@ -67,26 +65,27 @@ impl Repository<User> for UserRepository {
     }
 
     async fn update(&self, user: &User) -> Result<(), Error> {
-        sqlx::query!(
+        sqlx::query(
             r#"
             UPDATE users
             SET last_seen = ?,
                 is_active = ?,
                 global_username = ?
             WHERE user_id = ?
-            "#,
-            user.last_seen,
-            user.is_active,
-            user.global_username,
-            user.user_id
+            "#
         )
+            .bind(user.last_seen)
+            .bind(user.is_active)
+            .bind(&user.global_username)
+            .bind(&user.user_id)
             .execute(&self.pool)
             .await?;
         Ok(())
     }
 
     async fn delete(&self, id: &str) -> Result<(), Error> {
-        sqlx::query!("DELETE FROM users WHERE user_id = ?", id)
+        sqlx::query("DELETE FROM users WHERE user_id = ?")
+            .bind(id)
             .execute(&self.pool)
             .await?;
         Ok(())

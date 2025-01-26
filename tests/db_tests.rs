@@ -5,6 +5,7 @@ use chrono::Utc;
 use std::{env, fs};
 use serde_json::json;
 use uuid::Uuid;
+use sqlx::{Row, Error as SqlxError};
 
 #[tokio::test]
 async fn test_database_connection() -> anyhow::Result<()> {
@@ -21,31 +22,38 @@ async fn test_database_connection() -> anyhow::Result<()> {
 
     // Insert a user
     let now = Utc::now().naive_utc();
-    sqlx::query!(
+    sqlx::query(
         r#"
         INSERT INTO users (user_id, created_at, last_seen, is_active)
         VALUES (?, ?, ?, ?)
-        "#,
-        "test_user",
-        now,
-        now,
-        true
+        "#
     )
+        .bind("test_user")
+        .bind(now)
+        .bind(now)
+        .bind(true)
         .execute(db.pool())
         .await?;
 
     // Retrieve the user
-    let retrieved = sqlx::query_as!(
-        User,
+    let row = sqlx::query(
         r#"
         SELECT user_id, global_username, created_at, last_seen, is_active
         FROM users
         WHERE user_id = ?
-        "#,
-        "test_user"
+        "#
     )
+        .bind("test_user")
         .fetch_one(db.pool())
         .await?;
+
+    let retrieved = User {
+        user_id: row.try_get("user_id")?,
+        global_username: row.try_get("global_username")?,
+        created_at: row.try_get("created_at")?,
+        last_seen: row.try_get("last_seen")?,
+        is_active: row.try_get("is_active")?,
+    };
 
     assert_eq!(retrieved.user_id, "test_user");
     assert!(retrieved.is_active);
@@ -78,23 +86,23 @@ async fn test_platform_identity() -> anyhow::Result<()> {
 
     // First create a user
     let now = Utc::now().naive_utc();
-    sqlx::query!(
-        "INSERT INTO users (user_id, created_at, last_seen, is_active) VALUES (?, ?, ?, ?)",
-        "test_user",
-        now,
-        now,
-        true
+    sqlx::query(
+        "INSERT INTO users (user_id, created_at, last_seen, is_active) VALUES (?, ?, ?, ?)"
     )
+        .bind("test_user")
+        .bind(now)
+        .bind(now)
+        .bind(true)
         .execute(db.pool())
         .await?;
 
     // Create a platform identity
     let platform_identity_id = Uuid::new_v4().to_string();
     let platform_str = "twitch";
-    let roles_json = serde_json::to_string(&vec!["broadcaster"])?;
+    let roles_json = serde_json::to_string(&vec!["broadcaster"]).unwrap();
     let data_json = json!({ "profile_image_url": "https://example.com/image.jpg" }).to_string();
 
-    sqlx::query!(
+    sqlx::query(
         r#"
         INSERT INTO platform_identities (
             platform_identity_id, user_id, platform, platform_user_id,
@@ -102,36 +110,40 @@ async fn test_platform_identity() -> anyhow::Result<()> {
             platform_data, created_at, last_updated
         )
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        "#,
-        platform_identity_id,
-        "test_user",
-        platform_str,
-        "twitch_123",
-        "twitchuser",
-        "Twitch User",
-        roles_json,
-        data_json,
-        now,
-        now
+        "#
     )
+        .bind(&platform_identity_id)
+        .bind("test_user")
+        .bind(platform_str)
+        .bind("twitch_123")
+        .bind("twitchuser")
+        .bind("Twitch User")
+        .bind(roles_json)
+        .bind(data_json)
+        .bind(now)
+        .bind(now)
         .execute(db.pool())
         .await?;
 
     // Verify
-    let row = sqlx::query!(
+    let row = sqlx::query(
         r#"
         SELECT platform_identity_id, platform_user_id, platform_username
         FROM platform_identities
         WHERE platform_identity_id = ?
-        "#,
-        platform_identity_id
+        "#
     )
+        .bind(&platform_identity_id)
         .fetch_one(db.pool())
         .await?;
 
-    assert_eq!(row.platform_identity_id, platform_identity_id);
-    assert_eq!(row.platform_user_id, "twitch_123");
-    assert_eq!(row.platform_username, "twitchuser");
+    let fetched_id: String = row.try_get("platform_identity_id")?;
+    let fetched_puid: String = row.try_get("platform_user_id")?;
+    let fetched_uname: String = row.try_get("platform_username")?;
+
+    assert_eq!(fetched_id, platform_identity_id);
+    assert_eq!(fetched_puid, "twitch_123");
+    assert_eq!(fetched_uname, "twitchuser");
 
     Ok(())
 }
