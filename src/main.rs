@@ -20,7 +20,12 @@ use maowbot::plugins::protocol::{BotToPlugin, PluginToBot};
 use maowbot::tasks::credential_refresh;
 use maowbot::auth::{AuthManager, DefaultUserManager, StubAuthHandler};
 use maowbot::crypto::Encryptor;
-use maowbot::repositories::sqlite::{PlatformIdentityRepository, SqliteCredentialsRepository, SqliteUserAnalysisRepository, UserRepository};
+use maowbot::repositories::sqlite::{
+    PlatformIdentityRepository,
+    SqliteCredentialsRepository,
+    SqliteUserAnalysisRepository,
+    UserRepository,
+};
 use maowbot::{Error};
 use maowbot::cache::{CacheConfig, ChatCache, TrimPolicy};
 use maowbot::eventbus::{EventBus, BotEvent};
@@ -39,7 +44,7 @@ struct Args {
     #[arg(long, default_value = "single")]
     mode: String,
 
-    /// Address of the server (used in client mode)
+    /// Address of the server (used in server or client mode)
     #[arg(long, default_value = "127.0.0.1:9999")]
     server_addr: String,
 
@@ -99,10 +104,10 @@ async fn run_server(args: Args) -> anyhow::Result<()> {
         Box::new(StubAuthHandler::default())
     );
 
-    // 2) Create plugin manager (unchanged from your code)
+    // 2) Create plugin manager
     let plugin_manager = PluginManager::new(args.plugin_passphrase.clone());
 
-    // 3) Create EventBus (same as before)
+    // 3) Create EventBus
     let event_bus = Arc::new(EventBus::new());
 
     // 4) DB Logger task
@@ -121,30 +126,22 @@ async fn run_server(args: Args) -> anyhow::Result<()> {
         pm_ref.set_event_bus(event_bus.clone());
     }
 
-    // 6) [Optional] Load any in-process plugin
+    // 6) [Optional] If user provided an in-process plugin path, load it:
     if let Some(path) = args.in_process_plugin.as_ref() {
         if let Err(e) = plugin_manager.load_in_process_plugin(path) {
             error!("Failed to load in-process plugin: {:?}", e);
         }
     }
 
-    // ---------------------------------------------------------------
-    //  NEW: Create the user manager + chat cache + message service
-    // ---------------------------------------------------------------
-
-    // 6a) Build the DefaultUserManager (this is the "low-level" logic).
-    //     Need user_repo, identity_repo, analysis_repo, etc.
+    // 7) Build user manager, message service, platform manager
     let user_repo = UserRepository::new(db.pool().clone());
     let identity_repo = PlatformIdentityRepository::new(db.pool().clone());
     let analysis_repo = SqliteUserAnalysisRepository::new(db.pool().clone());
 
     let default_user_mgr = DefaultUserManager::new(user_repo, identity_repo, analysis_repo);
     let user_manager = Arc::new(default_user_mgr);
-
-    // 6b) Build a higher-level "UserService" that references DefaultUserManager
     let user_service = Arc::new(UserService::new(user_manager.clone()));
 
-    // 6c) Create the in-memory ChatCache with a chosen TrimPolicy
     let trim_policy = TrimPolicy {
         max_age_seconds: Some(24 * 3600),
         spam_score_cutoff: Some(5.0),
@@ -153,19 +150,12 @@ async fn run_server(args: Args) -> anyhow::Result<()> {
         min_quality_score: Some(0.2),
     };
     let chat_cache = ChatCache::new(
-        // The user_analysis repo for spam checks
         SqliteUserAnalysisRepository::new(db.pool().clone()),
         CacheConfig { trim_policy }
     );
     let chat_cache = Arc::new(Mutex::new(chat_cache));
-
-    // 6d) Build the MessageService to handle new messages, push them to event bus
     let message_service = Arc::new(MessageService::new(chat_cache, event_bus.clone()));
 
-    // ---------------------------------------------------------------
-    //  NEW: Start platform runtimes (Discord/Twitch/VRChat) if desired
-    //       Or just keep them in your own file if you prefer
-    // ---------------------------------------------------------------
     let platform_manager = PlatformManager::new(
         message_service.clone(),
         user_service.clone(),
@@ -173,7 +163,7 @@ async fn run_server(args: Args) -> anyhow::Result<()> {
     );
     platform_manager.start_all_platforms().await?;
 
-    // 7) Start listening for external plugin connections (unchanged)
+    // 8) Start listening for external plugin connections
     let pm_clone = plugin_manager.clone();
     let server_addr = args.server_addr.clone();
     tokio::spawn(async move {
@@ -182,20 +172,20 @@ async fn run_server(args: Args) -> anyhow::Result<()> {
         }
     });
 
-    // 8) Periodically publish a “Tick” event for demonstration (same as before)
+    // 9) Periodically publish a “Tick” event for demonstration
     loop {
         tokio::time::sleep(std::time::Duration::from_secs(10)).await;
         let evt = BotEvent::Tick;
         event_bus.publish(evt).await;
     }
 
-    // Done. We never reach here because of the loop. If you want a clean exit:
+    // If we ever broke out of the loop, we’d do:
     // Ok(())
 }
 
-
-/// Connect to an existing server as a “plugin-like client”
-/// (e.g., minimal demonstration of how a plugin might run).
+/// Connect to an existing server as a “plugin-like client”.
+/// This was previously used in single PC mode, but we now keep it only
+/// for the dedicated `--mode client` scenario.
 async fn run_client(args: Args) -> anyhow::Result<()> {
     info!("Running in CLIENT mode...");
 
@@ -205,11 +195,10 @@ async fn run_client(args: Args) -> anyhow::Result<()> {
     let stream = TcpStream::connect(server_addr).await?;
     info!("Connected to server at {}", server_addr);
 
-    // Split the stream
     let (reader, mut writer) = stream.into_split();
     let mut lines = BufReader::new(reader).lines();
 
-    // 1) Immediately send a "Hello" to the bot
+    // 1) Send a "Hello" to the bot
     let hello_msg = PluginToBot::Hello {
         plugin_name: "RemoteClient".to_string(),
         passphrase: args.plugin_passphrase.clone(),
@@ -217,7 +206,7 @@ async fn run_client(args: Args) -> anyhow::Result<()> {
     let hello_str = serde_json::to_string(&hello_msg)? + "\n";
     writer.write_all(hello_str.as_bytes()).await?;
 
-    // 2) Launch a task to handle inbound events from the server
+    // 2) Launch a task to handle inbound events
     tokio::spawn(async move {
         while let Ok(Some(line)) = lines.next_line().await {
             match serde_json::from_str::<BotToPlugin>(&line) {
@@ -233,7 +222,6 @@ async fn run_client(args: Args) -> anyhow::Result<()> {
                     }
                     BotToPlugin::AuthError { reason } => {
                         error!("Received AuthError from server: {}", reason);
-                        // Possibly break or handle the error
                     }
                     BotToPlugin::StatusResponse { connected_plugins, server_uptime } => {
                         info!("StatusResponse => connected_plugins={:?}, server_uptime={}s",
@@ -256,10 +244,10 @@ async fn run_client(args: Args) -> anyhow::Result<()> {
         info!("Client read loop ended.");
     });
 
-    // 3) Meanwhile, in the main client task, do periodic stuff
+    // 3) Meanwhile, in the main client loop, do periodic stuff
     loop {
         tokio::time::sleep(Duration::from_secs(10)).await;
-        // Example: send a LogMessage to the server
+        // Example: send a LogMessage
         let log_msg = PluginToBot::LogMessage {
             text: "RemoteClient is still alive!".to_string(),
         };
@@ -269,11 +257,13 @@ async fn run_client(args: Args) -> anyhow::Result<()> {
     }
 }
 
-/// Run in “single PC” mode, i.e. server + local client in one process.
+/// Run in "single PC" mode: we spin up the server in the background (listening
+/// for any remote plugins) and load a plugin *in-process* (instead of connecting
+/// to ourselves via TCP).
 async fn run_single_pc(args: Args) -> anyhow::Result<()> {
     info!("Running in SINGLE-PC mode...");
 
-    // We'll spawn the server first
+    // 1) Spawn the server in a background task
     let server_args = args.clone();
     tokio::spawn(async move {
         if let Err(e) = run_server(server_args).await {
@@ -281,9 +271,14 @@ async fn run_single_pc(args: Args) -> anyhow::Result<()> {
         }
     });
 
-    // Give the server a moment to start listening
+    // 2) Give the server a moment to start listening
     tokio::time::sleep(Duration::from_secs(1)).await;
 
-    // Then run the local client, connecting to "127.0.0.1:9999" by default
-    run_client(args).await
+    info!("Single-PC mode: in-process plugin loading is handled by run_server (if --in_process_plugin=PATH was set).");
+    info!("No local TCP client connection is made. The server remains up for any remote plugins.");
+
+    // Since run_server() never returns (it loops), we just sleep or wait forever:
+    loop {
+        tokio::time::sleep(Duration::from_secs(3600)).await;
+    }
 }
