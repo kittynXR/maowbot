@@ -113,6 +113,18 @@ async fn run_server(args: Args, event_bus: Arc<EventBus>) -> anyhow::Result<()> 
     // 1) Setup DB
     let db = Database::new(&args.db_path).await?;
     db.migrate().await?;
+
+    {
+        use maowbot::repositories::sqlite::SqliteUserAnalysisRepository;
+        use maowbot::tasks::monthly_maintenance;  // the new file we created
+
+        let analysis_repo = SqliteUserAnalysisRepository::new(db.pool().clone());
+        if let Err(e) = monthly_maintenance::maybe_run_monthly_maintenance(&db, &analysis_repo).await {
+            // log or handle
+            error!("Monthly maintenance error: {:?}", e);
+        }
+    }
+
     let key = [0u8; 32];
     let encryptor = Encryptor::new(&key)?;
     let creds_repo = SqliteCredentialsRepository::new(db.pool().clone(), encryptor);

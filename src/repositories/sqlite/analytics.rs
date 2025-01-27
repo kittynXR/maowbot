@@ -3,20 +3,21 @@ use sqlx::{Pool, Sqlite, Row};
 use uuid::Uuid;
 use chrono::{NaiveDateTime, Utc};
 use serde_json::Value;
-
+use sqlx::FromRow;
 use crate::Error;
 
 /// Data models (you could put these in separate files):
-#[derive(Clone)]
+#[derive(Clone, Debug, FromRow)]
 pub struct ChatMessage {
     pub message_id: String,
     pub platform: String,
     pub channel: String,
     pub user_id: String,
     pub message_text: String,
-    /// The in-memory representation is still a NaiveDateTime,
-    /// but we convert to/from microseconds for DB storage.
-    pub timestamp: NaiveDateTime,
+
+    // The DB column is an integer storing microseconds (or seconds) since epoch:
+    pub timestamp: i64,
+
     pub metadata: Option<Value>,
 }
 
@@ -93,13 +94,15 @@ impl SqliteAnalyticsRepository {
         };
 
         // Convert the NaiveDateTime to microseconds
-        let epoch_micros = datetime_to_epoch_micros(msg.timestamp);
+
 
         sqlx::query(
             r#"
             INSERT INTO chat_messages (
-                message_id, platform, channel, user_id, message_text, timestamp, metadata
+            message_id, platform, channel, user_id,
+            message_text, timestamp, metadata
             ) VALUES (?, ?, ?, ?, ?, ?, ?)
+
             "#
         )
             .bind(&msg.message_id)
@@ -108,7 +111,7 @@ impl SqliteAnalyticsRepository {
             .bind(&msg.user_id)
             .bind(&msg.message_text)
             // Insert the i64 microsecond value
-            .bind(epoch_micros)
+            .bind(msg.timestamp)
             .bind(metadata_str)
             .execute(&self.pool)
             .await?;
@@ -152,7 +155,7 @@ impl SqliteAnalyticsRepository {
             // read i64 from 'timestamp'
             let epoch_micros: i64 = row.try_get("timestamp")?;
             // convert to NaiveDateTime
-            let timestamp = epoch_micros_to_datetime(epoch_micros)?;
+            // let timestamp = epoch_micros_to_datetime(epoch_micros)?;
 
             let meta_str: Option<String> = row.try_get("metadata")?;
             let metadata = meta_str
@@ -165,7 +168,7 @@ impl SqliteAnalyticsRepository {
                 channel: row.try_get("channel")?,
                 user_id: row.try_get("user_id")?,
                 message_text: row.try_get("message_text")?,
-                timestamp,
+                timestamp: epoch_micros,
                 metadata,
             });
         }

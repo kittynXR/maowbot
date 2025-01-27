@@ -122,7 +122,7 @@ fn convert_to_chat_message(event: &BotEvent) -> Option<ChatMessage> {
             channel: channel.clone(),
             user_id: user.clone(),
             message_text: text.clone(),
-            timestamp: timestamp.naive_utc(),
+            timestamp: timestamp.timestamp(),
             metadata: None,
         })
     } else {

@@ -1,4 +1,6 @@
+use sqlx::sqlite::{SqlitePoolOptions, SqliteConnectOptions};
 use sqlx::{Pool, Sqlite, SqlitePool};
+use std::path::Path;
 use anyhow::Result;
 
 pub struct Database {
@@ -6,42 +8,34 @@ pub struct Database {
 }
 
 impl Database {
-    pub async fn new(database_url: &str) -> anyhow::Result<Self> {
-        let absolute_path = if database_url == ":memory:" {
-            ":memory:".to_string()
+    pub async fn new(database_url: &str) -> Result<Self> {
+        if database_url == ":memory:" {
+            // Use an in-memory DB
+            // `SqliteConnectOptions` has a special method for in-memory, or you can do:
+            let pool = SqlitePool::connect(":memory:").await?;
+            return Ok(Self { pool });
         } else {
+            // 1) Build absolute path so we can pass it to .filename(...)
             let path = std::env::current_dir()?.join(database_url);
-            path.to_str().unwrap().to_string()
-        };
 
-        let db_path = if absolute_path == ":memory:" {
-            ":memory:".to_string()
-        } else {
-            // On Windows, ensure a proper file URI with forward slashes
-            let mut uri_path = absolute_path.replace("\\", "/");
-            // If path doesn't start with a slash, add one for a well-formed URI.
-            // For example, C:/... should become file:///C:/...
-            if !uri_path.starts_with('/') {
-                uri_path = format!("/{}", uri_path);
-            }
-            format!("file://{}?mode=rwc", uri_path)
-        };
+            // If you need to log path after the `.filename(...)`, clone it:
+            let path_clone = path.clone();
 
-        if absolute_path != ":memory:" {
-            if let Some(parent) = std::path::Path::new(&absolute_path).parent() {
-                if !parent.exists() {
-                    std::fs::create_dir_all(parent)?;
-                }
-            }
+            // Build connect opts
+            let connect_opts = SqliteConnectOptions::new()
+                .filename(path) // consumes the original
+                .create_if_missing(true);
+
+            let pool = SqlitePoolOptions::new()
+                .connect_with(connect_opts)
+                .await?;
+
+            println!("Connected to SQLite local file at {:?}", path_clone);
+
+            Ok(Self { pool })
+
         }
-
-        println!("Connecting to SQLite database at: {}", db_path);
-        let pool = SqlitePool::connect(&db_path).await?;
-        println!("Connected to SQLite database!");
-        Ok(Self { pool })
     }
-
-
 
     pub async fn migrate(&self) -> Result<()> {
         println!("Applying migrations...");
@@ -50,8 +44,12 @@ impl Database {
         Ok(())
     }
 
-
     pub fn pool(&self) -> &Pool<Sqlite> {
         &self.pool
+    }
+
+    /// Optional: if you want a “from_pool” constructor for tests
+    pub fn from_pool(pool: SqlitePool) -> Self {
+        Self { pool }
     }
 }

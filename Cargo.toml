@@ -3,6 +3,10 @@ name = "maowbot"
 version = "0.1.0"
 edition = "2021"
 
+[profile.test]
+# ensures the Rust test harness uses only one thread
+test-threads = 1
+
 [dependencies]
 twitch_api = {  version="^0.7.0-rc", features = ["client", "helix", "reqwest"] }
 sqlx = { version = "^0.8", features = ["sqlite", "runtime-tokio-native-tls", "chrono"] }
@@ -34,6 +38,7 @@ tracing = "^0.1"
 tracing-subscriber = "^0.3"
 rustls-pemfile = "1.0.4"
 futures-lite = "2.6.0"
+tempfile = "3.15.0"
 
 [dev-dependencies]
 tokio-test = "^0.4"
