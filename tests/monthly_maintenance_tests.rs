@@ -1,7 +1,5 @@
-// tests/monthly_maintenance_tests.rs
-
 use std::path::PathBuf;
-use tempfile::{NamedTempFile};
+use tempfile::NamedTempFile;
 use tokio::fs;
 use chrono::NaiveDateTime;
 use sqlx::{SqlitePool, Row};
@@ -198,6 +196,8 @@ async fn test_archive_one_month_no_attach() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// **FIX**: Remove any previously existing `archives/2025-01_archive.db` file so
+/// we don't try to insert duplicate `message_id`s from older runs.
 #[tokio::test]
 async fn test_maybe_run_monthly_maintenance_integration() -> Result<()> {
     // 1) main DB
@@ -206,7 +206,7 @@ async fn test_maybe_run_monthly_maintenance_integration() -> Result<()> {
     let db = create_test_database(&main_db_path).await?;
     create_test_schema(db.pool()).await?;
 
-    // 2) Insert 2 users + 2 messages in January 2025
+    // Insert 2 users + 2 messages in January 2025
     sqlx::query("INSERT INTO users (user_id) VALUES ('ua'), ('ub');")
         .execute(db.pool())
         .await?;
@@ -223,13 +223,22 @@ async fn test_maybe_run_monthly_maintenance_integration() -> Result<()> {
         .execute(db.pool())
         .await?;
 
-    // 3) user_analysis_repo
+    // Ensure "archives" folder exists
+    std::fs::create_dir_all("archives")?;
+
+    // Remove old archive file (if any) to prevent re-insert collision
+    let arch_file = PathBuf::from("archives").join("2025-01_archive.db");
+    if arch_file.exists() {
+        std::fs::remove_file(&arch_file)?;
+    }
+
+    // user_analysis_repo
     let analysis_repo = SqliteUserAnalysisRepository::new(db.pool().clone());
 
-    // 4) run monthly => should archive january 2025 => archives/2025-01_archive.db
+    // run monthly => should archive january 2025 => "archives/2025-01_archive.db"
     maybe_run_monthly_maintenance(&db, &analysis_repo).await?;
 
-    // 5) confirm main DB is empty
+    // confirm main DB is empty
     let row = sqlx::query("SELECT COUNT(*) as cnt FROM chat_messages")
         .fetch_one(db.pool())
         .await?;
@@ -244,10 +253,8 @@ async fn test_maybe_run_monthly_maintenance_integration() -> Result<()> {
     assert_eq!(archived_until, "2025-01");
 
     // check archive DB
-    let arch_file = PathBuf::from("archives").join("2025-01_archive.db");
-    assert!(arch_file.exists(), "Should have created january archive");
-
     db.pool().close().await;
+    assert!(arch_file.exists(), "Should have created january archive");
 
     let arch_opts = SqliteConnectOptions::new()
         .filename(&arch_file)
