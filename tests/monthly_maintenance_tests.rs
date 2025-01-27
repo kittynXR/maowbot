@@ -1,7 +1,7 @@
 // tests/monthly_maintenance_tests.rs
 
 use std::path::PathBuf;
-use tempfile::{NamedTempFile, TempDir};
+use tempfile::{NamedTempFile};
 use tokio::fs;
 use chrono::NaiveDateTime;
 use sqlx::{SqlitePool, Row};
@@ -11,20 +11,19 @@ use anyhow::Result;
 use maowbot::Error;
 use maowbot::Database;
 use maowbot::repositories::sqlite::user_analysis::SqliteUserAnalysisRepository;
-use maowbot::tasks::monthly_maintenance::{archive_one_month, maybe_run_monthly_maintenance, collect_missing_months, parse_year_month, archive_one_month_no_attach};
+use maowbot::tasks::monthly_maintenance::{
+    archive_one_month, maybe_run_monthly_maintenance, collect_missing_months, parse_year_month,
+    archive_one_month_no_attach,
+};
 
-/// A helper to parse "YYYY-MM-DD HH:MM:SS" -> i64 microseconds
-fn naive_to_micros(s: &str) -> Result<i64> {
+/// Parse "YYYY-MM-DD HH:MM:SS" into integer seconds (rather than microseconds).
+fn parse_to_seconds(s: &str) -> Result<i64> {
     let dt = NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S")?;
-    let secs = dt.timestamp();
-    let subs = dt.timestamp_subsec_micros() as i64;
-    Ok(secs * 1_000_000 + subs)
+    Ok(dt.timestamp())
 }
 
-/// Create a single-connection pool, no "file://..." URIs, just normal local file
 async fn create_single_conn_pool(db_path: &str) -> Result<SqlitePool> {
     let abs_path = std::env::current_dir()?.join(db_path);
-
     let connect_opts = SqliteConnectOptions::new()
         .filename(abs_path)
         .create_if_missing(true);
@@ -34,22 +33,16 @@ async fn create_single_conn_pool(db_path: &str) -> Result<SqlitePool> {
         .connect_with(connect_opts)
         .await?;
 
-    // Turn on foreign_keys
+    // Example: enforce foreign_keys
     sqlx::query("PRAGMA foreign_keys = ON;")
-        .execute(&pool)
-        .await?;
-
-    // Also set locking_mode=EXCLUSIVE so the entire DB is locked
-    // This is a broad hammer, but let's try:
-    sqlx::query("PRAGMA locking_mode=EXCLUSIVE;")
         .execute(&pool)
         .await?;
 
     Ok(pool)
 }
 
-/// Minimal schema creation
 async fn create_test_schema(pool: &SqlitePool) -> Result<()> {
+    // Basic users
     sqlx::query(r#"
         CREATE TABLE IF NOT EXISTS users (
             user_id TEXT PRIMARY KEY,
@@ -60,6 +53,7 @@ async fn create_test_schema(pool: &SqlitePool) -> Result<()> {
         );
     "#).execute(pool).await?;
 
+    // chat_messages (storing timestamp in seconds)
     sqlx::query(r#"
         CREATE TABLE IF NOT EXISTS chat_messages (
             message_id TEXT PRIMARY KEY,
@@ -73,6 +67,7 @@ async fn create_test_schema(pool: &SqlitePool) -> Result<()> {
         );
     "#).execute(pool).await?;
 
+    // maintenance_state
     sqlx::query(r#"
         CREATE TABLE IF NOT EXISTS maintenance_state (
             state_key TEXT PRIMARY KEY,
@@ -80,7 +75,7 @@ async fn create_test_schema(pool: &SqlitePool) -> Result<()> {
         );
     "#).execute(pool).await?;
 
-    // user_analysis, user_analysis_history if needed
+    // user_analysis
     sqlx::query(r#"
         CREATE TABLE IF NOT EXISTS user_analysis (
             user_analysis_id TEXT PRIMARY KEY,
@@ -97,6 +92,7 @@ async fn create_test_schema(pool: &SqlitePool) -> Result<()> {
         );
     "#).execute(pool).await?;
 
+    // user_analysis_history
     sqlx::query(r#"
         CREATE TABLE IF NOT EXISTS user_analysis_history (
             user_analysis_history_id TEXT PRIMARY KEY,
@@ -115,19 +111,19 @@ async fn create_test_schema(pool: &SqlitePool) -> Result<()> {
     Ok(())
 }
 
-/// Build Database from single-conn pool
 async fn create_test_database(db_path: &str) -> Result<Database> {
     let pool = create_single_conn_pool(db_path).await?;
-    let db = Database::from_pool(pool);
-    Ok(db)
+    Ok(Database::from_pool(pool))
 }
 
 #[tokio::test]
 async fn test_collect_missing_months_logic() -> Result<()> {
     let months = collect_missing_months(Some("2024-11"), "2025-01")?;
     assert_eq!(months, vec!["2024-12", "2025-01"]);
+
     let none_before = collect_missing_months(None, "2025-04")?;
     assert_eq!(none_before, vec!["2025-04"]);
+
     Ok(())
 }
 
@@ -136,51 +132,59 @@ async fn test_parse_year_month() -> Result<()> {
     let (y, m) = parse_year_month("2025-01")?;
     assert_eq!(y, 2025);
     assert_eq!(m, 1);
+
+    // invalid
     assert!(parse_year_month("2025-1").is_err());
     Ok(())
 }
 
-/// Test `archive_one_month` directly, then open the archive as a new DB
 #[tokio::test]
 async fn test_archive_one_month_no_attach() -> anyhow::Result<()> {
-    // 1) main DB
-    let tmp = tempfile::NamedTempFile::new()?;
-    let main_db_path = tmp.path().display().to_string();
+    let tmp_main = NamedTempFile::new()?;
+    let main_db_path = tmp_main.path().display().to_string();
     let db = create_test_database(&main_db_path).await?;
     create_test_schema(db.pool()).await?;
 
-    // Insert data
+    // Insert user + messages
     sqlx::query("INSERT INTO users (user_id) VALUES ('u1'), ('u2');")
         .execute(db.pool()).await?;
+
+    let msg_ts = parse_to_seconds("2023-01-15 10:30:00")?;
     sqlx::query(r#"
-        INSERT INTO chat_messages (message_id, platform, channel, user_id, message_text, timestamp)
+        INSERT INTO chat_messages (message_id, platform, channel, user_id, message_text, timestamp, metadata)
         VALUES
-        ('A','twitch','#chan','u1','HelloA',1673300000),
-        ('B','twitch','#chan','u2','HelloB',1673300500)
+          ('A','twitch','#chan','u1','HelloA',?,'{}'),
+          ('B','twitch','#chan','u2','HelloB',?,'{}')
     "#)
+        .bind(msg_ts)
+        .bind(msg_ts)
         .execute(db.pool()).await?;
 
-    // 2) define archive path
-    let archive_file = tempfile::NamedTempFile::new()?;
+    // Archive path
+    let archive_file = NamedTempFile::new()?;
     let archive_path = archive_file.path();
 
-    // 3) call
-    archive_one_month_no_attach(&db, "2023-01-01 00:00:00", "2023-02-01 00:00:00", archive_path).await?;
+    // Jan 2023
+    archive_one_month_no_attach(
+        &db,
+        "2023-01-01 00:00:00",
+        "2023-02-01 00:00:00",
+        archive_path
+    ).await?;
 
-    // main DB should have 0
+    // main DB => 0
     let row = sqlx::query("SELECT COUNT(*) as cnt FROM chat_messages")
-        .fetch_one(db.pool()).await?;
+        .fetch_one(db.pool())
+        .await?;
     let cnt: i64 = row.try_get("cnt")?;
     assert_eq!(cnt, 0);
 
-    // 4) close main pool so we fully release any locks
     db.pool().close().await;
 
-    // 5) open archive as main
+    // confirm archive
     let arch_opts = SqliteConnectOptions::new()
         .filename(&archive_path)
-        .create_if_missing(false)
-        .read_only(false);  // or read_only(true) if you want
+        .create_if_missing(false);
     let arch_pool = SqlitePoolOptions::new()
         .max_connections(1)
         .connect_with(arch_opts)
@@ -194,38 +198,38 @@ async fn test_archive_one_month_no_attach() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Full integration test: after monthly, we verify the archive DB
 #[tokio::test]
 async fn test_maybe_run_monthly_maintenance_integration() -> Result<()> {
+    // 1) main DB
     let tmpfile = NamedTempFile::new()?;
     let main_db_path = tmpfile.path().display().to_string();
     let db = create_test_database(&main_db_path).await?;
     create_test_schema(db.pool()).await?;
 
-    // Insert users + old chat messages
+    // 2) Insert 2 users + 2 messages in January 2025
     sqlx::query("INSERT INTO users (user_id) VALUES ('ua'), ('ub');")
-        .execute(db.pool()).await?;
-
-    let old_ts = naive_to_micros("2025-01-10 12:00:00")?;
-    sqlx::query(r#"
-      INSERT INTO chat_messages(message_id,platform,channel,user_id,message_text,timestamp,metadata)
-      VALUES
-        ('msg001','twitch','#chan','ua','HelloUA',?, ''),
-        ('msg002','twitch','#chan','ub','HelloUB',?, '')
-    "#)
-        .bind(old_ts)
-        .bind(old_ts)
         .execute(db.pool())
         .await?;
 
-    // ensure archives/ folder
-    fs::create_dir_all("archives").await?;
+    let ts_jan10 = parse_to_seconds("2025-01-10 12:00:00")?;
+    sqlx::query(r#"
+      INSERT INTO chat_messages (message_id, platform, channel, user_id, message_text, timestamp, metadata)
+      VALUES
+        ('msg001','twitch','#chan','ua','HelloUA',?,'{}'),
+        ('msg002','twitch','#chan','ub','HelloUB',?,'{}')
+    "#)
+        .bind(ts_jan10)
+        .bind(ts_jan10)
+        .execute(db.pool())
+        .await?;
+
+    // 3) user_analysis_repo
     let analysis_repo = SqliteUserAnalysisRepository::new(db.pool().clone());
 
-    // monthly code => archives january
+    // 4) run monthly => should archive january 2025 => archives/2025-01_archive.db
     maybe_run_monthly_maintenance(&db, &analysis_repo).await?;
 
-    // main DB empty
+    // 5) confirm main DB is empty
     let row = sqlx::query("SELECT COUNT(*) as cnt FROM chat_messages")
         .fetch_one(db.pool())
         .await?;
@@ -239,13 +243,12 @@ async fn test_maybe_run_monthly_maintenance_integration() -> Result<()> {
     let archived_until: String = row2.try_get("state_value")?;
     assert_eq!(archived_until, "2025-01");
 
-    let arch_file = std::path::PathBuf::from("archives").join("2025-01_archive.db");
-    assert!(arch_file.exists(), "Should have created january archive DB file.");
+    // check archive DB
+    let arch_file = PathBuf::from("archives").join("2025-01_archive.db");
+    assert!(arch_file.exists(), "Should have created january archive");
 
-    // close main so no leftover locks
     db.pool().close().await;
 
-    // open archive as main
     let arch_opts = SqliteConnectOptions::new()
         .filename(&arch_file)
         .create_if_missing(false);
