@@ -76,21 +76,40 @@ async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
     info!("MaowBot starting; mode = {}", args.mode);
 
-    match args.mode.as_str() {
-        "server" => run_server(args).await?,
-        "client" => run_client(args).await?,
-        "single" => run_single_pc(args).await?,
-        other => {
-            error!("Invalid mode specified: {}", other);
-            error!("Valid modes are: server, client, single.");
-        }
-    }
+    // Create the event bus here or inside run_server, but let's do it here:
+    let event_bus = Arc::new(EventBus::new());
 
+    // For demonstration, spawn the server in a task:
+    let server_bus = event_bus.clone();
+    let server_handle = tokio::spawn(async move {
+        if let Err(e) = run_server(args, server_bus).await {
+            error!("Server error: {:?}", e);
+        }
+    });
+
+    // Meanwhile, watch for Ctrl-C:
+    let ctrlc_bus = event_bus.clone();
+    let ctrlc_handle = tokio::spawn(async move {
+        if let Err(e) = tokio::signal::ctrl_c().await {
+            error!("Failed to listen for Ctrl-C: {:?}", e);
+            return;
+        }
+        info!("Ctrl-C detected, shutting down...");
+        ctrlc_bus.shutdown();
+    });
+
+    // Wait for whichever finishes first.
+    let _ = tokio::select! {
+        _ = server_handle => { /* server finished or errored */ }
+        _ = ctrlc_handle => { /* ctrl-c triggered shutdown */ }
+    };
+
+    info!("Main has finished. Goodbye!");
     Ok(())
 }
 
 /// Run only the server: set up DB, plugin manager, background tasks, etc.
-async fn run_server(args: Args) -> anyhow::Result<()> {
+async fn run_server(args: Args, event_bus: Arc<EventBus>) -> anyhow::Result<()> {
     // 1) Setup DB
     let db = Database::new(&args.db_path).await?;
     db.migrate().await?;
@@ -172,15 +191,23 @@ async fn run_server(args: Args) -> anyhow::Result<()> {
         }
     });
 
-    // 9) Periodically publish a “Tick” event for demonstration
+    let mut shutdown_rx = event_bus.shutdown_rx.clone();
     loop {
-        tokio::time::sleep(std::time::Duration::from_secs(10)).await;
-        let evt = BotEvent::Tick;
-        event_bus.publish(evt).await;
+        tokio::select! {
+            _ = tokio::time::sleep(std::time::Duration::from_secs(10)) => {
+                event_bus.publish(BotEvent::Tick).await;
+            }
+            Ok(_) = shutdown_rx.changed() => {
+                if *shutdown_rx.borrow() {
+                    info!("run_server sees shutdown => break out of main loop");
+                    break;
+                }
+            }
+        }
     }
 
-    // If we ever broke out of the loop, we’d do:
-    // Ok(())
+    info!("run_server is finishing gracefully");
+    Ok(())
 }
 
 /// Connect to an existing server as a “plugin-like client”.
@@ -266,8 +293,11 @@ async fn run_single_pc(args: Args) -> anyhow::Result<()> {
     // 1) Spawn the server in a background task
     let server_args = args.clone();
     tokio::spawn(async move {
-        if let Err(e) = run_server(server_args).await {
-            error!("Server task ended with error: {:?}", e);
+        let event_bus = Arc::new(EventBus::new());
+        // Possibly clone if needed
+        let bus_for_server = event_bus.clone();
+        if let Err(e) = run_server(server_args, bus_for_server).await {
+            error!("Server error: {:?}", e);
         }
     });
 

@@ -352,7 +352,10 @@ impl PluginManager {
                 let _ = plugin_conn.send(status).await;
             }
             PluginToBot::Shutdown => {
-                info!("Plugin '{}' requests a bot shutdown. (not implemented)", plugin_name);
+                info!("Plugin '{}' requests a bot shutdown. Stopping...", plugin_name);
+                if let Some(bus) = &self.event_bus {
+                    bus.shutdown();
+                }
             }
             PluginToBot::SwitchScene { scene_name } => {
                 let info = plugin_conn.info().await;

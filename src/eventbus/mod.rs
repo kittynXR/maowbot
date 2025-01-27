@@ -39,7 +39,7 @@ pub enum BotEvent {
 pub struct EventBus {
     subscribers: Arc<Mutex<Vec<mpsc::Sender<BotEvent>>>>,
     shutdown_tx: watch::Sender<bool>,
-    pub(crate) shutdown_rx: watch::Receiver<bool>,
+    pub shutdown_rx: watch::Receiver<bool>,
 }
 
 /// Default size for each subscriber’s buffer. Adjust as needed.
