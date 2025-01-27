@@ -3,7 +3,7 @@ use async_trait::async_trait;
 use crate::Error;
 
 pub mod manager;
-pub(crate) mod user_manager;
+pub mod user_manager;
 
 pub use manager::AuthManager;
 pub use user_manager::{UserManager, DefaultUserManager};

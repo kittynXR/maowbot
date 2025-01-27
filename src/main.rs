@@ -18,14 +18,17 @@ use maowbot::Database;                 // presumably you have "maowbot" as the c
 use maowbot::plugins::manager::PluginManager;
 use maowbot::plugins::protocol::{BotToPlugin, PluginToBot};
 use maowbot::tasks::credential_refresh;
-use maowbot::auth::{AuthManager, StubAuthHandler};
+use maowbot::auth::{AuthManager, DefaultUserManager, StubAuthHandler};
 use maowbot::crypto::Encryptor;
-use maowbot::repositories::sqlite::SqliteCredentialsRepository;
+use maowbot::repositories::sqlite::{PlatformIdentityRepository, SqliteCredentialsRepository, SqliteUserAnalysisRepository, UserRepository};
 use maowbot::{Error};
-
+use maowbot::cache::{CacheConfig, ChatCache, TrimPolicy};
 use maowbot::eventbus::{EventBus, BotEvent};
 use maowbot::eventbus::db_logger::spawn_db_logger_task;
+use maowbot::platforms::manager::PlatformManager;
 use maowbot::repositories::sqlite::analytics::SqliteAnalyticsRepository;
+use maowbot::services::message_service::MessageService;
+use maowbot::services::user_service::UserService;
 
 /// Command-line arguments
 #[derive(Parser, Debug, Clone)]
@@ -96,15 +99,14 @@ async fn run_server(args: Args) -> anyhow::Result<()> {
         Box::new(StubAuthHandler::default())
     );
 
-    // 2) Create plugin manager
+    // 2) Create plugin manager (unchanged from your code)
     let plugin_manager = PluginManager::new(args.plugin_passphrase.clone());
 
-    // 3) Create EventBus
+    // 3) Create EventBus (same as before)
     let event_bus = Arc::new(EventBus::new());
 
     // 4) DB Logger task
     let analytics_repo = SqliteAnalyticsRepository::new(db.pool().clone());
-    // Batching with buffer=100, flush_interval=5s
     spawn_db_logger_task(
         &event_bus,
         analytics_repo,
@@ -114,21 +116,64 @@ async fn run_server(args: Args) -> anyhow::Result<()> {
 
     // 5) PluginManager subscribes to the bus
     plugin_manager.subscribe_to_event_bus(event_bus.clone());
-
-    // Also set event_bus on plugin manager so it can re-publish plugin messages:
     {
         let mut pm_ref = plugin_manager.clone();
         pm_ref.set_event_bus(event_bus.clone());
     }
 
-    // 6) If user requested an in-process plugin
+    // 6) [Optional] Load any in-process plugin
     if let Some(path) = args.in_process_plugin.as_ref() {
         if let Err(e) = plugin_manager.load_in_process_plugin(path) {
             error!("Failed to load in-process plugin: {:?}", e);
         }
     }
 
-    // 7) Start listening for external plugin connections
+    // ---------------------------------------------------------------
+    //  NEW: Create the user manager + chat cache + message service
+    // ---------------------------------------------------------------
+
+    // 6a) Build the DefaultUserManager (this is the "low-level" logic).
+    //     Need user_repo, identity_repo, analysis_repo, etc.
+    let user_repo = UserRepository::new(db.pool().clone());
+    let identity_repo = PlatformIdentityRepository::new(db.pool().clone());
+    let analysis_repo = SqliteUserAnalysisRepository::new(db.pool().clone());
+
+    let default_user_mgr = DefaultUserManager::new(user_repo, identity_repo, analysis_repo);
+    let user_manager = Arc::new(default_user_mgr);
+
+    // 6b) Build a higher-level "UserService" that references DefaultUserManager
+    let user_service = Arc::new(UserService::new(user_manager.clone()));
+
+    // 6c) Create the in-memory ChatCache with a chosen TrimPolicy
+    let trim_policy = TrimPolicy {
+        max_age_seconds: Some(24 * 3600),
+        spam_score_cutoff: Some(5.0),
+        max_total_messages: Some(10000),
+        max_messages_per_user: Some(200),
+        min_quality_score: Some(0.2),
+    };
+    let chat_cache = ChatCache::new(
+        // The user_analysis repo for spam checks
+        SqliteUserAnalysisRepository::new(db.pool().clone()),
+        CacheConfig { trim_policy }
+    );
+    let chat_cache = Arc::new(Mutex::new(chat_cache));
+
+    // 6d) Build the MessageService to handle new messages, push them to event bus
+    let message_service = Arc::new(MessageService::new(chat_cache, event_bus.clone()));
+
+    // ---------------------------------------------------------------
+    //  NEW: Start platform runtimes (Discord/Twitch/VRChat) if desired
+    //       Or just keep them in your own file if you prefer
+    // ---------------------------------------------------------------
+    let platform_manager = PlatformManager::new(
+        message_service.clone(),
+        user_service.clone(),
+        event_bus.clone(),
+    );
+    platform_manager.start_all_platforms().await?;
+
+    // 7) Start listening for external plugin connections (unchanged)
     let pm_clone = plugin_manager.clone();
     let server_addr = args.server_addr.clone();
     tokio::spawn(async move {
@@ -137,13 +182,17 @@ async fn run_server(args: Args) -> anyhow::Result<()> {
         }
     });
 
-    // 8) Periodically publish a “Tick” event for demonstration
+    // 8) Periodically publish a “Tick” event for demonstration (same as before)
     loop {
         tokio::time::sleep(std::time::Duration::from_secs(10)).await;
         let evt = BotEvent::Tick;
         event_bus.publish(evt).await;
     }
+
+    // Done. We never reach here because of the loop. If you want a clean exit:
+    // Ok(())
 }
+
 
 /// Connect to an existing server as a “plugin-like client”
 /// (e.g., minimal demonstration of how a plugin might run).

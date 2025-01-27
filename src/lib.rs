@@ -11,8 +11,8 @@ pub mod http;
 pub mod tasks;
 pub mod plugins;
 pub mod eventbus;
-
 pub mod cache;
+pub mod services;
 
 pub use db::Database;
 pub use error::Error;

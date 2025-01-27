@@ -52,3 +52,4 @@ pub trait VirtualPlatform: PlatformIntegration {
 pub mod twitch;
 pub mod discord;
 pub mod vrchat;
+pub mod manager;
