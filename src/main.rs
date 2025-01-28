@@ -10,44 +10,41 @@ use tracing::{error, info};
 use tracing_subscriber::FmtSubscriber;
 use std::sync::Arc;
 
-//
-// Import your crate modules:
-//
 use maowbot::Database;
 use maowbot::plugins::manager::PluginManager;
 use maowbot::plugins::protocol::{BotToPlugin, PluginToBot};
-// Removed the unused credential_refresh import
 use maowbot::auth::{AuthManager, DefaultUserManager, StubAuthHandler};
 use maowbot::crypto::Encryptor;
-// Removed the unused `Error` import
 use maowbot::repositories::sqlite::{
     PlatformIdentityRepository,
     SqliteCredentialsRepository,
     SqliteUserAnalysisRepository,
     UserRepository,
+    analytics::SqliteAnalyticsRepository,
 };
 use maowbot::cache::{CacheConfig, ChatCache, TrimPolicy};
 use maowbot::eventbus::{EventBus, BotEvent};
 use maowbot::eventbus::db_logger::spawn_db_logger_task;
 use maowbot::platforms::manager::PlatformManager;
-use maowbot::repositories::sqlite::analytics::SqliteAnalyticsRepository;
+use maowbot::plugins::tui_plugin::TuiPlugin;
 use maowbot::services::message_service::MessageService;
 use maowbot::services::user_service::UserService;
+use maowbot::tasks::monthly_maintenance;
 
 /// Command-line arguments
 #[derive(Parser, Debug, Clone)]
 #[command(name = "maowbot")]
 #[command(author, version, about = "MaowBot - multi-platform streaming bot with plugin system")]
 struct Args {
-    /// Run mode: "server", "client", or "single"
-    #[arg(long, default_value = "single")]
+    /// Run mode: "server" or "client"
+    #[arg(long, default_value = "server")]
     mode: String,
 
     /// Address of the server (used in server or client mode)
     #[arg(long, default_value = "127.0.0.1:9999")]
     server_addr: String,
 
-    /// Path to the SQLite DB (used only in server or single mode)
+    /// Path to the SQLite DB (used only in server mode)
     #[arg(long, default_value = "data/bot.db")]
     db_path: String,
 
@@ -55,9 +52,13 @@ struct Args {
     #[arg(long)]
     plugin_passphrase: Option<String>,
 
-    /// [Optional] If set, load an in-process plugin from the given path
+    /// If set, load an in-process plugin from the given path (server mode only)
     #[arg(long)]
     in_process_plugin: Option<String>,
+
+    /// If set, do not spawn the local TUI. Suitable for Windows/Unix services.
+    #[arg(long, default_value = "false")]
+    headless: bool,
 }
 
 fn init_tracing() {
@@ -72,25 +73,34 @@ fn init_tracing() {
 async fn main() -> anyhow::Result<()> {
     init_tracing();
 
+    // "args" that you want to keep using later
     let args = Args::parse();
-    info!("MaowBot starting; mode = {}", args.mode);
+
+
+    info!("MaowBot starting; mode = {}, headless={}", args.mode, args.headless);
 
     match args.mode.as_str() {
         "server" => {
-            // In server mode, we create the EventBus, run the server in a task, and watch Ctrl-C
             let event_bus = Arc::new(EventBus::new());
-
-            // 1) Spawn the server
+            // spawn server logic:
             let server_handle = {
                 let bus_clone = event_bus.clone();
                 tokio::spawn(async move {
-                    if let Err(e) = run_server(args, bus_clone).await {
+                    if let Err(e) = run_server(args.clone(), bus_clone).await {
                         error!("Server error: {:?}", e);
                     }
                 })
             };
 
-            // 2) Watch for Ctrl-C
+            // If not headless, create a local TUI plugin:
+            // We create the plugin manager FIRST in run_server, so we must wait a bit or pass it out.
+            // Simpler approach: we pass plugin info into the server.
+            // In practice we’ll do it inside run_server.
+            // But to keep it consistent, we do it here after a short delay or by a channel.
+            // For simplicity, let’s do the TUI inside run_server right after plugin manager is ready.
+            // (See the code below in run_server for actually registering TuiPlugin if !headless.)
+
+            // watch for Ctrl-C
             let ctrlc_handle = {
                 let bus_clone = event_bus.clone();
                 tokio::spawn(async move {
@@ -103,46 +113,79 @@ async fn main() -> anyhow::Result<()> {
                 })
             };
 
-            // 3) Wait for server or Ctrl-C to finish
             tokio::select! {
                 _ = server_handle => { /* server finished or errored */ },
                 _ = ctrlc_handle => { /* ctrl-c triggered shutdown */ },
             }
-            info!("Main has finished. Goodbye!");
+            info!("Main has finished (server). Goodbye!");
         }
-
         "client" => {
-            // Client mode: just run the client logic, which blocks.
-            run_client(args).await?;
-            info!("Client mode finished.");
-        }
+            // run client logic
+            let event_bus = Arc::new(EventBus::new());
+            // If not headless, we also load a TuiPlugin that can show remote status
+            // But we need a plugin_manager to do that. So let’s create a small manager
+            // or store a passphrase. We can also skip manager if we just want TUI local logs.
+            // For demonstration, we will do a minimal approach.
+            // We'll run the client function, then keep TUI if not headless in parallel.
 
-        "single" => {
-            // Single-PC mode: old approach that spawns server in background and
-            // loads in-process plugin (if provided), then basically never shuts down.
-            run_single_pc(args).await?;
-            info!("Single-PC mode finished.");
-        }
+            // Make a separate clone to move into the async task
+            let client_args = args.clone();
+            let client_handle = tokio::spawn(async move {
+                // Now we only move "client_args" into this closure
+                if let Err(e) = run_client(client_args).await {
+                    error!("Client error: {:?}", e);
+                }
+            });
 
+            // Also watch Ctrl-C
+            let ctrlc_handle = {
+                let bus_clone = event_bus.clone();
+                tokio::spawn(async move {
+                    if let Err(e) = tokio::signal::ctrl_c().await {
+                        error!("Failed to listen for Ctrl-C: {:?}", e);
+                        return;
+                    }
+                    info!("Ctrl-C in client mode => shutting down bus...");
+                    bus_clone.shutdown();
+                })
+            };
+
+            if !args.headless {
+
+                // Here, "args" is still in scope and not moved
+                let mut local_pm = PluginManager::new(args.plugin_passphrase.clone());
+
+                local_pm.set_event_bus(event_bus.clone());
+
+                // We add the TuiPlugin
+                // (We must define the TuiPlugin in a separate module, see tui_plugin.rs)
+
+                let tui_plugin = TuiPlugin::new(Arc::new(local_pm), event_bus.clone());
+                // The user’s TUI is now running. We do nothing else here; it’s in the background.
+            }
+
+            tokio::select! {
+                _ = client_handle => {},
+                _ = ctrlc_handle => {},
+            }
+            info!("Main has finished (client). Goodbye!");
+        }
         other => {
             error!("Invalid mode specified: {}", other);
-            error!("Valid modes are: server, client, single.");
+            error!("Valid modes are: server, client.");
         }
     }
 
     Ok(())
 }
 
-/// Run only the server: set up DB, plugin manager, background tasks, etc.
+/// The core server logic
 async fn run_server(args: Args, event_bus: Arc<EventBus>) -> anyhow::Result<()> {
-    // 1) Setup DB
     let db = Database::new(&args.db_path).await?;
     db.migrate().await?;
 
-    // Example usage of monthly maintenance, if you want:
+    // Example monthly maintenance
     {
-        use maowbot::repositories::sqlite::SqliteUserAnalysisRepository;
-        use maowbot::tasks::monthly_maintenance;
         let analysis_repo = SqliteUserAnalysisRepository::new(db.pool().clone());
         if let Err(e) = monthly_maintenance::maybe_run_monthly_maintenance(&db, &analysis_repo).await {
             error!("Monthly maintenance error: {:?}", e);
@@ -153,31 +196,28 @@ async fn run_server(args: Args, event_bus: Arc<EventBus>) -> anyhow::Result<()> 
     let encryptor = Encryptor::new(&key)?;
     let creds_repo = SqliteCredentialsRepository::new(db.pool().clone(), encryptor);
 
-    // 2) Create (but not currently used) AuthManager
     let _auth_manager = AuthManager::new(
         Box::new(creds_repo.clone()),
         Box::new(StubAuthHandler::default())
     );
 
-    // 3) Create plugin manager
+    // plugin manager
     let mut plugin_manager = PluginManager::new(args.plugin_passphrase.clone());
-
-    // 4) DB Logger task
-    let analytics_repo = SqliteAnalyticsRepository::new(db.pool().clone());
-    spawn_db_logger_task(&event_bus, analytics_repo, 100, 5);
-
-    // 5) PluginManager subscribes to the bus
     plugin_manager.subscribe_to_event_bus(event_bus.clone());
     plugin_manager.set_event_bus(event_bus.clone());
 
-    // 6) [Optional] If user provided an in-process plugin path, load it:
+    // DB logger
+    let analytics_repo = SqliteAnalyticsRepository::new(db.pool().clone());
+    spawn_db_logger_task(&event_bus, analytics_repo, 100, 5);
+
+    // Optionally load an in-process plugin
     if let Some(path) = args.in_process_plugin.as_ref() {
         if let Err(e) = plugin_manager.load_in_process_plugin(path) {
             error!("Failed to load in-process plugin: {:?}", e);
         }
     }
 
-    // 7) Build user manager, message service, platform manager
+    // Build user manager, etc.
     let user_repo = UserRepository::new(db.pool().clone());
     let identity_repo = PlatformIdentityRepository::new(db.pool().clone());
     let analysis_repo = SqliteUserAnalysisRepository::new(db.pool().clone());
@@ -207,16 +247,24 @@ async fn run_server(args: Args, event_bus: Arc<EventBus>) -> anyhow::Result<()> 
     );
     platform_manager.start_all_platforms().await?;
 
-    // 8) Start listening for external plugin connections in background
-    let pm_clone = plugin_manager.clone();
-    let server_addr = args.server_addr.clone();
-    tokio::spawn(async move {
-        if let Err(e) = pm_clone.listen(&server_addr).await {
-            error!("PluginManager listen error: {:?}", e);
-        }
-    });
+    // Start listening for external plugins automatically (the requirement
+    // is that server mode always listens)
+    // But if we want to let TUI start/stop it, then skip here.
+    // By default we’ll start now:
+    plugin_manager.start_listening().await?;
 
-    // 9) Main “tick” loop until shutdown
+    // If not headless => register TuiPlugin for local REPL:
+    if !args.headless {
+        let tui_plugin = TuiPlugin::new(Arc::new(plugin_manager.clone()), event_bus.clone());
+        // This plugin runs in background. No further calls needed.
+        // It’s included in manager’s list once constructed (we do that next):
+        {
+            let mut lock = plugin_manager.plugins.lock().await;
+            lock.push(Arc::new(tui_plugin));
+        }
+    }
+
+    // main server loop until shutdown
     let mut shutdown_rx = event_bus.shutdown_rx.clone();
     loop {
         tokio::select! {
@@ -232,11 +280,11 @@ async fn run_server(args: Args, event_bus: Arc<EventBus>) -> anyhow::Result<()> 
         }
     }
 
-    info!("run_server is finishing gracefully");
+    info!("run_server finishing gracefully");
     Ok(())
 }
 
-/// Connect to an existing server as a “plugin-like client”.
+/// The client logic: connect to remote server as a plugin.
 async fn run_client(args: Args) -> anyhow::Result<()> {
     info!("Running in CLIENT mode...");
 
@@ -249,7 +297,7 @@ async fn run_client(args: Args) -> anyhow::Result<()> {
     let (reader, mut writer) = stream.into_split();
     let mut lines = BufReader::new(reader).lines();
 
-    // 1) Send a "Hello" to the bot
+    // 1) Send "Hello"
     let hello_msg = PluginToBot::Hello {
         plugin_name: "RemoteClient".to_string(),
         passphrase: args.plugin_passphrase.clone(),
@@ -257,7 +305,7 @@ async fn run_client(args: Args) -> anyhow::Result<()> {
     let hello_str = serde_json::to_string(&hello_msg)? + "\n";
     writer.write_all(hello_str.as_bytes()).await?;
 
-    // 2) Launch a task to handle inbound events
+    // 2) Read inbound events
     tokio::spawn(async move {
         while let Ok(Some(line)) = lines.next_line().await {
             match serde_json::from_str::<BotToPlugin>(&line) {
@@ -269,10 +317,10 @@ async fn run_client(args: Args) -> anyhow::Result<()> {
                         info!("ChatMessage => [{platform}#{channel}] {user}: {text}");
                     }
                     BotToPlugin::Tick => {
-                        info!("Received Tick event from the server!");
+                        info!("Received Tick from server!");
                     }
                     BotToPlugin::AuthError { reason } => {
-                        error!("Received AuthError from server: {}", reason);
+                        error!("Server AuthError: {}", reason);
                     }
                     BotToPlugin::StatusResponse { connected_plugins, server_uptime } => {
                         info!("StatusResponse => connected_plugins={:?}, server_uptime={}s",
@@ -287,48 +335,21 @@ async fn run_client(args: Args) -> anyhow::Result<()> {
                     }
                 },
                 Err(e) => {
-                    error!("Failed to parse message from server: {} - line was: {}", e, line);
+                    error!("Invalid message from server: {} - line={}", e, line);
                 }
             }
         }
         info!("Client read loop ended.");
     });
 
-    // 3) Meanwhile, in the main client loop, do periodic stuff
+    // 3) Do periodic keep-alive or logs
     loop {
         tokio::time::sleep(Duration::from_secs(10)).await;
-        // Example: send a LogMessage
         let log_msg = PluginToBot::LogMessage {
             text: "RemoteClient is still alive!".to_string(),
         };
         let out = serde_json::to_string(&log_msg)? + "\n";
         writer.write_all(out.as_bytes()).await?;
         writer.flush().await?;
-    }
-}
-
-/// Run in "single PC" mode: we spin up the server in the background (listening
-/// for any remote plugins) and load a plugin *in-process* (instead of connecting
-/// to ourselves via TCP). Then we basically never stop.
-async fn run_single_pc(args: Args) -> anyhow::Result<()> {
-    info!("Running in SINGLE-PC mode...");
-
-    // 1) Spawn the server in a background task
-    let server_args = args.clone();
-    tokio::spawn(async move {
-        let event_bus = Arc::new(EventBus::new());
-        if let Err(e) = run_server(server_args, event_bus).await {
-            error!("Server error: {:?}", e);
-        }
-    });
-
-    // 2) Give the server a moment to start listening
-    tokio::time::sleep(Duration::from_secs(1)).await;
-
-    info!("Single-PC mode: server is running in background. If --in_process_plugin=PATH was set, it's loaded internally. No local TCP client is used.");
-
-    // 3) Just sleep forever (or do your own logic here)
-    loop {
-        tokio::time::sleep(Duration::from_secs(3600)).await;
     }
 }

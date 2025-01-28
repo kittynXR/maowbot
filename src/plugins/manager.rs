@@ -1,4 +1,4 @@
-// src/plugins/manager.rs
+// File: src/plugins/manager.rs
 
 use super::protocol::{BotToPlugin, PluginToBot};
 use super::capabilities::{PluginCapability, GrantedCapabilities};
@@ -15,6 +15,7 @@ use crate::eventbus::{EventBus, BotEvent};
 use crate::plugins::capabilities::RequestedCapabilities;
 use async_trait::async_trait;
 use std::any::Any;
+use tokio::task::JoinHandle;
 
 /// Holds static info about one connected plugin (name + assigned capabilities).
 #[derive(Clone)]
@@ -25,27 +26,16 @@ pub struct PluginConnectionInfo {
 
 #[async_trait]
 pub trait PluginConnection: Send + Sync {
-    /// Return a copy of this plugin’s `PluginConnectionInfo`.
     async fn info(&self) -> PluginConnectionInfo;
-
-    /// Assign new capabilities to the plugin.
     async fn set_capabilities(&self, capabilities: Vec<PluginCapability>);
-
-    /// Send a `BotToPlugin` event to this plugin.
     async fn send(&self, event: BotToPlugin) -> Result<(), Error>;
-
-    /// Called when we want to forcibly stop the plugin.
     async fn stop(&self) -> Result<(), Error>;
-
-    /// For tests that need downcasting to the concrete plugin type
     fn as_any(&self) -> &dyn Any;
 }
 
 /// Example for a TCP-based plugin connection
 pub struct TcpPluginConnection {
-    /// Store the `PluginConnectionInfo` behind a `tokio::sync::Mutex`
     info: Arc<Mutex<PluginConnectionInfo>>,
-    /// Unbounded sender for pushing events out to the plugin
     sender: mpsc::UnboundedSender<BotToPlugin>,
 }
 
@@ -65,7 +55,6 @@ impl TcpPluginConnection {
 #[async_trait]
 impl PluginConnection for TcpPluginConnection {
     async fn info(&self) -> PluginConnectionInfo {
-        // Lock asynchronously
         let guard = self.info.lock().await;
         guard.clone()
     }
@@ -76,7 +65,6 @@ impl PluginConnection for TcpPluginConnection {
     }
 
     async fn send(&self, event: BotToPlugin) -> Result<(), Error> {
-        // The mpsc::UnboundedSender::send(...) is synchronous but returns a Result
         self.sender
             .send(event)
             .map_err(|_| Error::Platform("Failed to send to plugin channel".into()))
@@ -126,7 +114,6 @@ impl PluginConnection for DynamicPluginConnection {
     }
 
     async fn send(&self, event: BotToPlugin) -> Result<(), Error> {
-        // Just log or do an in-process call
         info!("(InProcess) sending event: {:?}", event);
         Ok(())
     }
@@ -155,6 +142,9 @@ pub struct PluginManager {
 
     /// Optionally store an EventBus reference for publishing/consuming
     event_bus: Option<Arc<EventBus>>,
+
+    /// A handle to the background listener task, if we’re currently listening.
+    listen_handle: Arc<Mutex<Option<JoinHandle<()>>>>,
 }
 
 impl PluginManager {
@@ -165,14 +155,16 @@ impl PluginManager {
             passphrase,
             start_time: std::time::Instant::now(),
             event_bus: None,
+            listen_handle: Arc::new(Mutex::new(None)),
         }
     }
 
-    /// Returns a locked list of plugins. Typically only used for debugging/tests.
-    pub fn plugin_list(&self) -> tokio::sync::OwnedMutexGuard<Vec<Arc<dyn PluginConnection>>> {
-        // We can’t just do `.lock().unwrap()`, so we provide an async method if needed.
-        // For convenience in tests, use the “owned” guard approach:
-        self.plugins.clone().try_lock_owned().expect("Lock is busy")
+    /// For convenience in tests, or for TUI to see what’s connected, etc.
+    pub async fn plugin_list(&self) -> Vec<String> {
+        let lock = self.plugins.lock().await;
+        lock.iter()
+            .map(|p| futures_lite::future::block_on(p.info()).name)
+            .collect()
     }
 
     /// Assign an EventBus to the manager. Called from main/server init.
@@ -188,8 +180,42 @@ impl PluginManager {
         Ok(())
     }
 
-    /// Start listening for plugin TCP (plaintext).
-    pub async fn listen(&self, addr: &str) -> Result<(), Error> {
+    /// Public method to start listening on `addr` if not already.
+    /// If we already have a running listener, do nothing.
+    pub async fn start_listening(&self) -> Result<(), Error> {
+        // If we already have a handle, do nothing
+        let mut lock = self.listen_handle.lock().await;
+        if lock.is_some() {
+            // already listening
+            return Ok(());
+        }
+
+        let addr = "127.0.0.1:9999"; // or store it if you want a param
+        info!("PluginManager starting to listen on {}", addr);
+
+        let manager = self.clone();
+        let handle = tokio::spawn(async move {
+            if let Err(e) = manager.listen(addr).await {
+                error!("PluginManager listen error: {:?}", e);
+            }
+        });
+
+        *lock = Some(handle);
+        Ok(())
+    }
+
+    /// Public method to stop listening if we have a running listener.
+    pub async fn stop_listening(&self) {
+        let mut lock = self.listen_handle.lock().await;
+        if let Some(h) = lock.take() {
+            h.abort();
+            info!("PluginManager: listening task aborted.");
+        }
+    }
+
+    /// Start listening for plugin TCP (plaintext). This is the “core” method,
+    /// but now called from `start_listening()`.
+    async fn listen(&self, addr: &str) -> Result<(), Error> {
         let listener = TcpListener::bind(addr)
             .await
             .map_err(|e| Error::Platform(format!("Failed to bind: {}", e)))?;
@@ -212,7 +238,6 @@ impl PluginManager {
         }
     }
 
-    /// Internal method to handle one incoming TCP plugin connection.
     async fn handle_tcp_connection<T>(&self, stream: T) -> Result<(), Error>
     where
         T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
@@ -230,7 +255,6 @@ impl PluginManager {
             }
         };
 
-        // Validate passphrase if needed
         let hello_msg: PluginToBot = match serde_json::from_str(&line) {
             Ok(msg) => msg,
             Err(_) => {
@@ -287,7 +311,7 @@ impl PluginManager {
         let msg = serde_json::to_string(&welcome)? + "\n";
         writer.write_all(msg.as_bytes()).await?;
 
-        // Inbound read loop (plugin -> manager)
+        // Inbound read loop
         let pm_clone = self.clone();
         let plugin_name_clone = plugin_name.clone();
         tokio::spawn(async move {
@@ -318,12 +342,12 @@ impl PluginManager {
             }
         });
 
-        // Outbound write loop (manager -> plugin)
+        // Outbound write loop
         tokio::spawn(async move {
             while let Some(evt) = rx.recv().await {
-                let out =
-                    serde_json::to_string(&evt).unwrap_or_else(|_| "{\"error\":\"serialize\"}".into())
-                        + "\n";
+                let out = serde_json::to_string(&evt)
+                    .unwrap_or_else(|_| "{\"error\":\"serialize\"}".into())
+                    + "\n";
                 if writer.write_all(out.as_bytes()).await.is_err() {
                     error!("Error writing to plugin. Possibly disconnected.");
                     break;
@@ -335,7 +359,6 @@ impl PluginManager {
         Ok(())
     }
 
-    /// Called whenever a plugin sends a `PluginToBot` message to us.
     pub async fn on_plugin_message(
         &self,
         message: PluginToBot,
@@ -347,7 +370,6 @@ impl PluginManager {
                 info!("[PLUGIN LOG: {}] {}", plugin_name, text);
             }
             PluginToBot::RequestStatus => {
-                // respond with info about connected plugins
                 let status = self.build_status_response().await;
                 let _ = plugin_conn.send(status).await;
             }
@@ -373,7 +395,6 @@ impl PluginManager {
                 if info.capabilities.contains(&PluginCapability::SendChat) {
                     info!("(PLUGIN->BOT) {} says: send chat to {} -> {}", plugin_name, channel, text);
 
-                    // Possibly re-publish to EventBus as a new ChatMessage from "plugin"
                     if let Some(bus) = &self.event_bus {
                         let evt = BotEvent::ChatMessage {
                             platform: "plugin".to_string(),
@@ -397,7 +418,6 @@ impl PluginManager {
                     plugin_name, req.requested
                 );
                 let (granted, denied) = self.evaluate_capabilities(&req.requested);
-                // assign to plugin
                 plugin_conn.set_capabilities(granted.clone()).await;
 
                 let response = BotToPlugin::CapabilityResponse(GrantedCapabilities { granted, denied });
@@ -409,12 +429,10 @@ impl PluginManager {
         }
     }
 
-    /// Evaluate which capabilities we grant or deny.
     fn evaluate_capabilities(
         &self,
         requested: &[PluginCapability],
     ) -> (Vec<PluginCapability>, Vec<PluginCapability>) {
-        // For demonstration, we deny ChatModeration
         let mut granted = vec![];
         let mut denied = vec![];
         for cap in requested {
@@ -427,7 +445,7 @@ impl PluginManager {
         (granted, denied)
     }
 
-    /// Example method to handle the ChatMessage event from the bus. Called by subscribe_to_event_bus below.
+    /// Example method to handle ChatMessage from bus. Called by `subscribe_to_event_bus`.
     async fn handle_chat_event(&self, platform: &str, channel: &str, user: &str, text: &str) {
         info!(
             "PluginManager: handle_chat_event => {} #{} (user={}, text={})",
@@ -490,8 +508,16 @@ impl PluginManager {
         });
     }
 
-    /// Build a StatusResponse message
-    async fn build_status_response(&self) -> BotToPlugin {
+    /// Broadcast an event to ALL connected plugins (example).
+    pub async fn broadcast(&self, event: BotToPlugin) {
+        let plugins = self.plugins.lock().await;
+        for plugin_conn in plugins.iter() {
+            let _ = plugin_conn.send(event.clone()).await;
+        }
+    }
+
+    /// Build a StatusResponse message for plugin or TUI usage
+    pub async fn build_status_response(&self) -> BotToPlugin {
         let plugins = self.plugins.lock().await;
         let mut connected = vec![];
         for p in plugins.iter() {
@@ -502,15 +528,6 @@ impl PluginManager {
         BotToPlugin::StatusResponse {
             connected_plugins: connected,
             server_uptime: uptime,
-        }
-    }
-
-    /// Broadcast an event to ALL connected plugins (example).
-    /// Must be async because each `.send()` is an async call.
-    pub async fn broadcast(&self, event: BotToPlugin) {
-        let plugins = self.plugins.lock().await;
-        for plugin_conn in plugins.iter() {
-            let _ = plugin_conn.send(event.clone()).await;
         }
     }
 }
