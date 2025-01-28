@@ -4,7 +4,6 @@ use clap::Parser;
 use std::time::Duration;
 use std::net::SocketAddr;
 use tokio::sync::Mutex;
-use tokio::task;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
 use tracing::{error, info};
@@ -12,21 +11,21 @@ use tracing_subscriber::FmtSubscriber;
 use std::sync::Arc;
 
 //
-// Import your crate modules (your code might differ):
+// Import your crate modules:
 //
-use maowbot::Database;                 // presumably you have "maowbot" as the crate name
+use maowbot::Database;
 use maowbot::plugins::manager::PluginManager;
 use maowbot::plugins::protocol::{BotToPlugin, PluginToBot};
-use maowbot::tasks::credential_refresh;
+// Removed the unused credential_refresh import
 use maowbot::auth::{AuthManager, DefaultUserManager, StubAuthHandler};
 use maowbot::crypto::Encryptor;
+// Removed the unused `Error` import
 use maowbot::repositories::sqlite::{
     PlatformIdentityRepository,
     SqliteCredentialsRepository,
     SqliteUserAnalysisRepository,
     UserRepository,
 };
-use maowbot::{Error};
 use maowbot::cache::{CacheConfig, ChatCache, TrimPolicy};
 use maowbot::eventbus::{EventBus, BotEvent};
 use maowbot::eventbus::db_logger::spawn_db_logger_task;
@@ -76,35 +75,61 @@ async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
     info!("MaowBot starting; mode = {}", args.mode);
 
-    // Create the event bus here or inside run_server, but let's do it here:
-    let event_bus = Arc::new(EventBus::new());
+    match args.mode.as_str() {
+        "server" => {
+            // In server mode, we create the EventBus, run the server in a task, and watch Ctrl-C
+            let event_bus = Arc::new(EventBus::new());
 
-    // For demonstration, spawn the server in a task:
-    let server_bus = event_bus.clone();
-    let server_handle = tokio::spawn(async move {
-        if let Err(e) = run_server(args, server_bus).await {
-            error!("Server error: {:?}", e);
+            // 1) Spawn the server
+            let server_handle = {
+                let bus_clone = event_bus.clone();
+                tokio::spawn(async move {
+                    if let Err(e) = run_server(args, bus_clone).await {
+                        error!("Server error: {:?}", e);
+                    }
+                })
+            };
+
+            // 2) Watch for Ctrl-C
+            let ctrlc_handle = {
+                let bus_clone = event_bus.clone();
+                tokio::spawn(async move {
+                    if let Err(e) = tokio::signal::ctrl_c().await {
+                        error!("Failed to listen for Ctrl-C: {:?}", e);
+                        return;
+                    }
+                    info!("Ctrl-C detected, shutting down event_bus...");
+                    bus_clone.shutdown();
+                })
+            };
+
+            // 3) Wait for server or Ctrl-C to finish
+            tokio::select! {
+                _ = server_handle => { /* server finished or errored */ },
+                _ = ctrlc_handle => { /* ctrl-c triggered shutdown */ },
+            }
+            info!("Main has finished. Goodbye!");
         }
-    });
 
-    // Meanwhile, watch for Ctrl-C:
-    let ctrlc_bus = event_bus.clone();
-    let ctrlc_handle = tokio::spawn(async move {
-        if let Err(e) = tokio::signal::ctrl_c().await {
-            error!("Failed to listen for Ctrl-C: {:?}", e);
-            return;
+        "client" => {
+            // Client mode: just run the client logic, which blocks.
+            run_client(args).await?;
+            info!("Client mode finished.");
         }
-        info!("Ctrl-C detected, shutting down...");
-        ctrlc_bus.shutdown();
-    });
 
-    // Wait for whichever finishes first.
-    let _ = tokio::select! {
-        _ = server_handle => { /* server finished or errored */ }
-        _ = ctrlc_handle => { /* ctrl-c triggered shutdown */ }
-    };
+        "single" => {
+            // Single-PC mode: old approach that spawns server in background and
+            // loads in-process plugin (if provided), then basically never shuts down.
+            run_single_pc(args).await?;
+            info!("Single-PC mode finished.");
+        }
 
-    info!("Main has finished. Goodbye!");
+        other => {
+            error!("Invalid mode specified: {}", other);
+            error!("Valid modes are: server, client, single.");
+        }
+    }
+
     Ok(())
 }
 
@@ -114,13 +139,12 @@ async fn run_server(args: Args, event_bus: Arc<EventBus>) -> anyhow::Result<()> 
     let db = Database::new(&args.db_path).await?;
     db.migrate().await?;
 
+    // Example usage of monthly maintenance, if you want:
     {
         use maowbot::repositories::sqlite::SqliteUserAnalysisRepository;
-        use maowbot::tasks::monthly_maintenance;  // the new file we created
-
+        use maowbot::tasks::monthly_maintenance;
         let analysis_repo = SqliteUserAnalysisRepository::new(db.pool().clone());
         if let Err(e) = monthly_maintenance::maybe_run_monthly_maintenance(&db, &analysis_repo).await {
-            // log or handle
             error!("Monthly maintenance error: {:?}", e);
         }
     }
@@ -129,33 +153,22 @@ async fn run_server(args: Args, event_bus: Arc<EventBus>) -> anyhow::Result<()> 
     let encryptor = Encryptor::new(&key)?;
     let creds_repo = SqliteCredentialsRepository::new(db.pool().clone(), encryptor);
 
-    // Example: create an AuthManager
-    let auth_manager = AuthManager::new(
+    // 2) Create (but not currently used) AuthManager
+    let _auth_manager = AuthManager::new(
         Box::new(creds_repo.clone()),
         Box::new(StubAuthHandler::default())
     );
 
-    // 2) Create plugin manager
-    let plugin_manager = PluginManager::new(args.plugin_passphrase.clone());
-
-    // 3) Create EventBus
-    let event_bus = Arc::new(EventBus::new());
+    // 3) Create plugin manager
+    let mut plugin_manager = PluginManager::new(args.plugin_passphrase.clone());
 
     // 4) DB Logger task
     let analytics_repo = SqliteAnalyticsRepository::new(db.pool().clone());
-    spawn_db_logger_task(
-        &event_bus,
-        analytics_repo,
-        100,
-        5
-    );
+    spawn_db_logger_task(&event_bus, analytics_repo, 100, 5);
 
     // 5) PluginManager subscribes to the bus
     plugin_manager.subscribe_to_event_bus(event_bus.clone());
-    {
-        let mut pm_ref = plugin_manager.clone();
-        pm_ref.set_event_bus(event_bus.clone());
-    }
+    plugin_manager.set_event_bus(event_bus.clone());
 
     // 6) [Optional] If user provided an in-process plugin path, load it:
     if let Some(path) = args.in_process_plugin.as_ref() {
@@ -194,7 +207,7 @@ async fn run_server(args: Args, event_bus: Arc<EventBus>) -> anyhow::Result<()> 
     );
     platform_manager.start_all_platforms().await?;
 
-    // 8) Start listening for external plugin connections
+    // 8) Start listening for external plugin connections in background
     let pm_clone = plugin_manager.clone();
     let server_addr = args.server_addr.clone();
     tokio::spawn(async move {
@@ -203,10 +216,11 @@ async fn run_server(args: Args, event_bus: Arc<EventBus>) -> anyhow::Result<()> 
         }
     });
 
+    // 9) Main “tick” loop until shutdown
     let mut shutdown_rx = event_bus.shutdown_rx.clone();
     loop {
         tokio::select! {
-            _ = tokio::time::sleep(std::time::Duration::from_secs(10)) => {
+            _ = tokio::time::sleep(Duration::from_secs(10)) => {
                 event_bus.publish(BotEvent::Tick).await;
             }
             Ok(_) = shutdown_rx.changed() => {
@@ -223,8 +237,6 @@ async fn run_server(args: Args, event_bus: Arc<EventBus>) -> anyhow::Result<()> 
 }
 
 /// Connect to an existing server as a “plugin-like client”.
-/// This was previously used in single PC mode, but we now keep it only
-/// for the dedicated `--mode client` scenario.
 async fn run_client(args: Args) -> anyhow::Result<()> {
     info!("Running in CLIENT mode...");
 
@@ -267,8 +279,7 @@ async fn run_client(args: Args) -> anyhow::Result<()> {
                               connected_plugins, server_uptime);
                     }
                     BotToPlugin::CapabilityResponse(resp) => {
-                        info!("Got capability grants: {:?}, denies: {:?}",
-                              resp.granted, resp.denied);
+                        info!("Got capability grants: {:?}, denies: {:?}", resp.granted, resp.denied);
                     }
                     BotToPlugin::ForceDisconnect { reason } => {
                         error!("Server forced disconnect: {}", reason);
@@ -298,7 +309,7 @@ async fn run_client(args: Args) -> anyhow::Result<()> {
 
 /// Run in "single PC" mode: we spin up the server in the background (listening
 /// for any remote plugins) and load a plugin *in-process* (instead of connecting
-/// to ourselves via TCP).
+/// to ourselves via TCP). Then we basically never stop.
 async fn run_single_pc(args: Args) -> anyhow::Result<()> {
     info!("Running in SINGLE-PC mode...");
 
@@ -306,9 +317,7 @@ async fn run_single_pc(args: Args) -> anyhow::Result<()> {
     let server_args = args.clone();
     tokio::spawn(async move {
         let event_bus = Arc::new(EventBus::new());
-        // Possibly clone if needed
-        let bus_for_server = event_bus.clone();
-        if let Err(e) = run_server(server_args, bus_for_server).await {
+        if let Err(e) = run_server(server_args, event_bus).await {
             error!("Server error: {:?}", e);
         }
     });
@@ -316,10 +325,9 @@ async fn run_single_pc(args: Args) -> anyhow::Result<()> {
     // 2) Give the server a moment to start listening
     tokio::time::sleep(Duration::from_secs(1)).await;
 
-    info!("Single-PC mode: in-process plugin loading is handled by run_server (if --in_process_plugin=PATH was set).");
-    info!("No local TCP client connection is made. The server remains up for any remote plugins.");
+    info!("Single-PC mode: server is running in background. If --in_process_plugin=PATH was set, it's loaded internally. No local TCP client is used.");
 
-    // Since run_server() never returns (it loops), we just sleep or wait forever:
+    // 3) Just sleep forever (or do your own logic here)
     loop {
         tokio::time::sleep(Duration::from_secs(3600)).await;
     }
