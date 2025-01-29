@@ -33,9 +33,11 @@ serenity = "^0.12"
 url = "^2.5"
 oauth2 = "^4.4"
 clap = {  version = "4.2", features = ["derive"] }
-prost = "0.11"
-prost-types = "0.11"
-tonic = "0.8"
+
+# gRPC / protobuf:
+tonic = { version = "^0.10", features = ["transport"] }
+prost = "^0.12"
+prost-types = "^0.12"
 
 # --- New or updated below:
 tracing = "^0.1"
@@ -48,4 +50,4 @@ tempfile = "3.15.0"
 tokio-test = "^0.4"
 
 [build-dependencies]
-tonic-build = "0.8"
+tonic-build = "^0.10"
