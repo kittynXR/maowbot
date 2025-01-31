@@ -42,6 +42,8 @@ pub trait PluginConnection: Send + Sync {
     async fn info(&self) -> PluginConnectionInfo;
     async fn set_capabilities(&self, capabilities: Vec<PluginCapability>);
 
+    async fn set_name(&self, new_name: String);
+
     /// Send a **Protobuf** PluginStreamResponse to the plugin
     async fn send(&self, response: PluginStreamResponse) -> Result<(), Error>;
 
@@ -80,6 +82,11 @@ impl PluginConnection for PluginGrpcConnection {
     async fn set_capabilities(&self, capabilities: Vec<PluginCapability>) {
         let mut guard = self.info.lock().await;
         guard.capabilities = capabilities;
+    }
+
+    async fn set_name(&self, new_name: String) {
+        let mut guard = self.info.lock().await;
+        guard.name = new_name;
     }
 
     async fn send(&self, response: PluginStreamResponse) -> Result<(), Error> {
@@ -131,6 +138,11 @@ impl PluginConnection for DynamicPluginConnection {
     async fn set_capabilities(&self, capabilities: Vec<PluginCapability>) {
         let mut guard = self.info.lock().await;
         guard.capabilities = capabilities;
+    }
+
+    async fn set_name(&self, new_name: String) {
+        let mut guard = self.info.lock().await;
+        guard.name = new_name;
     }
 
     async fn send(&self, response: PluginStreamResponse) -> Result<(), Error> {
@@ -340,12 +352,8 @@ impl PluginManager {
                         return;
                     }
                 }
-                // rename plugin
-                {
-                    let mut info = plugin.info().await;
-                    info.name = plugin_name;
-                    plugin.set_capabilities(info.capabilities).await;
-                }
+                plugin.set_name(plugin_name).await;
+
                 // send a welcome
                 let welcome = PluginStreamResponse {
                     payload: Some(RespPayload::Welcome(WelcomeResponse {

@@ -170,6 +170,11 @@ impl PluginConnection for TuiPlugin {
         guard.capabilities = caps;
     }
 
+    async fn set_name(&self, new_name: String) {
+        let mut guard = self.info.lock().await;
+        guard.name = new_name;
+    }
+
     /// Receive a PluginStreamResponse from the manager (here we simply print it).
     async fn send(&self, response: PluginStreamResponse) -> Result<(), Error> {
         println!("(TUI Plugin) received from manager => {:?}", response.payload);

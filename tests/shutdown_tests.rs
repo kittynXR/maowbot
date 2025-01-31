@@ -56,6 +56,11 @@ impl PluginConnection for ShutdownTestPlugin {
         guard.capabilities = caps;
     }
 
+    async fn set_name(&self, new_name: String) {
+        let mut guard = self.info.lock().await;
+        guard.name = new_name;
+    }
+
     async fn send(&self, response: PluginStreamResponse) -> std::result::Result<(), Error> {
         // We just store debug text for later inspection
         let mut lock = self.received_responses.lock().await;

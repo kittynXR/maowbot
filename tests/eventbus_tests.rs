@@ -72,6 +72,11 @@ impl PluginConnection for MockPlugin {
         guard.capabilities = caps;
     }
 
+    async fn set_name(&self, new_name: String) {
+        let mut guard = self.info.lock().await;
+        guard.name = new_name;
+    }
+
     /// Replaces the old `send(&self, event: BotToPlugin)` signature
     async fn send(&self, response: PluginStreamResponse) -> Result<(), Error> {
         // Store the debug-printed form of the response
