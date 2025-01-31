@@ -9,14 +9,16 @@ use tokio::sync::Mutex;
 use maowbot::Error;
 use maowbot::eventbus::{EventBus, BotEvent};
 use maowbot::eventbus::db_logger::spawn_db_logger_task;
-use maowbot::plugins::capabilities::PluginCapability;
 use maowbot::plugins::manager::{
     PluginManager, PluginConnection, PluginConnectionInfo
 };
-use maowbot::plugins::protocol::BotToPlugin;
+use maowbot::plugins::proto::plugs::{
+    PluginCapability,
+    PluginStreamResponse,
+};
 use maowbot::repositories::sqlite::analytics::{ChatMessage, AnalyticsRepo};
 
-// ---------- Mock Analytics Repo ----------
+/// ---------- Mock Analytics Repo ----------
 #[derive(Clone)]
 struct MockAnalyticsRepo {
     messages: Arc<Mutex<Vec<ChatMessage>>>,
@@ -39,11 +41,23 @@ impl AnalyticsRepo for MockAnalyticsRepo {
     }
 }
 
-// ---------- Mock Plugin ----------
+/// ---------- Mock Plugin ----------
 #[derive(Clone)]
 struct MockPlugin {
     info: Arc<Mutex<PluginConnectionInfo>>,
     received: Arc<Mutex<Vec<String>>>,
+}
+
+impl MockPlugin {
+    fn new(name: &str, capabilities: Vec<PluginCapability>) -> Self {
+        Self {
+            info: Arc::new(Mutex::new(PluginConnectionInfo {
+                name: name.into(),
+                capabilities,
+            })),
+            received: Arc::new(Mutex::new(vec![])),
+        }
+    }
 }
 
 #[async_trait]
@@ -58,9 +72,11 @@ impl PluginConnection for MockPlugin {
         guard.capabilities = caps;
     }
 
-    async fn send(&self, event: BotToPlugin) -> Result<(), Error> {
+    /// Replaces the old `send(&self, event: BotToPlugin)` signature
+    async fn send(&self, response: PluginStreamResponse) -> Result<(), Error> {
+        // Store the debug-printed form of the response
         let mut lock = self.received.lock().await;
-        lock.push(format!("{:?}", event));
+        lock.push(format!("{:?}", response));
         Ok(())
     }
 
@@ -73,7 +89,7 @@ impl PluginConnection for MockPlugin {
     }
 }
 
-// ---------- The actual test ----------
+/// ---------- The actual test ----------
 #[tokio::test]
 async fn test_eventbus_integration() -> Result<(), Error> {
     // 1) Create an EventBus
@@ -85,26 +101,18 @@ async fn test_eventbus_integration() -> Result<(), Error> {
     // 3) Spawn the DB logger task with short flush interval
     spawn_db_logger_task(&bus, mock_repo.clone(), 10, 1);
 
-    // 4) Create a PluginManager, subscribe to bus
+    // 4) Create a PluginManager, subscribe to the bus
     let plugin_mgr = PluginManager::new(None);
     plugin_mgr.subscribe_to_event_bus(bus.clone());
 
     // 5) Add a mock plugin that can receive chat events
-    let mock_plugin = MockPlugin {
-        info: Arc::new(Mutex::new(PluginConnectionInfo {
-            name: "mock_plugin".into(),
-            capabilities: vec![PluginCapability::ReceiveChatEvents],
-        })),
-        received: Arc::new(Mutex::new(vec![])),
-    };
-
-    // Instead of blocking_lock(), just lock().await
+    let mock_plugin = MockPlugin::new("mock_plugin", vec![PluginCapability::ReceiveChatEvents]);
     {
         let mut list = plugin_mgr.plugins.lock().await;
         list.push(Arc::new(mock_plugin.clone()) as Arc<dyn PluginConnection>);
     }
 
-    // 6) Publish a single ChatMessage
+    // 6) Publish a single ChatMessage event
     let evt = BotEvent::ChatMessage {
         platform: "test_platform".into(),
         channel: "test_channel".into(),
@@ -129,7 +137,10 @@ async fn test_eventbus_integration() -> Result<(), Error> {
     // 10) Check the plugin’s received events
     let recvd = mock_plugin.received.lock().await;
     assert_eq!(recvd.len(), 1, "Should have 1 inbound event");
-    assert!(recvd[0].contains("ChatMessage"));
+    assert!(
+        recvd[0].contains("ChatMessage"),
+        "Expected debug output containing ChatMessage"
+    );
 
     Ok(())
 }
