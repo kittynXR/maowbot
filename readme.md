@@ -134,9 +134,7 @@ Note: If you want to run the gRPC-based plugin example, see plugin_hello/ for a 
 ## Directory Structure
 
 Below is an abbreviated listing of the key files and folders:
-
-    ```bash
-   
+ 
     Directory structure:
     └── kittynxr-maowbot/
         ├── Cargo.toml
