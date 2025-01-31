@@ -95,7 +95,7 @@ Below is a high-level text diagram showing how the core components interact:
          |  Services  |  |  Platforms  |  |   DB Logger  |
          | (UserSvc,  |  |(Twitch, etc)|  |(Batched Chat |
          | MsgSvc)    |  +-------------+  |   Storage)   |
-         +------------+                 +--------------+
+         +------------+                   +--------------+
                  |
                  |   DB Queries (Repositories)
                  v
