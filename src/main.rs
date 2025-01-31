@@ -220,7 +220,7 @@ async fn run_server(args: Args) -> anyhow::Result<()> {
     });
 
     // watch ctrl-c
-    let ctrlc_handle = tokio::spawn(async move {
+    let _ctrlc_handle = tokio::spawn(async move {
         if let Err(e) = tokio::signal::ctrl_c().await {
             error!("Failed to listen for Ctrl-C: {:?}", e);
         }
