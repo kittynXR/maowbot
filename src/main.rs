@@ -48,7 +48,7 @@ use maowbot::plugins::proto::plugs::{
 use tokio_stream::wrappers::ReceiverStream;
 use futures_util::StreamExt;
 
-use rcgen::generate_simple_self_signed;
+use rcgen::{generate_simple_self_signed, CertifiedKey};
 
 /// Command-line arguments
 #[derive(Parser, Debug, Clone)]
@@ -115,9 +115,10 @@ fn load_or_generate_certs() -> anyhow::Result<Identity> {
     }
 
     // 2) Otherwise, generate a new self-signed certificate
-    let cert = generate_simple_self_signed(vec!["localhost".to_string()])?;
-    let cert_pem = cert.serialize_pem()?;
-    let key_pem  = cert.serialize_private_key_pem();
+    let CertifiedKey { cert, key_pair } = generate_simple_self_signed(vec!["localhost".to_string()])?;
+    let cert_pem = cert.pem();
+    let key_pem  = key_pair.serialize_pem();
+
 
     // 3) Create the folder if needed
     fs::create_dir_all(cert_folder)?;
