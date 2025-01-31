@@ -1,3 +1,102 @@
 syntax = "proto3";
 
-package plugins;
+package plugs;
+
+// The plugin service with a single bidirectional streaming RPC
+service PluginService {
+  // We renamed the method from "Connect" to "StartSession" to avoid Tonic "connect" conflicts
+  rpc StartSession (stream PluginStreamRequest) returns (stream PluginStreamResponse);
+}
+
+// Sent from plugin TO bot:
+message PluginStreamRequest {
+  oneof payload {
+    Hello          hello           = 1;
+    LogMessage     log_message     = 2;
+    RequestStatus  request_status  = 3;
+    RequestCaps    request_caps    = 4;
+    Shutdown       shutdown        = 5;
+    SwitchScene    switch_scene    = 6;
+    SendChat       send_chat       = 7;
+  }
+}
+
+message Hello {
+  string plugin_name = 1;
+  string passphrase  = 2;
+}
+
+message LogMessage {
+  string text = 1;
+}
+
+message RequestStatus {
+}
+
+message RequestCaps {
+  repeated PluginCapability requested = 1;
+}
+
+message Shutdown {
+}
+
+message SwitchScene {
+  string scene_name = 1;
+}
+
+message SendChat {
+  string channel = 1;
+  string text    = 2;
+}
+
+enum PluginCapability {
+  RECEIVE_CHAT_EVENTS  = 0;
+  SEND_CHAT            = 1;
+  SCENE_MANAGEMENT     = 2;
+  CHAT_MODERATION      = 3;
+}
+
+// Sent from bot TO plugin:
+message PluginStreamResponse {
+  oneof payload {
+    WelcomeResponse      welcome             = 1;
+    AuthError            auth_error          = 2;
+    Tick                 tick                = 3;
+    ChatMessage          chat_message        = 4;
+    StatusResponse       status_response     = 5;
+    CapabilityResponse   capability_response = 6;
+    ForceDisconnect      force_disconnect    = 7;
+  }
+}
+
+message WelcomeResponse {
+  string bot_name = 1;
+}
+
+message AuthError {
+  string reason = 1;
+}
+
+message Tick {
+}
+
+message ChatMessage {
+  string platform = 1;
+  string channel  = 2;
+  string user     = 3;
+  string text     = 4;
+}
+
+message StatusResponse {
+  repeated string connected_plugins = 1;
+  uint64 server_uptime             = 2;
+}
+
+message CapabilityResponse {
+  repeated PluginCapability granted = 1;
+  repeated PluginCapability denied  = 2;
+}
+
+message ForceDisconnect {
+  string reason = 1;
+}

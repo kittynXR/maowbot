@@ -35,7 +35,7 @@ oauth2 = "^4.4"
 clap = {  version = "4.2", features = ["derive"] }
 
 # gRPC / protobuf:
-tonic = { version = "^0.10", features = ["transport"] }
+tonic = { version = "^0.10", features = ["transport", "tls"] }
 prost = "^0.12"
 prost-types = "^0.12"
 
@@ -45,6 +45,9 @@ tracing-subscriber = "^0.3"
 rustls-pemfile = "1.0.4"
 futures-lite = "2.6.0"
 tempfile = "3.15.0"
+futures-util = "0.3.31"
+futures-core = "0.3.31"
+tokio-stream = "0.1.17"
 
 [dev-dependencies]
 tokio-test = "^0.4"
