@@ -25,6 +25,7 @@ use maowbot_core::cache::{CacheConfig, ChatCache, TrimPolicy};
 use maowbot_core::services::message_service::MessageService;
 use maowbot_core::services::user_service::UserService;
 use maowbot_core::tasks::monthly_maintenance;
+use maowbot_core::tasks::cache_maintenance::spawn_cache_prune_task;
 
 use tonic::transport::{Server, Identity, Certificate, ServerTlsConfig, Channel, ClientTlsConfig};
 use maowbot_proto::plugs::plugin_service_server::PluginServiceServer;
@@ -198,7 +199,9 @@ pub async fn run_server(args: Args) -> Result<(), Error> {
         SqliteUserAnalysisRepository::new(db.pool().clone()),
         CacheConfig { trim_policy },
     );
-    let chat_cache = Arc::new(Mutex::new(chat_cache));
+    let chat_cache = Arc::new(tokio::sync::Mutex::new(chat_cache));
+    // e.g. run pruning every 60 seconds
+    spawn_cache_prune_task(chat_cache.clone(), std::time::Duration::from_secs(60));
     let message_service = Arc::new(MessageService::new(chat_cache, event_bus.clone()));
 
     let platform_manager = maowbot_core::platforms::manager::PlatformManager::new(

@@ -9,8 +9,8 @@ use tokio::time::{sleep, Instant};
 use tokio::task::JoinHandle;
 use tracing::{info, error};
 
-use chrono::{Utc};
-use crate::{Error};
+use chrono::Utc;
+use crate::Error;
 use crate::eventbus::{EventBus, BotEvent};
 use crate::repositories::sqlite::analytics::{AnalyticsRepo, ChatMessage};
 
@@ -27,13 +27,10 @@ pub fn spawn_db_logger_task<T>(
 where
     T: AnalyticsRepo + 'static,
 {
-    // Subscribe with a bounded channel
-    let mut rx = event_bus.subscribe(Some(buffer_size));
-
-    // Watch channel for shutdown
+    // Now await the subscription so that rx is a Receiver<BotEvent>
+    let mut rx = futures_lite::future::block_on(event_bus.subscribe(Some(buffer_size)));
     let mut shutdown_rx = event_bus.shutdown_rx.clone();
 
-    // Spawn the logger in a dedicated task
     let handle = tokio::spawn(async move {
         let mut buffer = Vec::with_capacity(buffer_size);
         let flush_interval = Duration::from_secs(flush_interval_sec);
@@ -51,11 +48,9 @@ where
                 maybe_event = rx.recv() => {
                     match maybe_event {
                         Some(event) => {
-                            // Convert and buffer
                             if let Some(cm) = convert_to_chat_message(&event) {
                                 buffer.push(cm);
                             }
-                            // If buffer is full, flush now
                             if buffer.len() >= buffer_size {
                                 if let Err(e) = insert_batch(&analytics_repo, &mut buffer).await {
                                     error!("Error inserting batch: {:?}", e);
@@ -64,22 +59,17 @@ where
                             }
                         },
                         None => {
-                            // The sending side closed => break
                             info!("DB logger channel closed => break from loop.");
                             break;
                         }
                     }
                 },
-
-                // If the EventBus sets shutdown to true, break out
                 Ok(_) = shutdown_rx.changed() => {
                     if *shutdown_rx.borrow() {
                         info!("DB logger shutting down => break from loop.");
                         break;
                     }
                 },
-
-                // Periodic flush if buffer is non-empty
                 _ = sleep(flush_interval) => {
                     if !buffer.is_empty() && last_flush.elapsed() >= flush_interval {
                         if let Err(e) = insert_batch(&analytics_repo, &mut buffer).await {
@@ -91,7 +81,6 @@ where
             }
         }
 
-        // OUTSIDE THE LOOP => final drain of leftover items in `rx`
         info!("DB logger: draining any remaining messages after loop exit.");
         while let Ok(event) = rx.try_recv() {
             if let Some(cm) = convert_to_chat_message(&event) {
@@ -99,7 +88,6 @@ where
             }
         }
 
-        // Final flush
         if !buffer.is_empty() {
             info!("DB logger final flush: {} messages remain.", buffer.len());
             if let Err(e) = insert_batch(&analytics_repo, &mut buffer).await {
@@ -109,11 +97,9 @@ where
 
         info!("DB logger task exited completely.");
     });
-
     handle
 }
 
-/// Converts a `BotEvent::ChatMessage` into a `ChatMessage` struct for the DB.
 fn convert_to_chat_message(event: &BotEvent) -> Option<ChatMessage> {
     if let BotEvent::ChatMessage { platform, channel, user, text, timestamp } = event {
         Some(ChatMessage {
@@ -130,7 +116,6 @@ fn convert_to_chat_message(event: &BotEvent) -> Option<ChatMessage> {
     }
 }
 
-/// Insert a batch of `ChatMessage`s into the DB, then clear the buffer.
 async fn insert_batch<T: AnalyticsRepo>(
     repo: &T,
     buffer: &mut Vec<ChatMessage>,

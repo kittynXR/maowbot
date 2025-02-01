@@ -99,7 +99,7 @@ impl<R: UserAnalysisRepository> ChatCache<R> {
     }
 
     /// Trim old messages and spam, etc.
-    async fn trim_old_messages(&mut self) {
+    pub(crate) async fn trim_old_messages(&mut self) {
         let now = Utc::now().naive_utc();
         let policy = &self.config.trim_policy;
 

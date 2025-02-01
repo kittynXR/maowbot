@@ -14,31 +14,26 @@ use maowbot::plugins::manager::{
 use maowbot_proto::plugs::{
     PluginCapability,
     PluginStreamResponse,
-    PluginStreamRequest,
-    plugin_stream_request::Payload as ReqPayload,
     plugin_stream_response::Payload as RespPayload,
     Shutdown,
 };
 use maowbot::repositories::sqlite::analytics::{SqliteAnalyticsRepository, AnalyticsRepo};
-
 use async_trait::async_trait;
-use sqlx::Executor;
 
-/// A trivial mock plugin that can (in principle) send a Shutdown message to the bot manager.
 #[derive(Clone)]
 struct ShutdownTestPlugin {
     info: Arc<Mutex<PluginConnectionInfo>>,
-    // Collect events we receive from bot->plugin
     received_responses: Arc<Mutex<Vec<String>>>,
 }
 
 impl ShutdownTestPlugin {
     fn new(name: &str, capabilities: Vec<PluginCapability>) -> Self {
+        let info = PluginConnectionInfo {
+            name: name.to_string(),
+            capabilities,
+        };
         Self {
-            info: Arc::new(Mutex::new(PluginConnectionInfo {
-                name: name.to_string(),
-                capabilities,
-            })),
+            info: Arc::new(Mutex::new(info)),
             received_responses: Arc::new(Mutex::new(vec![])),
         }
     }
@@ -60,14 +55,13 @@ impl PluginConnection for ShutdownTestPlugin {
         guard.name = new_name;
     }
 
-    async fn send(&self, response: PluginStreamResponse) -> std::result::Result<(), Error> {
-        // We just store debug text for later inspection
+    async fn send(&self, response: PluginStreamResponse) -> Result<(), Error> {
         let mut lock = self.received_responses.lock().await;
         lock.push(format!("{:?}", response));
         Ok(())
     }
 
-    async fn stop(&self) -> std::result::Result<(), Error> {
+    async fn stop(&self) -> Result<(), Error> {
         Ok(())
     }
 
@@ -76,7 +70,6 @@ impl PluginConnection for ShutdownTestPlugin {
     }
 }
 
-/// Test that calling `event_bus.shutdown()` flushes any queued ChatMessages.
 #[tokio::test]
 async fn test_graceful_shutdown_data_flush() -> Result<(), Error> {
     let db = Database::new(":memory:").await?;

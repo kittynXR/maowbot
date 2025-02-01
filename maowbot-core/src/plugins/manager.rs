@@ -167,8 +167,8 @@ impl PluginManager {
     }
 
     /// Subscribes to the event bus for chat events, ticks, and system messages.
-    pub fn subscribe_to_event_bus(&self, bus: Arc<EventBus>) {
-        let mut rx = bus.subscribe(None);
+    pub async fn subscribe_to_event_bus(&self, bus: Arc<super::super::eventbus::EventBus>) {
+        let mut rx = bus.subscribe(None).await;
         let mut shutdown_rx = bus.shutdown_rx.clone();
         let pm_clone = self.clone();
 
@@ -178,16 +178,16 @@ impl PluginManager {
                     maybe_event = rx.recv() => {
                         match maybe_event {
                             Some(event) => match event {
-                                BotEvent::ChatMessage { platform, channel, user, text, .. } => {
+                                super::super::eventbus::BotEvent::ChatMessage { platform, channel, user, text, .. } => {
                                     pm_clone.handle_chat_event(&platform, &channel, &user, &text).await;
                                 },
-                                BotEvent::Tick => {
+                                super::super::eventbus::BotEvent::Tick => {
                                     let tick_msg = PluginStreamResponse {
-                                        payload: Some(RespPayload::Tick(Tick {})),
+                                        payload: Some(RespPayload::Tick(maowbot_proto::plugs::Tick {})),
                                     };
                                     pm_clone.broadcast(tick_msg).await;
                                 },
-                                BotEvent::SystemMessage(msg) => {
+                                super::super::eventbus::BotEvent::SystemMessage(msg) => {
                                     info!("(EventBus) SystemMessage => {}", msg);
                                 }
                             },

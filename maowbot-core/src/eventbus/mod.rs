@@ -5,8 +5,8 @@
 
 pub mod db_logger;
 
-use std::sync::{Arc, Mutex};
-use tokio::sync::{mpsc, watch};
+use std::sync::{Arc};
+use tokio::sync::{mpsc, watch, Mutex};
 use chrono::{DateTime, Utc};
 
 /// Global event type that various parts of the bot can publish or subscribe to.
@@ -65,33 +65,27 @@ impl EventBus {
         *self.shutdown_rx.borrow()
     }
 
-    /// Create a new subscriber with a bounded buffer size (or use `DEFAULT_BUFFER_SIZE`).
-    /// Returns a Receiver that the subscriber can poll for events.
-    pub fn subscribe(&self, buffer_size: Option<usize>) -> mpsc::Receiver<BotEvent> {
+    /// Returns a receiver on which events will be delivered.
+    pub async fn subscribe(&self, buffer_size: Option<usize>) -> mpsc::Receiver<BotEvent> {
         let size = buffer_size.unwrap_or(DEFAULT_BUFFER_SIZE);
         let (tx, rx) = mpsc::channel(size);
-
-        let mut subs = self.subscribers.lock().unwrap();
+        let mut subs = self.subscribers.lock().await;
         subs.push(tx);
-
         rx
     }
 
-    /// Publish an event to all subscribers. If any subscriber’s buffer is full, this call
-    /// will `.await` until space is free, ensuring no messages are lost.
+    /// Publish an event to all subscribers.
     pub async fn publish(&self, event: BotEvent) {
-        // Clone the senders outside the lock
         let senders = {
-            let guard = self.subscribers.lock().unwrap();
-            guard.clone()
+            let subs = self.subscribers.lock().await;
+            subs.clone()
         };
-        // Now send the event to each subscriber
         for s in senders {
             let _ = s.send(event.clone()).await;
         }
     }
 
-    /// Optional convenience method: publish a `ChatMessage` event with minimal boilerplate.
+    /// Convenience method: publish a `ChatMessage` event.
     pub async fn publish_chat(
         &self,
         platform: &str,
@@ -110,20 +104,17 @@ impl EventBus {
     }
 }
 
-/// Example unit tests for the event bus itself.
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tokio::time::{timeout, Duration};
-    use tokio::time::sleep;
+    use tokio::time::{sleep, timeout, Duration};
 
-    /// Basic test: multiple subscribers each receive the same event.
     #[tokio::test]
     async fn test_subscribers_receive_events() {
         let bus = EventBus::new();
 
-        let mut rx1 = bus.subscribe(Some(5));
-        let mut rx2 = bus.subscribe(Some(5));
+        let mut rx1 = bus.subscribe(Some(5)).await;
+        let mut rx2 = bus.subscribe(Some(5)).await;
 
         // Publish an event
         bus.publish(BotEvent::Tick).await;
@@ -142,37 +133,27 @@ mod tests {
         }
     }
 
-    /// Demonstrates concurrency-based backpressure:
-    /// We fill a 1-slot queue, then publish a second event, which must block
-    /// until the subscriber reads from the channel.
-    ///
-    /// We use a multi-thread flavor so the blocking publish and the subscriber
-    /// can run in parallel.
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    #[tokio::test]
     async fn test_backpressure_blocking() {
         let bus = EventBus::new();
-        let mut rx = bus.subscribe(Some(1)); // queue size=1
+        let mut rx = bus.subscribe(Some(1)).await; // queue size = 1
 
-        // 1) Publish first message => fills the queue
+        // Publish first message to fill the queue.
         bus.publish(BotEvent::SystemMessage("msg1".into())).await;
 
-        // 2) Spawn a separate task that will read them after a short delay.
+        // Spawn a task that reads the two messages after a short delay.
         let handle = tokio::spawn(async move {
-            // Sleep to ensure the second publish is truly blocked until we read
             sleep(Duration::from_millis(50)).await;
             let first = rx.recv().await.expect("expected first message");
             let second = rx.recv().await.expect("expected second message");
             (first, second)
         });
 
-        // 3) Attempt the second publish => should block until there's space
+        // Publish the second message (this call will wait until there's space).
         let second_publish = bus.publish(BotEvent::SystemMessage("msg2".into()));
-
-        // Use a timeout to ensure we don't hang forever. We'll wait 500ms.
         let result = timeout(Duration::from_millis(500), second_publish).await;
-        assert!(result.is_ok(), "publish should eventually unblock after the subscriber reads");
+        assert!(result.is_ok(), "publish should eventually unblock");
 
-        // 4) Confirm the subscriber eventually read both
         let (evt1, evt2) = handle.await.unwrap();
         if let BotEvent::SystemMessage(txt) = evt1 {
             assert_eq!(txt, "msg1");
@@ -186,30 +167,28 @@ mod tests {
         }
     }
 
-    /// This simpler test ensures that if the queue is full, it waits for a read
-    /// rather than dropping the message. We do partial reads in the same task.
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    #[tokio::test]
     async fn test_no_drop_when_queue_is_full() {
         let bus = EventBus::new();
-        let mut rx = bus.subscribe(Some(1));
+        let mut rx = bus.subscribe(Some(1)).await;
 
-        // 1) Fill the queue with "first"
+        // Fill the queue.
         bus.publish(BotEvent::SystemMessage("first".into())).await;
 
-        // 2) Spawn a reading task that sleeps, then reads both messages
+        // Spawn a task that sleeps and then reads both messages.
         let handle = tokio::spawn(async move {
-            tokio::time::sleep(Duration::from_millis(50)).await;
+            sleep(Duration::from_millis(50)).await;
             let first_evt = rx.recv().await.unwrap();
             let second_evt = rx.recv().await.unwrap();
             (first_evt, second_evt)
         });
 
-        // 3) Attempt the second publish => must wait until the subscriber reads
+        // Attempt to publish the second message (must wait until the subscriber reads).
         let publish_fut = bus.publish(BotEvent::SystemMessage("second".into()));
-        let publish_res = tokio::time::timeout(std::time::Duration::from_millis(300), publish_fut).await;
-        assert!(publish_res.is_ok(), "publish should eventually succeed (after we read)");
+        let publish_res = timeout(Duration::from_millis(300), publish_fut).await;
+        assert!(publish_res.is_ok(), "publish should eventually succeed");
 
-        // 4) Check the results
+        // Check the received messages.
         let (evt1, evt2) = handle.await.unwrap();
         if let BotEvent::SystemMessage(txt) = evt1 {
             assert_eq!(txt, "first");
@@ -222,5 +201,4 @@ mod tests {
             panic!("Second message mismatch");
         }
     }
-
 }

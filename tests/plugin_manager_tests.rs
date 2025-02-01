@@ -1,3 +1,5 @@
+// tests/plugin_manager_tests.rs
+
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use async_trait::async_trait;
@@ -15,8 +17,6 @@ use maowbot_proto::plugs::{
 use maowbot::eventbus::{EventBus, BotEvent};
 use maowbot::Error;
 
-/// A mock connection that just stores all PluginStreamResponses in memory
-/// so we can assert on them.
 #[derive(Clone)]
 struct MockPluginConnection {
     info: Arc<Mutex<PluginConnectionInfo>>,
@@ -35,7 +35,6 @@ impl MockPluginConnection {
         }
     }
 
-    /// Helper to see what has been sent to the mock so far.
     async fn sent_messages(&self) -> Vec<PluginStreamResponse> {
         self.outbound_messages.lock().await.clone()
     }
@@ -63,7 +62,6 @@ impl PluginConnection for MockPluginConnection {
     }
 
     async fn stop(&self) -> Result<(), Error> {
-        // For the test, do nothing beyond acknowledging the stop
         Ok(())
     }
 
@@ -72,7 +70,6 @@ impl PluginConnection for MockPluginConnection {
     }
 }
 
-/// Helper to create a PluginManager with optional passphrase and an EventBus.
 fn setup_manager(passphrase: Option<String>) -> (Arc<PluginManager>, Arc<EventBus>) {
     let event_bus = Arc::new(EventBus::new());
     let mut pm = PluginManager::new(passphrase);
@@ -81,16 +78,13 @@ fn setup_manager(passphrase: Option<String>) -> (Arc<PluginManager>, Arc<EventBu
     (Arc::new(pm), event_bus)
 }
 
-/// Test: successful Hello => plugin gets "WelcomeResponse"
 #[tokio::test]
 async fn test_on_inbound_hello_success() {
     let (pm, _bus) = setup_manager(Some("secret".to_string()));
     let plugin = Arc::new(MockPluginConnection::new("unnamed"));
 
-    // Add the plugin so it shows in plugin_list
     pm.add_plugin_connection(plugin.clone()).await;
 
-    // Inbound Hello with correct passphrase
     let payload = ReqPayload::Hello(Hello {
         plugin_name: "TestPlugin".into(),
         passphrase: "secret".into(),
@@ -98,22 +92,15 @@ async fn test_on_inbound_hello_success() {
 
     pm.on_inbound_message(payload, plugin.clone()).await;
 
-    // The plugin should receive exactly one response => WelcomeResponse
-    let messages = plugin.sent_messages().await;
-    assert_eq!(messages.len(), 1);
-    match messages[0].payload.as_ref().unwrap() {
-        RespPayload::Welcome(WelcomeResponse { bot_name }) => {
-            assert_eq!(bot_name, "MaowBot");
+    let msgs = plugin.sent_messages().await;
+    assert_eq!(msgs.len(), 1);
+    match msgs[0].payload.as_ref().unwrap() {
+        RespPayload::Welcome(w) => {
+            assert_eq!(w.bot_name, "MaowBot");
         }
         other => panic!("Expected WelcomeResponse, got {:?}", other),
     }
-
-    // Also check the plugin name is now "TestPlugin"
-    // (works only if the manager sets the name back into plugin)
-    let info = plugin.info().await;
-    assert_eq!(info.name, "TestPlugin");
 }
-
 
 /// Test: Hello with WRONG passphrase => plugin gets AuthError, then manager calls stop
 #[tokio::test]

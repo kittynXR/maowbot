@@ -6,14 +6,16 @@ use std::io::{BufRead, BufReader, Write};
 use std::thread;
 use std::any::Any;
 use std::time::SystemTime;
+
 use async_trait::async_trait;
+use tokio::sync::Mutex;
 
 use maowbot_core::Error;
 use maowbot_core::plugins::manager::{
     PluginConnection,
     PluginConnectionInfo,
-    // If these are public. If not, mark them as `pub` in manager.rs
 };
+
 use maowbot_proto::plugs::{
     PluginStreamResponse,
     plugin_stream_response::Payload as RespPayload,
@@ -25,9 +27,9 @@ use maowbot_core::plugins::bot_api::{BotApi, StatusData};
 /// A dynamic TUI plugin that calls back into the bot manager via `BotApi`.
 #[derive(Clone)]
 pub struct TuiPlugin {
-    info: Arc<std::sync::Mutex<PluginConnectionInfo>>,
+    info: Arc<Mutex<PluginConnectionInfo>>,
     shutdown_flag: Arc<AtomicBool>,
-    bot_api: Arc<std::sync::Mutex<Option<Arc<dyn BotApi>>>>,
+    bot_api: Arc<Mutex<Option<Arc<dyn BotApi>>>>,
 }
 
 impl TuiPlugin {
@@ -39,9 +41,9 @@ impl TuiPlugin {
             capabilities: Vec::new(),
         };
         let me = Self {
-            info: Arc::new(std::sync::Mutex::new(initial_info)),
+            info: Arc::new(Mutex::new(initial_info)),
             shutdown_flag: Arc::new(AtomicBool::new(false)),
-            bot_api: Arc::new(std::sync::Mutex::new(None)),
+            bot_api: Arc::new(Mutex::new(None)),
         };
         me.spawn_tui_thread();
         me
@@ -79,13 +81,20 @@ impl TuiPlugin {
                     continue;
                 }
 
-                let bot_api_opt = bot_api_arc.lock().unwrap();
+                let bot_api_opt = {
+                    // Even though we’re in a std thread, we can do a blocking lock
+                    // on the tokio::Mutex. It’s usually best to do an async lock,
+                    // but here we’re bridging std thread <-> tokio
+                    let guard = bot_api_arc.blocking_lock();
+                    guard.clone()
+                };
+
                 match trimmed {
                     "help" => {
                         println!("Commands: help, list, status, quit");
                     }
                     "list" => {
-                        if let Some(api) = &*bot_api_opt {
+                        if let Some(api) = bot_api_opt.as_ref()  {
                             let plugs = api.list_plugins();
                             println!("(TUI) Connected plugins: {:?}", plugs);
                         } else {
@@ -93,7 +102,7 @@ impl TuiPlugin {
                         }
                     }
                     "status" => {
-                        if let Some(api) = &*bot_api_opt {
+                        if let Some(api) = bot_api_opt.as_ref()  {
                             let st: StatusData = api.status();
                             println!("(TUI) Status => Uptime={}s, Plugins={:?}",
                                      st.uptime_seconds, st.connected_plugins);
@@ -103,7 +112,7 @@ impl TuiPlugin {
                     }
                     "quit" => {
                         println!("(TUI) 'quit' => signal bot shutdown...");
-                        if let Some(api) = &*bot_api_opt {
+                        if let Some(api) = bot_api_opt.as_ref()  {
                             api.shutdown();
                         }
                         break;
@@ -123,17 +132,17 @@ impl TuiPlugin {
 #[async_trait]
 impl PluginConnection for TuiPlugin {
     async fn info(&self) -> PluginConnectionInfo {
-        let guard = self.info.lock().unwrap();
+        let guard = self.info.lock().await;
         guard.clone()
     }
 
     async fn set_capabilities(&self, capabilities: Vec<PluginCapability>) {
-        let mut guard = self.info.lock().unwrap();
+        let mut guard = self.info.lock().await;
         guard.capabilities = capabilities;
     }
 
     async fn set_name(&self, new_name: String) {
-        let mut guard = self.info.lock().unwrap();
+        let mut guard = self.info.lock().await;
         guard.name = new_name;
     }
 
@@ -166,7 +175,7 @@ impl PluginConnection for TuiPlugin {
 
     /// The new method we added to the trait. We store the BotApi for commands.
     fn set_bot_api(&self, api: Arc<dyn BotApi>) {
-        let mut guard = self.bot_api.lock().unwrap();
+        let mut guard = self.bot_api.blocking_lock();
         *guard = Some(api);
     }
 }
