@@ -125,7 +125,7 @@ fn load_or_generate_certs() -> Result<Identity, Error> {
 /// - Initializes the event bus and database.
 /// - Creates the PluginManager, subscribes it to the event bus, and loads plugins:
 ///   - Loads a plugin specified by a command-line flag (if provided).
-///   - Scans a designated folder (here `"plugin_libs"`) and loads all dynamic libraries found.
+///   - Scans a designated folder (here `"plugs"`) and loads all dynamic libraries found.
 /// - Initializes other services (user management, message service, platform manager).
 /// - Starts the gRPC server with TLS and a Ctrl‑C shutdown handler.
 /// - Enters a loop publishing Tick events until shutdown.
@@ -162,7 +162,7 @@ pub async fn run_server(args: Args) -> Result<(), Error> {
             error!("Failed to load in-process plugin from {}: {:?}", path, e);
         }
     }
-    if let Err(e) = plugin_manager.load_plugins_from_folder("plugin_libs").await {
+    if let Err(e) = plugin_manager.load_plugins_from_folder("plugs").await {
         error!("Failed to load plugins from folder: {:?}", e);
     }
 
