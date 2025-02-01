@@ -10,7 +10,6 @@ sqlx = { version = "^0.8", features = ["sqlite","runtime-tokio", "tls-native-tls
 
 tokio = { version = "^1.43", features = ["full"] }
 tokio-stream = { version = "0.1.17", features = ["net"] }
-tokio-rustls = "0.26"
 
 rcgen = "^0.13"
 
