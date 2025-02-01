@@ -236,6 +236,11 @@ impl PluginConnection for TuiPlugin {
         let mut guard = self.bot_api.lock().unwrap();
         *guard = Some(api);
     }
+
+    async fn set_enabled(&self, enable: bool) {
+        let mut guard = self.info.lock();
+        guard.unwrap().is_enabled = enable;
+    }
 }
 
 /// Export the `create_plugin` symbol for dynamic loading.

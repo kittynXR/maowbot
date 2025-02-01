@@ -1,153 +1,97 @@
-use clap::Parser;
-use std::time::Duration;
+use tokio::signal;
+use tonic::transport::{Channel, Certificate, ClientTlsConfig};
+use maowbot_proto::plugs::plugin_service_client::PluginServiceClient;
+use maowbot_proto::plugs::{PluginStreamRequest, plugin_stream_request::Payload as ReqPayload, plugin_stream_response::Payload as RespPayload, Hello, LogMessage, RequestCaps, PluginCapability};
 use tokio::sync::mpsc;
-use tokio_stream::StreamExt;
-use tokio_stream::wrappers::ReceiverStream; // now available via the tokio-stream dependency
-use tonic::transport::{Channel, ClientTlsConfig, Certificate};
-use tracing::{error, info};
-use tracing_subscriber::FmtSubscriber;
-
-// Import the generated types from the shared maowbot-proto crate.
-use maowbot_proto::plugs::{
-    plugin_service_client::PluginServiceClient,
-    PluginStreamRequest,
-    plugin_stream_request::Payload as ReqPayload,
-    plugin_stream_response::Payload as RespPayload,
-    Hello, LogMessage, RequestCaps, PluginCapability,
-};
-
-/// CLI arguments for the plugin.
-#[derive(Parser, Debug, Clone)]
-struct Args {
-    /// The bot server address (e.g., 127.0.0.1:9999)
-    #[arg(long, default_value = "127.0.0.1:9999")]
-    server_addr: String,
-
-    /// The plugin name as it will identify itself to the bot
-    #[arg(long, default_value = "HelloPlugin")]
-    plugin_name: String,
-
-    /// Optional passphrase for authentication
-    #[arg(long)]
-    plugin_passphrase: Option<String>,
-
-    /// Path to the server’s certificate (used for TLS)
-    #[arg(long, default_value = "certs/server.crt")]
-    ca_cert_path: String,
-}
+use tokio_stream::wrappers::ReceiverStream;
+use futures_util::StreamExt;
+use std::error::Error;
 
 #[tokio::main]
-async fn main() -> anyhow::Result<()> {
-    // Initialize tracing for logging.
-    let subscriber = FmtSubscriber::builder()
-        .with_max_level(tracing::Level::INFO)
-        .finish();
-    tracing::subscriber::set_global_default(subscriber)
-        .expect("setting default subscriber failed");
+async fn main() -> Result<(), Box<dyn Error>> {
+    let ca_cert = tokio::fs::read("certs/server.crt").await?;
+    let ca_cert = Certificate::from_pem(ca_cert);
+    let tls_config = ClientTlsConfig::new()
+        .ca_certificate(ca_cert)
+        .domain_name("localhost");
 
-    let args = Args::parse();
-
-    // Build the server URL. We assume TLS so use "https://"
-    let server_url = format!("https://{}", args.server_addr);
-
-    // Load the CA certificate to trust the server's self‑signed certificate.
-    let ca_cert_pem = std::fs::read(&args.ca_cert_path)?;
-    let ca_cert = Certificate::from_pem(ca_cert_pem);
-    let tls_config = ClientTlsConfig::new().ca_certificate(ca_cert);
-
-    // Create a Tonic channel configured with TLS.
-    let channel = Channel::from_shared(server_url)?
+    let channel = Channel::from_shared("https://localhost:9999")?
         .tls_config(tls_config)?
         .connect()
         .await?;
 
     let mut client = PluginServiceClient::new(channel);
 
-    // Create an mpsc channel that will carry our outbound PluginStreamRequest messages.
-    let (tx, rx) = mpsc::channel::<PluginStreamRequest>(20);
-    let mut response_stream = client
-        .start_session(ReceiverStream::new(rx))
-        .await?
-        .into_inner();
+    let (tx, rx) = mpsc::channel::<PluginStreamRequest>(10);
+    let in_stream = ReceiverStream::new(rx);
+    let mut outbound = client.start_session(in_stream).await?.into_inner();
 
-    // Spawn a task to process incoming responses from the bot.
+    // Spawn a task to listen for server -> plugin messages.
     tokio::spawn(async move {
-        while let Some(Ok(resp)) = response_stream.next().await {
-            if let Some(payload) = resp.payload {
+        while let Some(Ok(response)) = outbound.next().await {
+            if let Some(payload) = response.payload {
                 match payload {
-                    RespPayload::Welcome(w) => {
-                        info!("Received Welcome: bot_name = {}", w.bot_name);
-                    }
-                    RespPayload::AuthError(err) => {
-                        error!("Received AuthError: {}", err.reason);
-                    }
+                    RespPayload::Welcome(welcome) => {
+                        println!("Server welcomed plugin: bot_name={}", welcome.bot_name);
+                    },
                     RespPayload::Tick(_) => {
-                        info!("Received Tick from server");
-                    }
+                        println!("Received Tick from server");
+                    },
                     RespPayload::ChatMessage(msg) => {
-                        info!(
-                            "ChatMessage: [{}#{}] {}: {}",
+                        println!(
+                            "ChatMessage => [{} #{}] {}: {}",
                             msg.platform, msg.channel, msg.user, msg.text
                         );
-                    }
-                    RespPayload::StatusResponse(s) => {
-                        info!(
-                            "StatusResponse: uptime={} connected_plugins={:?}",
-                            s.server_uptime, s.connected_plugins
-                        );
-                    }
-                    RespPayload::CapabilityResponse(c) => {
-                        info!(
-                            "CapabilityResponse: granted={:?}, denied={:?}",
-                            c.granted, c.denied
-                        );
-                    }
-                    RespPayload::ForceDisconnect(d) => {
-                        error!("ForceDisconnect: {}", d.reason);
+                    },
+                    RespPayload::StatusResponse(status) => {
+                        println!("Status => connected_plugins={:?}, uptime={}",
+                                 status.connected_plugins, status.server_uptime);
+                    },
+                    RespPayload::CapabilityResponse(caps) => {
+                        println!("CapabilityResponse => granted={:?}, denied={:?}",
+                                 caps.granted, caps.denied);
+                    },
+                    RespPayload::AuthError(err) => {
+                        eprintln!("AuthError => {}", err.reason);
+                    },
+                    RespPayload::ForceDisconnect(fd) => {
+                        eprintln!("ForceDisconnect => {}", fd.reason);
                         break;
-                    }
+                    },
                 }
             }
         }
-        info!("Response stream ended.");
+        println!("Server closed plugin stream.");
     });
 
-    // Send the initial Hello message.
-    let hello_msg = PluginStreamRequest {
+    // Send the Hello message.
+    let passphrase = ""; // If your server requires one, put it here
+    tx.send(PluginStreamRequest {
         payload: Some(ReqPayload::Hello(Hello {
-            plugin_name: args.plugin_name.clone(),
-            passphrase: args.plugin_passphrase.clone().unwrap_or_default(),
+            plugin_name: "HelloGrpc".to_string(),
+            passphrase: passphrase.to_string(),
         })),
-    };
-    tx.send(hello_msg).await?;
+    }).await?;
 
-    // Send a capabilities request (e.g., asking for SendChat, SceneManagement, and ChatModeration).
-    let caps_req = PluginStreamRequest {
+    tx.send(PluginStreamRequest {
         payload: Some(ReqPayload::RequestCaps(RequestCaps {
             requested: vec![
-                PluginCapability::SendChat as i32,
-                PluginCapability::SceneManagement as i32,
-                PluginCapability::ChatModeration as i32,
+                PluginCapability::ReceiveChatEvents as i32,
             ],
         })),
-    };
-    tx.send(caps_req).await?;
+    }).await?;
 
-    // Periodically send a log message to indicate the plugin is alive.
-    loop {
-        tokio::time::sleep(Duration::from_secs(15)).await;
-        let log_req = PluginStreamRequest {
-            payload: Some(ReqPayload::LogMessage(LogMessage {
-                text: format!("Plugin '{}' reporting in.", args.plugin_name),
-            })),
-        };
-        if tx.send(log_req).await.is_err() {
-            error!("Failed to send log message; server may be disconnected.");
-            break;
-        }
-    }
+    // Send a test log message
+    tx.send(PluginStreamRequest {
+        payload: Some(ReqPayload::LogMessage(LogMessage {
+            text: "Hello from plugin_hello, staying alive...".into(),
+        })),
+    }).await?;
 
-    // Even though the loop is expected to run indefinitely,
-    // we add an Ok(()) here so that the async main returns a Result.
+    println!("Connected. Press Ctrl+C to exit.");
+
+    // Wait here until Ctrl+C
+    signal::ctrl_c().await?;
+    println!("Got Ctrl+C => exiting plugin.");
     Ok(())
 }

@@ -17,3 +17,4 @@ tonic = { workspace = true }
 clap = { workspace = true }
 tokio-stream = { workspace = true }
 tracing-subscriber = { workspace = true }
+futures-util = { workspace = true }

@@ -64,6 +64,8 @@ pub trait PluginConnection: Send + Sync {
     async fn stop(&self) -> Result<(), Error>;
     fn as_any(&self) -> &dyn Any;
     fn set_bot_api(&self, _api: Arc<dyn BotApi>) {}
+
+    async fn set_enabled(&self, enable: bool);
 }
 
 /// In‑memory info about a plugin connection.
@@ -130,6 +132,11 @@ impl PluginConnection for PluginGrpcConnection {
     fn as_any(&self) -> &dyn Any {
         self
     }
+
+    async fn set_enabled(&self, enable: bool) {
+        let mut guard = self.info.lock().await;
+        guard.is_enabled = enable;
+    }
 }
 
 /// An in‑process plugin connection.
@@ -193,6 +200,11 @@ impl PluginConnection for InProcessPluginConnection {
 
     fn set_bot_api(&self, api: Arc<dyn BotApi>) {
         self.plugin.set_bot_api(api);
+    }
+
+    async fn set_enabled(&self, enable: bool) {
+        let mut guard = self.info.lock().await;
+        guard.is_enabled = enable;
     }
 }
 
@@ -326,39 +338,54 @@ impl PluginManager {
     }
 
     pub async fn toggle_plugin_async(&self, plugin_name: &str, enable: bool) -> Result<(), Error> {
+        // 1) Find the plugin record by name
         let maybe_rec = {
             let lock = self.plugin_records.lock().unwrap();
             lock.iter().find(|r| r.name == plugin_name).cloned()
         };
+
         let rec = match maybe_rec {
             Some(r) => r,
             None => return Err(Error::Platform(format!("No known plugin named '{}'", plugin_name))),
         };
+
+        // If it’s already in the desired state, no-op
         if rec.enabled == enable {
             return Ok(());
         }
+
+        // 2) Make a new record with updated 'enabled' and store it
         let updated = PluginRecord {
             name: rec.name.clone(),
             plugin_type: rec.plugin_type.clone(),
             enabled: enable,
         };
         self.upsert_plugin_record(updated.clone());
+        info!(
+        "PluginManager: set plugin '{}' to {}",
+        updated.name,
+        if enable { "ENABLED" } else { "DISABLED" },
+    );
 
-        info!("PluginManager: set plugin '{}' to {}", updated.name, if enable { "ENABLED" } else { "DISABLED" });
-
+        // 3) Depending on plugin type, enable/disable the actual plugin connection
         match updated.plugin_type {
+            // For gRPC plugins, just find its connection and call set_enabled(...)
             PluginType::Grpc => {
                 let lock = self.plugins.lock().await;
                 for p in lock.iter() {
                     let pi = p.info().await;
                     if pi.name == updated.name {
-                        let mut next = pi.clone();
-                        next.is_enabled = enable;
-                        p.set_capabilities(next.capabilities).await;
+                        // Optionally re-apply the same capabilities it already had:
+                        p.set_capabilities(pi.capabilities.clone()).await;
+
+                        // Then toggle the is_enabled field:
+                        p.set_enabled(enable).await;
                         break;
                     }
                 }
             }
+
+            // For DynamicLib, if enabling we may need to load the plugin first
             PluginType::DynamicLib { .. } => {
                 if enable {
                     let mut lock = self.plugins.lock().await;
@@ -367,22 +394,28 @@ impl PluginManager {
                         pi.name == updated.name
                     });
                     drop(lock);
+
                     if !already_loaded {
+                        // If not loaded, actually load the .dll / .so
                         if let Err(e) = self.load_in_process_plugin_by_record(&updated).await {
                             error!("Failed to load '{}': {:?}", updated.name, e);
                         }
                     } else {
+                        // If it’s already loaded, just set_enabled(true)
                         let mut lock = self.plugins.lock().await;
                         for p in lock.iter() {
                             let pi = p.info().await;
                             if pi.name == updated.name {
-                                let mut next = pi.clone();
-                                next.is_enabled = true;
-                                p.set_capabilities(next.capabilities).await;
+                                // Optionally re-apply capabilities if you need:
+                                p.set_capabilities(pi.capabilities.clone()).await;
+
+                                p.set_enabled(true).await;
+                                break;
                             }
                         }
                     }
                 } else {
+                    // Disabling => stop & remove from our in-memory list
                     let mut lock = self.plugins.lock().await;
                     let idx = lock.iter().position(|p| {
                         let pi = futures_lite::future::block_on(p.info());
