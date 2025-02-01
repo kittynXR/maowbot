@@ -1,0 +1,21 @@
+# plugins/tui_plugin/Cargo.toml
+
+[package]
+name = "tui_plugin"
+version.workspace = true
+edition.workspace = true
+
+# This is a cdylib plugin
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+maowbot-proto = { path = "../../maowbot-proto" }
+# If you also reference stuff from maowbot-core:
+maowbot-core = { path = "../../maowbot-core" }
+
+tokio = { workspace = true }
+async-trait = "0.1"
+tracing = { workspace = true }
+futures-lite = "2.6"
+

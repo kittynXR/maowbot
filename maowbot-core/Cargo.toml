@@ -1,0 +1,59 @@
+# maowbot-core/Cargo.toml
+
+[package]
+name = "maowbot-core"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+maowbot-proto = { path = "../maowbot-proto" }
+
+twitch_api = {  workspace = true }
+
+sqlx = { workspace = true }
+
+tokio = { workspace = true }
+tokio-stream = { workspace = true }
+
+dashmap = { workspace = true }
+
+rcgen = { workspace = true }
+
+chrono = { workspace = true }
+
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+dotenv = { workspace = true }
+
+uuid = { workspace = true }
+async-trait = { workspace = true }
+mockall = { workspace = true }
+reqwest = { workspace = true }
+aes-gcm = { workspace = true }
+base64 = { workspace = true }
+rand = { workspace = true }
+rand_core = { workspace = true }
+serenity = { workspace = true }
+url = { workspace = true }
+oauth2 = { workspace = true }
+clap = { workspace = true }
+
+# gRPC / protobuf:
+tonic = { workspace = true }
+
+# --- New or updated below:
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+rustls-pemfile = { workspace = true }
+futures-lite = { workspace = true }
+tempfile = { workspace = true }
+futures-util = { workspace = true }
+futures-core = { workspace = true }
+
+libloading = { workspace = true }
+
+[dev-dependencies]
+tokio-test = { workspace = true }

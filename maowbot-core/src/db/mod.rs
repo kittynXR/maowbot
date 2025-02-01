@@ -39,7 +39,7 @@ impl Database {
 
     pub async fn migrate(&self) -> Result<(), Error> {
         println!("Applying migrations...");
-        sqlx::migrate!("./migrations").run(&self.pool).await?;
+        sqlx::migrate!("../migrations").run(&self.pool).await?;
         println!("Migrations applied successfully.");
         Ok(())
     }

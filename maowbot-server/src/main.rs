@@ -10,21 +10,21 @@ use tokio::sync::{Mutex, mpsc};
 use tracing::{error, info};
 use tracing_subscriber::FmtSubscriber;
 
-use maowbot::Database;
-use maowbot::plugins::manager::{PluginManager, PluginServiceGrpc};
-use maowbot::eventbus::{EventBus, BotEvent};
-use maowbot::repositories::sqlite::{
+use maowbot_core::Database;
+use maowbot_core::plugins::manager::{PluginManager, PluginServiceGrpc};
+use maowbot_core::eventbus::{EventBus, BotEvent};
+use maowbot_core::repositories::sqlite::{
     PlatformIdentityRepository,
     SqliteCredentialsRepository,
     SqliteUserAnalysisRepository,
     UserRepository,
 };
-use maowbot::auth::{AuthManager, DefaultUserManager, StubAuthHandler};
-use maowbot::crypto::Encryptor;
-use maowbot::cache::{CacheConfig, ChatCache, TrimPolicy};
-use maowbot::services::message_service::MessageService;
-use maowbot::services::user_service::UserService;
-use maowbot::tasks::monthly_maintenance;
+use maowbot_core::auth::{AuthManager, DefaultUserManager, StubAuthHandler};
+use maowbot_core::crypto::Encryptor;
+use maowbot_core::cache::{CacheConfig, ChatCache, TrimPolicy};
+use maowbot_core::services::message_service::MessageService;
+use maowbot_core::services::user_service::UserService;
+use maowbot_core::tasks::monthly_maintenance;
 
 use tonic::transport::{Server, Identity, Certificate, ServerTlsConfig, Channel, ClientTlsConfig};
 use maowbot_proto::plugs::plugin_service_server::PluginServiceServer;
@@ -40,8 +40,8 @@ use futures_util::StreamExt;
 
 use rcgen::{generate_simple_self_signed, CertifiedKey};
 use tokio::time;
-use maowbot::Error;
-use maowbot::plugins::bot_api::BotApi;
+use maowbot_core::Error;
+use maowbot_core::plugins::bot_api::BotApi;
 
 /// Command-line arguments
 #[derive(Parser, Debug, Clone)]
@@ -201,7 +201,7 @@ pub async fn run_server(args: Args) -> Result<(), Error> {
     let chat_cache = Arc::new(Mutex::new(chat_cache));
     let message_service = Arc::new(MessageService::new(chat_cache, event_bus.clone()));
 
-    let platform_manager = maowbot::platforms::manager::PlatformManager::new(
+    let platform_manager = maowbot_core::platforms::manager::PlatformManager::new(
         message_service.clone(),
         user_service.clone(),
         event_bus.clone(),

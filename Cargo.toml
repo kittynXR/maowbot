@@ -1,18 +1,29 @@
-[package]
-name = "maowbot"
+# maowbot/Cargo.toml  (top-level)
+[workspace]
+resolver = "2"
+members = [
+    "maowbot-core",
+    "maowbot-proto",
+    "maowbot-server",
+    "plugins/plugin_hello",
+    "plugins/tui_plugin"
+]
+
+[workspace.package]
 version = "0.1.0"
 edition = "2021"
 
-[dependencies]
-twitch_api = {  version="^0.7.0-rc", features = ["client", "helix", "reqwest"] }
+[workspace.dependencies]
+maowbot-proto = { path = "maowbot-proto" }
 
+twitch_api = {  version="^0.7.0-rc", features = ["client", "helix", "reqwest"] }
 sqlx = { version = "^0.8", features = ["sqlite","runtime-tokio", "tls-native-tls", "chrono"] }
 
 tokio = { version = "^1.43", features = ["full"] }
+tokio-test = { version = "^0.4" }
 tokio-stream = { version = "0.1.17", features = ["net"] }
 
 dashmap = "^6.1"
-
 rcgen = "^0.13"
 
 chrono = { version = "^0.4", features = ["serde"] }
@@ -39,6 +50,8 @@ clap = {  version = "^4.5", features = ["derive"] }
 
 # gRPC / protobuf:
 tonic = { version = "^0.12", features = ["transport", "tls"] }
+prost = { version = "^0.13"}
+prost-types = { version = "^0.13" }
 
 # --- New or updated below:
 tracing = "^0.1"
@@ -49,9 +62,4 @@ tempfile = "^3.16"
 futures-util = "^0.3"
 futures-core = "^0.3"
 
-maowbot-proto = { path = "maowbot-proto" }
-
 libloading = "^0.8"
-
-[dev-dependencies]
-tokio-test = "^0.4"

@@ -8,8 +8,8 @@ use std::any::Any;
 use std::time::SystemTime;
 use async_trait::async_trait;
 
-use maowbot::Error;
-use maowbot::plugins::manager::{
+use maowbot_core::Error;
+use maowbot_core::plugins::manager::{
     PluginConnection,
     PluginConnectionInfo,
     // If these are public. If not, mark them as `pub` in manager.rs
@@ -20,7 +20,7 @@ use maowbot_proto::plugs::{
     PluginCapability,
 };
 
-use maowbot::plugins::bot_api::{BotApi, StatusData};
+use maowbot_core::plugins::bot_api::{BotApi, StatusData};
 
 /// A dynamic TUI plugin that calls back into the bot manager via `BotApi`.
 #[derive(Clone)]
