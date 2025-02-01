@@ -3,10 +3,6 @@ name = "maowbot"
 version = "0.1.0"
 edition = "2021"
 
-[profile.test]
-# ensures the Rust test harness uses only one thread
-test-threads = 1
-
 [dependencies]
 twitch_api = {  version="^0.7.0-rc", features = ["client", "helix", "reqwest"] }
 
