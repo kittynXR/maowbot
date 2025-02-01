@@ -34,11 +34,11 @@ mockall = "0.13.1"
 reqwest = "^0.12"
 aes-gcm = "^0.11.0-pre"
 base64 = "^0.22"
-rand = "^0.8"
-rand_core = "^0.6"
+rand = { version ="^0.9", features = ["os_rng"] }
+rand_core = "^0.9"
 serenity = "^0.12"
 url = "^2.5"
-oauth2 = "^4.4"
+oauth2 = { version = "5.0.0", features = ["reqwest"] }
 clap = {  version = "^4.5", features = ["derive"] }
 
 # gRPC / protobuf:
@@ -49,11 +49,11 @@ prost-types = "^0.12"
 # --- New or updated below:
 tracing = "^0.1"
 tracing-subscriber = "^0.3"
-rustls-pemfile = "1.0.4"
-futures-lite = "2.6.0"
-tempfile = "3.15.0"
-futures-util = "0.3.31"
-futures-core = "0.3.31"
+rustls-pemfile = "^2.2"
+futures-lite = "^2.6"
+tempfile = "^3.16"
+futures-util = "^0.3"
+futures-core = "^0.3"
 
 
 [dev-dependencies]

@@ -7,6 +7,7 @@ use rand::rngs::OsRng;
 use rand::RngCore;
 use std::convert::TryFrom;
 use std::sync::Arc;
+use rand_core::TryRngCore;
 
 #[derive(thiserror::Error, Debug)]
 pub enum CryptoError {
@@ -35,8 +36,11 @@ impl Encryptor {
 
     pub fn encrypt(&self, data: &str) -> Result<String, CryptoError> {
         let mut nonce_bytes = [0u8; 12];
-        let mut rng = OsRng;
-        rng.fill_bytes(&mut nonce_bytes);
+        let mut rng = OsRng::default();
+        rng.try_fill_bytes(&mut nonce_bytes)
+            .map_err(|e| CryptoError::Encryption(e.to_string()))?;
+
+
 
         // Use try_from instead of from_slice
         let nonce = Nonce::try_from(&nonce_bytes[..])
