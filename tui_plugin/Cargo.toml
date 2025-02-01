@@ -1,0 +1,18 @@
+[package]
+name = "tui_plugin"
+version = "0.1.0"
+edition = "2021"
+
+# This ensures we build a dynamic library
+[lib]
+name = "tui_plugin"
+crate-type = ["cdylib"]
+
+[dependencies]
+tokio = { version = "^1.43", features = ["full"] }
+async-trait = "0.1"
+tracing = "0.1"
+futures-lite = "2.6"
+
+maowbot-proto = { path = "../maowbot-proto" }
+maowbot = { path = "..", package = "maowbot" }

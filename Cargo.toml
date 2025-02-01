@@ -51,5 +51,7 @@ futures-core = "^0.3"
 
 maowbot-proto = { path = "maowbot-proto" }
 
+libloading = "^0.8"
+
 [dev-dependencies]
 tokio-test = "^0.4"

@@ -63,6 +63,10 @@ pub enum Error {
 
     #[error("Timeout error: {0}")]
     Timeout(#[from] tokio::time::error::Elapsed),
+
+    #[error("Library loading error: {0}")]
+    LibLoading(#[from] libloading::Error),
+
 }
 
 impl From<String> for Error {

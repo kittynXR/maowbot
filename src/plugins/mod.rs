@@ -1,3 +1,3 @@
-// File: src/plugins/mod.rs
+// src/plugins/mod.rs
 pub mod manager;
-pub mod tui_plugin;
+pub mod bot_api;
