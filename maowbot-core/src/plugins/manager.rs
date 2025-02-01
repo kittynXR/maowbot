@@ -83,11 +83,12 @@ pub struct PluginGrpcConnection {
 }
 
 impl PluginGrpcConnection {
-    pub fn new(sender: UnboundedSender<PluginStreamResponse>, enabled: bool) -> Self {
+    /// Note: by default starts with `is_enabled = false`.
+    pub fn new(sender: UnboundedSender<PluginStreamResponse>, initially_enabled: bool) -> Self {
         let info = PluginConnectionInfo {
             name: "<uninitialized-grpc-plugin>".to_string(),
             capabilities: Vec::new(),
-            is_enabled: enabled,
+            is_enabled: initially_enabled,
         };
         Self {
             info: Arc::new(AsyncMutex::new(info)),
@@ -185,7 +186,7 @@ impl PluginConnection for InProcessPluginConnection {
     async fn send(&self, response: PluginStreamResponse) -> Result<(), Error> {
         let guard = self.info.lock().await;
         if !guard.is_enabled {
-            return Ok(());
+            return Ok(()); // If disabled, we skip sending.
         }
         self.plugin.send(response).await
     }
@@ -248,7 +249,11 @@ impl PluginManager {
                     Ok(parsed) => {
                         let mut lock = self.plugin_records.lock().unwrap();
                         *lock = parsed.plugins;
-                        info!("Loaded {} plugin records from {:?}", lock.len(), self.persist_path);
+                        info!(
+                            "Loaded {} plugin records from {:?}",
+                            lock.len(),
+                            self.persist_path
+                        );
                     }
                     Err(e) => {
                         error!("Could not parse plugin-states JSON at {:?}: {:?}", self.persist_path, e);
@@ -305,7 +310,8 @@ impl PluginManager {
 
     fn is_plugin_enabled(&self, name: &str, plugin_type: &PluginType) -> bool {
         let lock = self.plugin_records.lock().unwrap();
-        lock.iter().find(|r| r.name == name && r.plugin_type == *plugin_type)
+        lock.iter()
+            .find(|r| r.name == name && r.plugin_type == *plugin_type)
             .map(|r| r.enabled)
             .unwrap_or(false)
     }
@@ -362,10 +368,10 @@ impl PluginManager {
         };
         self.upsert_plugin_record(updated.clone());
         info!(
-        "PluginManager: set plugin '{}' to {}",
-        updated.name,
-        if enable { "ENABLED" } else { "DISABLED" },
-    );
+            "PluginManager: set plugin '{}' to {}",
+            updated.name,
+            if enable { "ENABLED" } else { "DISABLED" },
+        );
 
         // 3) Depending on plugin type, enable/disable the actual plugin connection
         match updated.plugin_type {
@@ -377,7 +383,6 @@ impl PluginManager {
                     if pi.name == updated.name {
                         // Optionally re-apply the same capabilities it already had:
                         p.set_capabilities(pi.capabilities.clone()).await;
-
                         // Then toggle the is_enabled field:
                         p.set_enabled(enable).await;
                         break;
@@ -385,7 +390,7 @@ impl PluginManager {
                 }
             }
 
-            // For DynamicLib, if enabling we may need to load the plugin first
+            // For DynamicLib, if enabling we may need to load the plugin first:
             PluginType::DynamicLib { .. } => {
                 if enable {
                     let mut lock = self.plugins.lock().await;
@@ -396,7 +401,7 @@ impl PluginManager {
                     drop(lock);
 
                     if !already_loaded {
-                        // If not loaded, actually load the .dll / .so
+                        // If not loaded, actually load the .dll/.so
                         if let Err(e) = self.load_in_process_plugin_by_record(&updated).await {
                             error!("Failed to load '{}': {:?}", updated.name, e);
                         }
@@ -406,9 +411,7 @@ impl PluginManager {
                         for p in lock.iter() {
                             let pi = p.info().await;
                             if pi.name == updated.name {
-                                // Optionally re-apply capabilities if you need:
                                 p.set_capabilities(pi.capabilities.clone()).await;
-
                                 p.set_enabled(true).await;
                                 break;
                             }
@@ -417,11 +420,10 @@ impl PluginManager {
                 } else {
                     // Disabling => stop & remove from our in-memory list
                     let mut lock = self.plugins.lock().await;
-                    let idx = lock.iter().position(|p| {
+                    if let Some(i) = lock.iter().position(|p| {
                         let pi = futures_lite::future::block_on(p.info());
                         pi.name == updated.name
-                    });
-                    if let Some(i) = idx {
+                    }) {
                         let plugin_arc = lock.remove(i);
                         let _ = plugin_arc.stop().await;
                         info!("Unloaded in-process plugin '{}'", updated.name);
@@ -486,8 +488,13 @@ impl PluginManager {
                 if let Some(ext_str) = path.extension().and_then(|s| s.to_str()) {
                     if ext_str.eq_ignore_ascii_case(ext) {
                         let path_str = path.to_string_lossy().to_string();
-                        let file_stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("unknown");
-                        let plugin_type = PluginType::DynamicLib { path: path_str.clone() };
+                        let file_stem = path
+                            .file_stem()
+                            .and_then(|s| s.to_str())
+                            .unwrap_or("unknown");
+                        let plugin_type = PluginType::DynamicLib {
+                            path: path_str.clone(),
+                        };
                         let enabled = self.is_plugin_enabled(file_stem, &plugin_type);
                         let rec = PluginRecord {
                             name: file_stem.to_string(),
@@ -497,12 +504,18 @@ impl PluginManager {
                         self.upsert_plugin_record(rec.clone());
                         if rec.enabled {
                             if let Err(e) = self.load_in_process_plugin_by_record(&rec).await {
-                                error!("Failed to load '{}' from {}: {:?}", rec.name, path_str, e);
+                                error!(
+                                    "Failed to load '{}' from {}: {:?}",
+                                    rec.name, path_str, e
+                                );
                             } else {
                                 info!("Loaded plugin '{}' from {}", rec.name, path_str);
                             }
                         } else {
-                            info!("Found plugin at {}, but it’s disabled => skipping load", path_str);
+                            info!(
+                                "Found plugin at {}, but it’s disabled => skipping load",
+                                path_str
+                            );
                         }
                     }
                 }
@@ -517,6 +530,7 @@ impl PluginManager {
         mut inbound: tonic::Streaming<PluginStreamRequest>,
         sender: UnboundedSender<PluginStreamResponse>,
     ) {
+        // Start off as disabled = false. We'll override based on plugin-state after 'Hello'.
         let conn = Arc::new(PluginGrpcConnection::new(sender, false));
         self.add_plugin_connection(conn.clone()).await;
 
@@ -537,6 +551,7 @@ impl PluginManager {
     pub async fn on_inbound_message(&self, payload: ReqPayload, plugin: Arc<dyn PluginConnection>) {
         match payload {
             ReqPayload::Hello(Hello { plugin_name, passphrase }) => {
+                // Passphrase check:
                 if let Some(req_pass) = &self.passphrase {
                     if passphrase != *req_pass {
                         let err_resp = PluginStreamResponse {
@@ -551,18 +566,27 @@ impl PluginManager {
                 }
                 let plugin_type = PluginType::Grpc;
                 let is_enabled = self.is_plugin_enabled(&plugin_name, &plugin_type);
+
                 let rec = PluginRecord {
                     name: plugin_name.clone(),
                     plugin_type,
                     enabled: is_enabled,
                 };
                 self.upsert_plugin_record(rec);
+
+                // Set plugin name so it shows up properly in manager info.
                 plugin.set_name(plugin_name.clone()).await;
-                {
-                    let mut info = plugin.info().await;
-                    info.is_enabled = is_enabled;
-                    plugin.set_capabilities(info.capabilities).await;
-                }
+                // -------------------------------------------------------------
+                // FIX: Now ensure the runtime PluginConnection is enabled if
+                // the JSON says "enabled: true":
+                plugin.set_enabled(is_enabled).await;
+                // -------------------------------------------------------------
+
+                // Optionally you may also re-apply existing capabilities here if needed.
+                // For now we do nothing special with that, but you *could* do:
+                //   let pi = plugin.info().await;
+                //   plugin.set_capabilities(pi.capabilities.clone()).await;
+
                 let welcome = PluginStreamResponse {
                     payload: Some(RespPayload::Welcome(WelcomeResponse {
                         bot_name: "MaowBot".into(),
@@ -632,7 +656,8 @@ impl PluginManager {
                     return;
                 }
                 if pi.capabilities.contains(&PluginCapability::SendChat) {
-                    info!("(PLUGIN->BOT) {} => channel='{}' => '{}'", pi.name, channel, text);
+                    info!("(PLUGIN->BOT) {} => channel='{}' => '{}'",
+                          pi.name, channel, text);
                     if let Some(bus) = &self.event_bus {
                         let evt = BotEvent::ChatMessage {
                             platform: "plugin".to_string(),
@@ -666,6 +691,7 @@ impl PluginManager {
                 3 => PluginCapability::ChatModeration,
                 _ => PluginCapability::ReceiveChatEvents,
             };
+            // Example: we deny ChatModeration for untrusted plugins
             if cap == PluginCapability::ChatModeration {
                 denied.push(cap);
             } else {
@@ -790,10 +816,13 @@ impl PluginService for PluginServiceGrpc {
 impl BotApi for PluginManager {
     fn list_plugins(&self) -> Vec<String> {
         let records = self.get_plugin_records();
-        records.into_iter().map(|r| {
-            let suffix = if r.enabled { "" } else { " (disabled)" };
-            format!("{}{}", r.name, suffix)
-        }).collect()
+        records
+            .into_iter()
+            .map(|r| {
+                let suffix = if r.enabled { "" } else { " (disabled)" };
+                format!("{}{}", r.name, suffix)
+            })
+            .collect()
     }
 
     fn status(&self) -> StatusData {
@@ -804,6 +833,7 @@ impl BotApi for PluginManager {
                 format!("{}{}", p.name, suffix)
             })
             .collect();
+
         let uptime = self.start_time.elapsed().as_secs();
         StatusData {
             connected_plugins: connected,
