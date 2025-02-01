@@ -15,7 +15,7 @@ use crate::eventbus::EventBus;
 use crate::plugins::manager::{
     PluginConnection, PluginConnectionInfo, PluginManager,
 };
-use crate::plugins::proto::plugs::{
+use maowbot_proto::plugs::{
     PluginCapability, PluginStreamResponse,
     plugin_stream_response::Payload as RespPayload,
     StatusResponse,

@@ -37,8 +37,8 @@ use tonic::transport::{
     Channel,
     ClientTlsConfig,
 };
-use maowbot::plugins::proto::plugs::plugin_service_server::PluginServiceServer;
-use maowbot::plugins::proto::plugs::{
+use maowbot_proto::plugs::plugin_service_server::PluginServiceServer;
+use maowbot_proto::plugs::{
     plugin_service_client::PluginServiceClient,
     PluginStreamRequest,
     plugin_stream_request::Payload as ReqPayload,

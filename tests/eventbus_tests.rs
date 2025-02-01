@@ -12,7 +12,7 @@ use maowbot::eventbus::db_logger::spawn_db_logger_task;
 use maowbot::plugins::manager::{
     PluginManager, PluginConnection, PluginConnectionInfo
 };
-use maowbot::plugins::proto::plugs::{
+use maowbot_proto::plugs::{
     PluginCapability,
     PluginStreamResponse,
 };

@@ -11,7 +11,7 @@ use tonic::transport::Server;
 
 use maowbot::eventbus::EventBus;
 use maowbot::plugins::manager::{PluginManager, PluginServiceGrpc};
-use maowbot::plugins::proto::plugs::{
+use maowbot_proto::plugs::{
     plugin_service_server::PluginServiceServer,
     plugin_service_client::PluginServiceClient,
     PluginStreamRequest,

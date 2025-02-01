@@ -2,7 +2,6 @@
 name = "maowbot"
 version = "0.1.0"
 edition = "2021"
-build = "build.rs"
 
 [profile.test]
 # ensures the Rust test harness uses only one thread
@@ -43,8 +42,6 @@ clap = {  version = "^4.5", features = ["derive"] }
 
 # gRPC / protobuf:
 tonic = { version = "^0.12", features = ["transport", "tls"] }
-prost = "^0.13"
-prost-types = "^0.13"
 
 # --- New or updated below:
 tracing = "^0.1"
@@ -55,10 +52,7 @@ tempfile = "^3.16"
 futures-util = "^0.3"
 futures-core = "^0.3"
 
+maowbot-proto = { path = "maowbot-proto" }
 
 [dev-dependencies]
 tokio-test = "^0.4"
-
-[build-dependencies]
-tonic-build = "^0.12"
-prost-build = "^0.13"

@@ -10,7 +10,8 @@ use std::pin::Pin;
 use crate::Error;
 use crate::eventbus::{EventBus, BotEvent};
 
-use crate::plugins::proto::plugs::{
+
+use maowbot_proto::plugs::{
     // Tonic server trait + request/response messages:
     plugin_service_server::{PluginService, PluginServiceServer},
     PluginStreamRequest, PluginStreamResponse,

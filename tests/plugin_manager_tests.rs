@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use maowbot::plugins::manager::{
     PluginManager, PluginConnection, PluginConnectionInfo
 };
-use maowbot::plugins::proto::plugs::{
+use maowbot_proto::plugs::{
     plugin_stream_request::Payload as ReqPayload,
     plugin_stream_response::Payload as RespPayload,
     PluginStreamRequest, PluginStreamResponse,
