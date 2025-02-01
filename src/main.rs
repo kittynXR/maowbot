@@ -83,7 +83,7 @@ fn init_tracing() {
 }
 
 #[tokio::main]
-async fn main() -> anyhow::Result<()> {
+async fn main() -> Result<(), maowbot::Error> {
     init_tracing();
 
     let args = Args::parse();
@@ -102,7 +102,7 @@ async fn main() -> anyhow::Result<()> {
 }
 
 /// Utility function to load or generate self-signed certificates
-fn load_or_generate_certs() -> anyhow::Result<Identity> {
+fn load_or_generate_certs() -> Result<Identity, maowbot::Error> {
     let cert_folder = "certs";
     let cert_path = format!("{}/server.crt", cert_folder);
     let key_path  = format!("{}/server.key", cert_folder);
@@ -132,7 +132,7 @@ fn load_or_generate_certs() -> anyhow::Result<Identity> {
 }
 
 /// The server logic: uses `load_or_generate_certs` to handle self-signed certs
-async fn run_server(args: Args) -> anyhow::Result<()> {
+async fn run_server(args: Args) -> Result<(), maowbot::Error> {
     let event_bus = Arc::new(EventBus::new());
     let db = Database::new(&args.db_path).await?;
     db.migrate().await?;
@@ -251,7 +251,7 @@ async fn run_server(args: Args) -> anyhow::Result<()> {
 }
 
 /// The client logic: it must trust the `server.crt` that the bot generates
-async fn run_client(args: Args) -> anyhow::Result<()> {
+async fn run_client(args: Args) -> Result<(), maowbot::Error> {
     info!("Running in CLIENT mode. Connecting to server...");
 
     let server_url = format!("https://{}", args.server_addr);

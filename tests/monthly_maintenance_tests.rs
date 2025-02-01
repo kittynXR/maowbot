@@ -6,7 +6,6 @@ use tokio::fs;
 use chrono::NaiveDateTime;
 use sqlx::{SqlitePool, Row};
 use sqlx::sqlite::{SqlitePoolOptions, SqliteConnectOptions};
-use anyhow::Result;
 use maowbot::Error;
 use maowbot::Database;
 use maowbot::repositories::sqlite::user_analysis::SqliteUserAnalysisRepository;
@@ -16,12 +15,12 @@ use maowbot::tasks::monthly_maintenance::{
 use maowbot::utils::time::to_epoch;
 
 /// Helper: Parse a date string ("YYYY-MM-DD HH:MM:SS") into epoch seconds.
-fn parse_to_seconds(s: &str) -> Result<i64> {
+fn parse_to_seconds(s: &str) -> Result<i64, Error> {
     let dt = NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S")?;
     Ok(dt.timestamp())
 }
 
-async fn create_single_conn_pool(db_path: &str) -> Result<SqlitePool> {
+async fn create_single_conn_pool(db_path: &str) -> Result<SqlitePool, Error> {
     let abs_path = std::env::current_dir()?.join(db_path);
     let connect_opts = SqliteConnectOptions::new()
         .filename(abs_path)
@@ -37,7 +36,7 @@ async fn create_single_conn_pool(db_path: &str) -> Result<SqlitePool> {
     Ok(pool)
 }
 
-async fn create_test_schema(pool: &SqlitePool) -> Result<()> {
+async fn create_test_schema(pool: &SqlitePool) -> Result<(), Error> {
     // Create minimal tables using INTEGER timestamps.
     sqlx::query(r#"
         CREATE TABLE IF NOT EXISTS users (
@@ -103,13 +102,13 @@ async fn create_test_schema(pool: &SqlitePool) -> Result<()> {
     Ok(())
 }
 
-async fn create_test_database(db_path: &str) -> Result<Database> {
+async fn create_test_database(db_path: &str) -> Result<Database, Error> {
     let pool = create_single_conn_pool(db_path).await?;
     Ok(Database::from_pool(pool))
 }
 
 #[tokio::test]
-async fn test_collect_missing_months_logic() -> Result<()> {
+async fn test_collect_missing_months_logic() -> Result<(), Error> {
     let months = collect_missing_months(Some("2024-11"), "2025-01")?;
     assert_eq!(months, vec!["2024-12", "2025-01"]);
     let none_before = collect_missing_months(None, "2025-04")?;
@@ -118,7 +117,7 @@ async fn test_collect_missing_months_logic() -> Result<()> {
 }
 
 #[tokio::test]
-async fn test_parse_year_month() -> Result<()> {
+async fn test_parse_year_month() -> Result<(), Error> {
     let (y, m) = parse_year_month("2025-01")?;
     assert_eq!(y, 2025);
     assert_eq!(m, 1);
@@ -127,7 +126,7 @@ async fn test_parse_year_month() -> Result<()> {
 }
 
 #[tokio::test]
-async fn test_archive_one_month_no_attach() -> anyhow::Result<()> {
+async fn test_archive_one_month_no_attach() -> Result<(), Error> {
     let tmp_main = NamedTempFile::new()?;
     let main_db_path = tmp_main.path().display().to_string();
     let db = create_test_database(&main_db_path).await?;
@@ -186,7 +185,7 @@ async fn test_archive_one_month_no_attach() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
-async fn test_maybe_run_monthly_maintenance_integration() -> Result<()> {
+async fn test_maybe_run_monthly_maintenance_integration() -> Result<(), Error> {
     let tmpfile = NamedTempFile::new()?;
     let main_db_path = tmpfile.path().display().to_string();
     let db = create_test_database(&main_db_path).await?;

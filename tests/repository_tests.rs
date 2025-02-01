@@ -1,11 +1,6 @@
 // tests/repository_tests.rs
 
-use maowbot::{
-    Database,
-    models::{User, Platform, PlatformIdentity},
-    repositories::sqlite::{UserRepository, PlatformIdentityRepository},
-    repositories::Repository,
-};
+use maowbot::{Database, models::{User, Platform, PlatformIdentity}, repositories::sqlite::{UserRepository, PlatformIdentityRepository}, repositories::Repository, Error};
 use chrono::Utc;
 use serde_json::json;
 use uuid::Uuid;
@@ -18,7 +13,7 @@ async fn setup_test_db() -> Database {
 }
 
 #[tokio::test]
-async fn test_user_repository() -> anyhow::Result<()> {
+async fn test_user_repository() -> Result<(), Error> {
     let db = setup_test_db().await;
     let repo = UserRepository::new(db.pool().clone());
 
@@ -53,7 +48,7 @@ async fn test_user_repository() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
-async fn test_platform_identity_repository() -> anyhow::Result<()> {
+async fn test_platform_identity_repository() -> Result<(), Error> {
     let db = setup_test_db().await;
     let repo = PlatformIdentityRepository::new(db.pool().clone());
 

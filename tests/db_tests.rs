@@ -1,6 +1,6 @@
 // tests/db_tests.rs
 
-use maowbot::{Database, models::{User, Platform, PlatformIdentity}};
+use maowbot::{Database, models::{User, Platform, PlatformIdentity}, Error};
 use chrono::Utc;
 use std::{env, fs};
 use serde_json::json;
@@ -9,7 +9,7 @@ use sqlx::{Row, Error as SqlxError};
 use maowbot::utils::time::{from_epoch};
 
 #[tokio::test]
-async fn test_database_connection() -> anyhow::Result<()> {
+async fn test_database_connection() -> Result<(), Error> {
     // Build a test database file path.
     let db_path = env::current_dir()?.join("data/test.db");
     if db_path.exists() {
@@ -58,7 +58,7 @@ async fn test_database_connection() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
-async fn test_migration() -> anyhow::Result<()> {
+async fn test_migration() -> Result<(), Error> {
     let db = Database::new(":memory:").await?;
     db.migrate().await?;
     Ok(())
@@ -76,7 +76,7 @@ fn test_file_access() {
 }
 
 #[tokio::test]
-async fn test_platform_identity() -> anyhow::Result<()> {
+async fn test_platform_identity() -> Result<(), Error> {
     let db = Database::new(":memory:").await?;
     db.migrate().await?;
 

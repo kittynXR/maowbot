@@ -1,31 +1,24 @@
 // tests/services_tests.rs
 use std::sync::Arc;
+use anyhow::anyhow;
 use tokio::sync::Mutex;
 use tokio::time::{timeout, Duration};
 
-use anyhow::{Result, anyhow};
-use maowbot::{
-    Database,
-    auth::user_manager::DefaultUserManager,
-    repositories::sqlite::{
-        user::UserRepository,
-        platform_identity::PlatformIdentityRepository,
-        user_analysis::SqliteUserAnalysisRepository,
-    },
-    eventbus::{EventBus, BotEvent},
-    cache::{ChatCache, CacheConfig, TrimPolicy},
-    services::{
-        user_service::UserService,
-        message_service::MessageService,
-    },
-};
+use maowbot::{Database, auth::user_manager::DefaultUserManager, repositories::sqlite::{
+    user::UserRepository,
+    platform_identity::PlatformIdentityRepository,
+    user_analysis::SqliteUserAnalysisRepository,
+}, eventbus::{EventBus, BotEvent}, cache::{ChatCache, CacheConfig, TrimPolicy}, services::{
+    user_service::UserService,
+    message_service::MessageService,
+}, Error};
 
 /// Demonstrates using UserService + MessageService with an in-memory DB.
 #[tokio::test]
-async fn test_user_message_services_in_memory_db() -> Result<()> {
+async fn test_user_message_services_in_memory_db() -> Result<(), Error> {
     // 1) In-memory DB
-    let db = Database::new(":memory:").await?;   // returns anyhow::Result<Database>
-    db.migrate().await?;                        // also anyhow::Result
+    let db = Database::new(":memory:").await?;
+    db.migrate().await?;
 
     // 2) Build repos + default user manager
     let user_repo = UserRepository::new(db.pool().clone());

@@ -1,12 +1,6 @@
 // tests/credential_tests.rs
 
-use maowbot::{
-    Database,
-    models::*,
-    repositories::CredentialsRepository,
-    repositories::sqlite::SqliteCredentialsRepository,
-    crypto::Encryptor,
-};
+use maowbot::{Database, models::*, repositories::CredentialsRepository, repositories::sqlite::SqliteCredentialsRepository, crypto::Encryptor, Error};
 use chrono::Utc;
 use uuid::Uuid;
 use sqlx::{Row};
@@ -23,7 +17,7 @@ async fn setup_test_db() -> (Database, Encryptor) {
 }
 
 #[tokio::test]
-async fn test_credential_storage() -> anyhow::Result<()> {
+async fn test_credential_storage() -> Result<(), Error> {
     let (db, encryptor) = setup_test_db().await;
     let repo = SqliteCredentialsRepository::new(db.pool().clone(), encryptor);
 

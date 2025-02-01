@@ -1,10 +1,5 @@
 // tests/user_manager_tests.rs
 mod tests {
-use super::*;
-use anyhow::Result;
-use tokio::sync::Mutex;
-use std::sync::Arc;
-use chrono::{Utc, Duration};
 use uuid::Uuid;
 
 use crate::Database;
@@ -12,13 +7,13 @@ use crate::models::{Platform, User};
 use crate::repositories::sqlite::{
     user::UserRepository,
     platform_identity::PlatformIdentityRepository,
-    user_analysis::{SqliteUserAnalysisRepository, UserAnalysisRepository},
+    user_analysis::{SqliteUserAnalysisRepository},
 };
 use crate::auth::{UserManager, DefaultUserManager};
 use crate::Error;
 
 /// A helper to create an in‐memory DB, run migrations, and build a DefaultUserManager.
-async fn setup_user_manager() -> Result<DefaultUserManager> {
+async fn setup_user_manager() -> Result<DefaultUserManager, Error> {
     // 1) In‐memory DB
     let db = Database::new(":memory:").await?;
     db.migrate().await?;
@@ -36,7 +31,7 @@ async fn setup_user_manager() -> Result<DefaultUserManager> {
 }
 
 #[tokio::test]
-async fn test_get_or_create_user_new() -> Result<()> {
+async fn test_get_or_create_user_new() -> Result<(), Error> {
     let manager = setup_user_manager().await?;
 
     // A random new platform_user_id
@@ -61,7 +56,7 @@ async fn test_get_or_create_user_new() -> Result<()> {
 }
 
 #[tokio::test]
-async fn test_get_or_create_user_cache_hit() -> Result<()> {
+async fn test_get_or_create_user_cache_hit() -> Result<(), Error> {
     let manager = setup_user_manager().await?;
 
     let user_id = Uuid::new_v4().to_string(); // not used as a user_id directly, just a random platform ID
@@ -85,7 +80,7 @@ async fn test_get_or_create_user_cache_hit() -> Result<()> {
 }
 
     #[tokio::test]
-    async fn test_update_user_activity() -> Result<()> {
+    async fn test_update_user_activity() -> Result<(), Error> {
         let manager = setup_user_manager().await?;
         let user = manager
             .get_or_create_user(Platform::VRChat, "vrchat_123", Some("VRChatter"))
@@ -110,7 +105,7 @@ async fn test_get_or_create_user_cache_hit() -> Result<()> {
 
 
 #[tokio::test]
-async fn test_cache_ttl_expiration() -> Result<(), anyhow::Error> {
+async fn test_cache_ttl_expiration() -> Result<(), Error> {
     let manager = setup_user_manager().await?;
 
     // Insert user in the cache by calling get_or_create_user

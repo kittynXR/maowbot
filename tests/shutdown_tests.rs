@@ -4,7 +4,6 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio::time::{sleep, Duration};
 use chrono::Utc;
-use anyhow::Result;
 
 use maowbot::{Database, Error};
 use maowbot::eventbus::{EventBus, BotEvent};
@@ -79,7 +78,7 @@ impl PluginConnection for ShutdownTestPlugin {
 
 /// Test that calling `event_bus.shutdown()` flushes any queued ChatMessages.
 #[tokio::test]
-async fn test_graceful_shutdown_data_flush() -> Result<()> {
+async fn test_graceful_shutdown_data_flush() -> Result<(), Error> {
     let db = Database::new(":memory:").await?;
     db.migrate().await?;
 
@@ -141,7 +140,7 @@ async fn test_graceful_shutdown_data_flush() -> Result<()> {
 
 /// Test that if a plugin sends `Shutdown` request (plugin->bot), the manager calls event_bus.shutdown().
 #[tokio::test]
-async fn test_plugin_initiated_shutdown() -> Result<()> {
+async fn test_plugin_initiated_shutdown() -> Result<(), Error> {
     let db = Database::new(":memory:").await?;
     db.migrate().await?;
 
@@ -213,7 +212,7 @@ async fn test_plugin_initiated_shutdown() -> Result<()> {
 
 /// Test that after shutdown, no new messages are processed or stored.
 #[tokio::test]
-async fn test_no_new_events_after_shutdown() -> Result<()> {
+async fn test_no_new_events_after_shutdown() -> Result<(), Error> {
     let db = Database::new(":memory:").await?;
     db.migrate().await?;
 

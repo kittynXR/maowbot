@@ -1,14 +1,14 @@
 use sqlx::sqlite::{SqlitePoolOptions, SqliteConnectOptions};
 use sqlx::{Pool, Sqlite, SqlitePool};
-use std::path::Path;
 use anyhow::Result;
+use crate::Error;
 
 pub struct Database {
     pool: Pool<Sqlite>,
 }
 
 impl Database {
-    pub async fn new(database_url: &str) -> Result<Self> {
+    pub async fn new(database_url: &str) -> Result<Self, Error> {
         if database_url == ":memory:" {
             // Use an in-memory DB
             // `SqliteConnectOptions` has a special method for in-memory, or you can do:
@@ -37,7 +37,7 @@ impl Database {
         }
     }
 
-    pub async fn migrate(&self) -> Result<()> {
+    pub async fn migrate(&self) -> Result<(), Error> {
         println!("Applying migrations...");
         sqlx::migrate!("./migrations").run(&self.pool).await?;
         println!("Migrations applied successfully.");
