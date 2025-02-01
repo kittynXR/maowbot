@@ -3,7 +3,7 @@
 use sqlx::{Pool, Sqlite, Row};
 use async_trait::async_trait;
 use chrono::Utc;
-
+use crate::utils::time::{to_epoch, from_epoch, current_epoch};
 use crate::Error;
 use crate::models::UserAnalysis;
 
@@ -54,11 +54,10 @@ impl UserAnalysisRepository for SqliteUserAnalysisRepository {
             .bind(analysis.horni_score)
             .bind(&analysis.ai_notes)
             .bind(&analysis.moderator_notes)
-            .bind(analysis.created_at)
-            .bind(analysis.updated_at)
+            .bind(to_epoch(analysis.created_at))
+            .bind(to_epoch(analysis.updated_at))
             .execute(&self.pool)
             .await?;
-
         Ok(())
     }
 
@@ -94,8 +93,8 @@ impl UserAnalysisRepository for SqliteUserAnalysisRepository {
                 horni_score: r.try_get("horni_score")?,
                 ai_notes: r.try_get("ai_notes")?,
                 moderator_notes: r.try_get("moderator_notes")?,
-                created_at: r.try_get("created_at")?,
-                updated_at: r.try_get("updated_at")?,
+                created_at: from_epoch(r.try_get::<i64, _>("created_at")?),
+                updated_at: from_epoch(r.try_get::<i64, _>("updated_at")?),
             }))
         } else {
             Ok(None)
@@ -103,7 +102,7 @@ impl UserAnalysisRepository for SqliteUserAnalysisRepository {
     }
 
     async fn update_analysis(&self, analysis: &UserAnalysis) -> Result<(), Error> {
-        let now = Utc::now().naive_utc();
+        let now = current_epoch();
         sqlx::query(
             r#"
             UPDATE user_analysis
@@ -127,7 +126,6 @@ impl UserAnalysisRepository for SqliteUserAnalysisRepository {
             .bind(&analysis.user_analysis_id)
             .execute(&self.pool)
             .await?;
-
         Ok(())
     }
 }

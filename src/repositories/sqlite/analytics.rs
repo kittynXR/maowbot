@@ -2,6 +2,7 @@ use async_trait::async_trait;
 use sqlx::{Pool, Sqlite, Row};
 use uuid::Uuid;
 use chrono::{NaiveDateTime, Utc};
+use crate::utils::time::to_epoch;
 use serde_json::Value;
 use sqlx::FromRow;
 use crate::Error;
@@ -15,7 +16,6 @@ pub struct ChatMessage {
     pub user_id: String,
     pub message_text: String,
 
-    // The DB column is an integer storing microseconds (or seconds) since epoch:
     pub timestamp: i64,
 
     pub metadata: Option<Value>,
@@ -93,16 +93,12 @@ impl SqliteAnalyticsRepository {
             None => "".to_string(),
         };
 
-        // Convert the NaiveDateTime to microseconds
-
-
         sqlx::query(
             r#"
             INSERT INTO chat_messages (
-            message_id, platform, channel, user_id,
-            message_text, timestamp, metadata
+                message_id, platform, channel, user_id,
+                message_text, timestamp, metadata
             ) VALUES (?, ?, ?, ?, ?, ?, ?)
-
             "#
         )
             .bind(&msg.message_id)
@@ -110,7 +106,6 @@ impl SqliteAnalyticsRepository {
             .bind(&msg.channel)
             .bind(&msg.user_id)
             .bind(&msg.message_text)
-            // Insert the i64 microsecond value
             .bind(msg.timestamp)
             .bind(metadata_str)
             .execute(&self.pool)

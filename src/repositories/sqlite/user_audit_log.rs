@@ -5,6 +5,7 @@ use crate::Error;
 use async_trait::async_trait;
 use chrono::{NaiveDateTime, Utc};
 use uuid::Uuid;
+use crate::utils::time::{to_epoch, from_epoch};
 
 /// Reflects one row in the `user_audit_log` table
 #[derive(Debug, Clone)]
@@ -80,7 +81,7 @@ impl UserAuditLogRepository for SqliteUserAuditLogRepository {
             .bind(&entry.old_value)
             .bind(&entry.new_value)
             .bind(&entry.changed_by)
-            .bind(entry.timestamp)
+            .bind(to_epoch(entry.timestamp))
             .bind(&entry.metadata)
             .execute(&self.pool)
             .await?;
@@ -110,7 +111,7 @@ impl UserAuditLogRepository for SqliteUserAuditLogRepository {
                 old_value: r.try_get("old_value")?,
                 new_value: r.try_get("new_value")?,
                 changed_by: r.try_get("changed_by")?,
-                timestamp: r.try_get("timestamp")?,
+                timestamp: from_epoch(r.try_get::<i64, _>("timestamp")?),
                 metadata: r.try_get("metadata")?,
             }))
         } else {
@@ -147,7 +148,7 @@ impl UserAuditLogRepository for SqliteUserAuditLogRepository {
                 old_value: r.try_get("old_value")?,
                 new_value: r.try_get("new_value")?,
                 changed_by: r.try_get("changed_by")?,
-                timestamp: r.try_get("timestamp")?,
+                timestamp: from_epoch(r.try_get::<i64, _>("timestamp")?),
                 metadata: r.try_get("metadata")?,
             });
         }

@@ -8,8 +8,8 @@ CREATE TABLE IF NOT EXISTS platform_identities (
     platform_display_name TEXT,  -- This can be nullable
     platform_roles TEXT NOT NULL,  -- JSON array of roles
     platform_data TEXT NOT NULL,  -- JSON for platform-specific data
-    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    last_updated TIMESTAMP NOT NULL,
+    created_at INTEGER NOT NULL,
+    last_updated INTEGER NOT NULL,
     FOREIGN KEY (user_id) REFERENCES users(user_id),
     UNIQUE (platform, platform_user_id)
 );

@@ -84,30 +84,30 @@ async fn test_get_or_create_user_cache_hit() -> Result<()> {
     Ok(())
 }
 
-#[tokio::test]
-async fn test_update_user_activity() -> Result<()> {
-    let manager = setup_user_manager().await?;
-    let user = manager
-        .get_or_create_user(Platform::VRChat, "vrchat_123", Some("VRChatter"))
-        .await?;
-    let old_seen = user.last_seen;
+    #[tokio::test]
+    async fn test_update_user_activity() -> Result<()> {
+        let manager = setup_user_manager().await?;
+        let user = manager
+            .get_or_create_user(Platform::VRChat, "vrchat_123", Some("VRChatter"))
+            .await?;
+        let old_seen = user.last_seen;
 
-    // Wait 1 second
-    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        // Wait 1 second
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
 
-    // Update with new username
-    manager
-        .update_user_activity(&user.user_id, Some("VRChatterNew"))
-        .await?;
+        // Update with new username
+        manager.update_user_activity(&user.user_id, Some("VRChatterNew")).await?;
 
-    let updated_user = manager
-        .get_or_create_user(Platform::VRChat, "vrchat_123", None)
-        .await?;
-    assert!(updated_user.last_seen > old_seen, "Should have a more recent last_seen");
-    assert_eq!(updated_user.global_username, Some("VRChatterNew".to_string()));
+        let updated_user = manager
+            .get_or_create_user(Platform::VRChat, "vrchat_123", None)
+            .await?;
 
-    Ok(())
-}
+        assert!(updated_user.last_seen > old_seen, "Should have a more recent last_seen");
+        assert_eq!(updated_user.global_username, Some("VRChatterNew".to_string()));
+
+        Ok(())
+    }
+
 
 #[tokio::test]
 async fn test_cache_ttl_expiration() -> Result<(), anyhow::Error> {

@@ -8,9 +8,9 @@ CREATE TABLE platform_credentials (
     primary_token TEXT NOT NULL, -- encrypted main token
     refresh_token TEXT, -- encrypted refresh token if applicable
     additional_data TEXT, -- encrypted JSON for extra auth data
-    expires_at TIMESTAMP,
-    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP NOT NULL,
+    expires_at INTEGER NOT NULL,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
     FOREIGN KEY (user_id) REFERENCES users(user_id),
     UNIQUE (platform, user_id)
 );

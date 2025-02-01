@@ -9,7 +9,7 @@ CREATE TABLE IF NOT EXISTS user_analysis_history (
     quality_score REAL NOT NULL DEFAULT 0,
     horni_score REAL NOT NULL DEFAULT 0,
     ai_notes TEXT,                        -- monthly summary from the AI
-    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    created_at INTEGER NOT NULL,
 
     FOREIGN KEY (user_id) REFERENCES users(user_id)
 );

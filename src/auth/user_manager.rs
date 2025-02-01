@@ -226,13 +226,13 @@ impl UserManager for DefaultUserManager {
         new_username: Option<&str>,
     ) -> Result<(), Error> {
         if let Some(mut user) = self.user_repo.get(user_id).await? {
-            user.last_seen = chrono::Utc::now().naive_utc();
+            user.last_seen = Utc::now().naive_utc();
             if let Some(name) = new_username {
                 user.global_username = Some(name.to_string());
             }
             self.user_repo.update(&user).await?;
 
-            // Invalidate: remove from cache so next get_or_create_user does a DB fetch
+            // Invalidate the cache so that subsequent calls re-read the updated record.
             let mut lock = self.user_cache.lock().await;
             lock.retain(|_key, cached| {
                 cached.user.user_id != user_id

@@ -2,7 +2,9 @@
 
 use std::path::{Path, PathBuf};
 use chrono::{Datelike, NaiveDate, Utc};
-use sqlx::{Row};
+use chrono::NaiveDateTime;
+use crate::utils::time::to_epoch;
+use sqlx::{Row, Executor};
 use uuid::Uuid;
 use tracing::info;
 
@@ -203,7 +205,16 @@ pub async fn archive_one_month_no_attach(
     end_ts: &str,
     archive_path: &Path
 ) -> Result<(), Error> {
-    // 1) Gather relevant rows from main DB
+    // Convert the input date strings ("YYYY-MM-DD HH:MM:SS") into NaiveDateTime,
+    // then into epoch seconds.
+    let start_dt = NaiveDateTime::parse_from_str(start_ts, "%Y-%m-%d %H:%M:%S")
+        .map_err(|e| Error::Parse(e.to_string()))?;
+    let end_dt = NaiveDateTime::parse_from_str(end_ts, "%Y-%m-%d %H:%M:%S")
+        .map_err(|e| Error::Parse(e.to_string()))?;
+    let start_epoch = to_epoch(start_dt);
+    let end_epoch = to_epoch(end_dt);
+
+    // 1) Gather relevant rows from the main DB using integer comparisons.
     let rows = sqlx::query_as::<_, ChatMessage>(r#"
         SELECT
           message_id,
@@ -214,11 +225,10 @@ pub async fn archive_one_month_no_attach(
           timestamp,
           metadata
         FROM chat_messages
-        WHERE timestamp >= strftime('%s', ?)
-          AND timestamp < strftime('%s', ?)
+        WHERE timestamp >= ? AND timestamp < ?
     "#)
-        .bind(start_ts)
-        .bind(end_ts)
+        .bind(start_epoch)
+        .bind(end_epoch)
         .fetch_all(db.pool())
         .await?;
 
@@ -226,7 +236,8 @@ pub async fn archive_one_month_no_attach(
         return Ok(());
     }
 
-    // 2) Open or create the archive DB as a separate database
+    // 2) Open (or create) the archive DB as a separate database.
+    use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
     let connect_opts = SqliteConnectOptions::new()
         .filename(archive_path)
         .create_if_missing(true);
@@ -235,7 +246,7 @@ pub async fn archive_one_month_no_attach(
         .connect_with(connect_opts)
         .await?;
 
-    // 3) Possibly create the chat_messages table if not exists
+    // 3) Create table in the archive DB if needed.
     sqlx::query(r#"
       CREATE TABLE IF NOT EXISTS chat_messages (
         message_id TEXT PRIMARY KEY,
@@ -250,8 +261,7 @@ pub async fn archive_one_month_no_attach(
         .execute(&archive_pool)
         .await?;
 
-    // 4) Insert the rows into the archive DB
-    // Optionally wrap in a transaction for performance
+    // 4) Insert the rows into the archive DB.
     {
         let mut tx = archive_pool.begin().await?;
         for msg in &rows {
@@ -267,24 +277,22 @@ pub async fn archive_one_month_no_attach(
                 .bind(&msg.message_text)
                 .bind(msg.timestamp)
                 .bind(&msg.metadata)
-                .execute(&mut *tx)  // note &mut *tx
+                .execute(&mut *tx)  // Now, &mut tx implements Executor because we imported sqlx::Executor.
                 .await?;
         }
         tx.commit().await?;
     }
 
-    // 5) Delete from main
+    // 5) Delete the rows from the main DB.
     sqlx::query(r#"
       DELETE FROM chat_messages
-      WHERE timestamp >= strftime('%s', ?)
-        AND timestamp < strftime('%s', ?)
+      WHERE timestamp >= ? AND timestamp < ?
     "#)
-        .bind(start_ts)
-        .bind(end_ts)
+        .bind(start_epoch)
+        .bind(end_epoch)
         .execute(db.pool())
         .await?;
 
-    // 6) Optionally close the archive DB
     archive_pool.close().await;
 
     Ok(())

@@ -13,7 +13,7 @@ pub mod plugins;
 pub mod eventbus;
 pub mod cache;
 pub mod services;
-
+pub mod utils;
 
 pub use db::Database;
 pub use error::Error;

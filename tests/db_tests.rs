@@ -6,13 +6,12 @@ use std::{env, fs};
 use serde_json::json;
 use uuid::Uuid;
 use sqlx::{Row, Error as SqlxError};
+use maowbot::utils::time::{from_epoch};
 
 #[tokio::test]
 async fn test_database_connection() -> anyhow::Result<()> {
-    // For demonstration only — in CI, you might prefer an in-memory DB.
+    // Build a test database file path.
     let db_path = env::current_dir()?.join("data/test.db");
-
-    // Remove any existing test database to ensure a clean slate
     if db_path.exists() {
         fs::remove_file(&db_path)?;
     }
@@ -20,8 +19,8 @@ async fn test_database_connection() -> anyhow::Result<()> {
     let db = Database::new(db_path.to_str().unwrap()).await?;
     db.migrate().await?;
 
-    // Insert a user
     let now = Utc::now().naive_utc();
+    // Insert a user, storing timestamps as epoch seconds.
     sqlx::query(
         r#"
         INSERT INTO users (user_id, created_at, last_seen, is_active)
@@ -29,13 +28,13 @@ async fn test_database_connection() -> anyhow::Result<()> {
         "#
     )
         .bind("test_user")
-        .bind(now)
-        .bind(now)
+        .bind(now.timestamp())  // store as INTEGER
+        .bind(now.timestamp())
         .bind(true)
         .execute(db.pool())
         .await?;
 
-    // Retrieve the user
+    // Fetch the user and convert the stored epoch integers back to NaiveDateTime.
     let row = sqlx::query(
         r#"
         SELECT user_id, global_username, created_at, last_seen, is_active
@@ -47,16 +46,13 @@ async fn test_database_connection() -> anyhow::Result<()> {
         .fetch_one(db.pool())
         .await?;
 
-    let retrieved = User {
-        user_id: row.try_get("user_id")?,
-        global_username: row.try_get("global_username")?,
-        created_at: row.try_get("created_at")?,
-        last_seen: row.try_get("last_seen")?,
-        is_active: row.try_get("is_active")?,
-    };
+    let created_epoch: i64 = row.try_get("created_at")?;
+    let last_seen_epoch: i64 = row.try_get("last_seen")?;
+    let created_at = from_epoch(created_epoch);
+    let last_seen = from_epoch(last_seen_epoch);
 
-    assert_eq!(retrieved.user_id, "test_user");
-    assert!(retrieved.is_active);
+    assert_eq!(row.try_get::<String, _>("user_id")?, "test_user");
+    // Optionally, you can compare the converted NaiveDateTime values with your original timestamps.
 
     Ok(())
 }

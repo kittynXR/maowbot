@@ -3,6 +3,7 @@ use crate::Error;
 use async_trait::async_trait;
 use chrono::{NaiveDateTime, Utc};
 use uuid::Uuid;
+use crate::utils::time::{to_epoch, from_epoch};
 
 /// Reflects one row in the `link_requests` table
 #[derive(Debug, Clone)]
@@ -81,8 +82,8 @@ impl LinkRequestsRepository for SqliteLinkRequestsRepository {
             .bind(&req.target_platform_user_id)
             .bind(&req.link_code)
             .bind(&req.status)
-            .bind(req.created_at)
-            .bind(req.updated_at)
+            .bind(to_epoch(req.created_at))
+            .bind(to_epoch(req.updated_at))
             .execute(&self.pool)
             .await?;
         Ok(())
@@ -115,8 +116,8 @@ impl LinkRequestsRepository for SqliteLinkRequestsRepository {
                 target_platform_user_id: r.try_get("target_platform_user_id")?,
                 link_code: r.try_get("link_code")?,
                 status: r.try_get("status")?,
-                created_at: r.try_get("created_at")?,
-                updated_at: r.try_get("updated_at")?,
+                created_at: from_epoch(r.try_get::<i64, _>("created_at")?),
+                updated_at: from_epoch(r.try_get::<i64, _>("updated_at")?),
             }))
         } else {
             Ok(None)
@@ -143,7 +144,7 @@ impl LinkRequestsRepository for SqliteLinkRequestsRepository {
             .bind(&req.target_platform_user_id)
             .bind(&req.link_code)
             .bind(&req.status)
-            .bind(now)
+            .bind(to_epoch(now))
             .bind(&req.link_request_id)
             .execute(&self.pool)
             .await?;
@@ -152,9 +153,7 @@ impl LinkRequestsRepository for SqliteLinkRequestsRepository {
     }
 
     async fn delete_link_request(&self, link_request_id: &str) -> Result<(), Error> {
-        sqlx::query(
-            "DELETE FROM link_requests WHERE link_request_id = ?"
-        )
+        sqlx::query("DELETE FROM link_requests WHERE link_request_id = ?")
             .bind(link_request_id)
             .execute(&self.pool)
             .await?;

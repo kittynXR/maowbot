@@ -9,6 +9,7 @@ use maowbot::{
 use chrono::Utc;
 use serde_json::json;
 use uuid::Uuid;
+use maowbot::utils::time::{to_epoch, from_epoch};
 
 async fn setup_test_db() -> Database {
     let db = Database::new(":memory:").await.unwrap();
@@ -30,27 +31,24 @@ async fn test_user_repository() -> anyhow::Result<()> {
         is_active: true,
     };
 
-    // create
     repo.create(&user).await?;
-
-    // get
     let retrieved = repo.get(&user.user_id).await?.expect("User should exist");
     assert_eq!(user.user_id, retrieved.user_id);
-    assert!(retrieved.is_active);
+    assert_eq!(retrieved.is_active, true);
+    // Verify timestamps by converting to epoch seconds.
+    assert_eq!(to_epoch(user.created_at), to_epoch(retrieved.created_at));
+    assert_eq!(to_epoch(user.last_seen), to_epoch(retrieved.last_seen));
 
-    // update
+    // Update user.
     let mut updated_user = user.clone();
     updated_user.is_active = false;
     repo.update(&updated_user).await?;
-
     let retrieved = repo.get(&user.user_id).await?.expect("User should exist");
     assert!(!retrieved.is_active);
 
-    // delete
     repo.delete(&user.user_id).await?;
     let retrieved = repo.get(&user.user_id).await?;
     assert!(retrieved.is_none());
-
     Ok(())
 }
 
@@ -60,23 +58,21 @@ async fn test_platform_identity_repository() -> anyhow::Result<()> {
     let repo = PlatformIdentityRepository::new(db.pool().clone());
 
     let now = Utc::now().naive_utc();
-
-    // Must create the user row first because platform_identities.user_id references users.user_id
-    sqlx::query!(
+    // Create the user first.
+    sqlx::query(
         r#"INSERT INTO users (user_id, created_at, last_seen, is_active)
-        VALUES (?, ?, ?, ?)"#,
-        "test_user",
-        now,
-        now,
-        true
+        VALUES (?, ?, ?, ?)"#
     )
+        .bind("test_user")
+        .bind(now.timestamp())
+        .bind(now.timestamp())
+        .bind(true)
         .execute(db.pool())
         .await?;
 
-    // Then create the platform identity
     let identity = PlatformIdentity {
         platform_identity_id: Uuid::new_v4().to_string(),
-        user_id: "test_user".to_string(),  // reference the user
+        user_id: "test_user".to_string(),
         platform: Platform::Twitch,
         platform_user_id: "twitch_123".to_string(),
         platform_username: "testuser".to_string(),
@@ -89,37 +85,27 @@ async fn test_platform_identity_repository() -> anyhow::Result<()> {
         last_updated: now,
     };
 
-    // create
     repo.create(&identity).await?;
-
-    // get
     let retrieved = repo.get(&identity.platform_identity_id).await?
         .expect("Platform identity should exist");
     assert_eq!(identity.platform_identity_id, retrieved.platform_identity_id);
     assert_eq!(identity.platform_user_id, retrieved.platform_user_id);
 
-    // get_by_platform
-    let by_platform = repo
-        .get_by_platform(Platform::Twitch, &identity.platform_user_id)
-        .await?
+    let by_platform = repo.get_by_platform(Platform::Twitch, &identity.platform_user_id).await?
         .expect("Platform identity should exist");
     assert_eq!(identity.platform_identity_id, by_platform.platform_identity_id);
 
-    // get_all_for_user
     let user_identities = repo.get_all_for_user(&identity.user_id).await?;
     assert_eq!(user_identities.len(), 1);
     assert_eq!(user_identities[0].platform_identity_id, identity.platform_identity_id);
 
-    // update
     let mut updated_identity = identity.clone();
     updated_identity.platform_display_name = Some("Updated Test User".to_string());
     repo.update(&updated_identity).await?;
-
     let retrieved = repo.get(&identity.platform_identity_id).await?
         .expect("Platform identity should exist");
     assert_eq!(retrieved.platform_display_name, Some("Updated Test User".to_string()));
 
-    // delete
     repo.delete(&identity.platform_identity_id).await?;
     let retrieved = repo.get(&identity.platform_identity_id).await?;
     assert!(retrieved.is_none());

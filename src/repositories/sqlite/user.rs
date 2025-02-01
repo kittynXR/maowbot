@@ -1,22 +1,23 @@
-use super::*;
+// src/repositories/sqlite/user.rs
+
+use crate::utils::time::{to_epoch, from_epoch, current_epoch};
 use crate::models::User;
-use crate::repositories::Repository;
 use crate::Error;
-use chrono::NaiveDateTime;
-use sqlx::{Pool, Sqlite, Row};
+use sqlx::Row;
 
 pub struct UserRepository {
-    pool: Pool<Sqlite>
+    pub pool: sqlx::Pool<sqlx::Sqlite>,
 }
 
 impl UserRepository {
-    pub fn new(pool: Pool<Sqlite>) -> Self {
+    /// Constructor for UserRepository.
+    pub fn new(pool: sqlx::Pool<sqlx::Sqlite>) -> Self {
         Self { pool }
     }
 }
 
 #[async_trait::async_trait]
-impl Repository<User> for UserRepository {
+impl crate::repositories::Repository<User> for UserRepository {
     async fn create(&self, user: &User) -> Result<(), Error> {
         sqlx::query(
             r#"
@@ -25,8 +26,8 @@ impl Repository<User> for UserRepository {
             "#
         )
             .bind(&user.user_id)
-            .bind(user.created_at)
-            .bind(user.last_seen)
+            .bind(current_epoch())
+            .bind(current_epoch())
             .bind(user.is_active)
             .bind(&user.global_username)
             .execute(&self.pool)
@@ -37,12 +38,7 @@ impl Repository<User> for UserRepository {
     async fn get(&self, id: &str) -> Result<Option<User>, Error> {
         let row = sqlx::query(
             r#"
-            SELECT
-                user_id,
-                global_username,
-                created_at,
-                last_seen,
-                is_active
+            SELECT user_id, global_username, created_at, last_seen, is_active
             FROM users
             WHERE user_id = ?
             "#
@@ -55,8 +51,8 @@ impl Repository<User> for UserRepository {
             Ok(Some(User {
                 user_id: r.try_get("user_id")?,
                 global_username: r.try_get("global_username")?,
-                created_at: r.try_get("created_at")?,
-                last_seen: r.try_get("last_seen")?,
+                created_at: from_epoch(r.try_get::<i64, _>("created_at")?),
+                last_seen: from_epoch(r.try_get::<i64, _>("last_seen")?),
                 is_active: r.try_get("is_active")?,
             }))
         } else {
@@ -68,15 +64,15 @@ impl Repository<User> for UserRepository {
         sqlx::query(
             r#"
             UPDATE users
-            SET last_seen = ?,
-                is_active = ?,
-                global_username = ?
+            SET global_username = ?,
+                last_seen = ?,
+                is_active = ?
             WHERE user_id = ?
             "#
         )
-            .bind(user.last_seen)
-            .bind(user.is_active)
             .bind(&user.global_username)
+            .bind(to_epoch(user.last_seen))
+            .bind(user.is_active)
             .bind(&user.user_id)
             .execute(&self.pool)
             .await?;

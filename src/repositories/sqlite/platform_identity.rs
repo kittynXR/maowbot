@@ -6,6 +6,7 @@ use crate::repositories::Repository;
 use crate::Error;
 use sqlx::{Pool, Sqlite, Row};
 use serde_json;
+use crate::utils::time::{to_epoch, from_epoch};
 
 pub struct PlatformIdentityRepository {
     pool: Pool<Sqlite>
@@ -55,8 +56,8 @@ impl PlatformIdentityRepository {
                 platform_display_name: r.try_get("platform_display_name")?,
                 platform_roles: serde_json::from_str(&roles_json)?,
                 platform_data: serde_json::from_str(&data_json)?,
-                created_at: r.try_get("created_at")?,
-                last_updated: r.try_get("last_updated")?,
+                created_at: from_epoch(r.try_get::<i64, _>("created_at")?),
+                last_updated: from_epoch(r.try_get::<i64, _>("last_updated")?),
             }))
         } else {
             Ok(None)
@@ -100,8 +101,8 @@ impl PlatformIdentityRepository {
                 platform_display_name: r.try_get("platform_display_name")?,
                 platform_roles: serde_json::from_str(&roles_json)?,
                 platform_data: serde_json::from_str(&data_json)?,
-                created_at: r.try_get("created_at")?,
-                last_updated: r.try_get("last_updated")?,
+                created_at: from_epoch(r.try_get::<i64, _>("created_at")?),
+                last_updated: from_epoch(r.try_get::<i64, _>("last_updated")?),
             });
         }
 
@@ -133,8 +134,8 @@ impl Repository<PlatformIdentity> for PlatformIdentityRepository {
             .bind(&identity.platform_display_name)
             .bind(&roles_json)
             .bind(&data_json)
-            .bind(identity.created_at)
-            .bind(identity.last_updated)
+            .bind(to_epoch(identity.created_at))
+            .bind(to_epoch(identity.last_updated))
             .execute(&self.pool)
             .await?;
 
@@ -176,8 +177,8 @@ impl Repository<PlatformIdentity> for PlatformIdentityRepository {
                 platform_display_name: r.try_get("platform_display_name")?,
                 platform_roles: serde_json::from_str(&roles_json)?,
                 platform_data: serde_json::from_str(&data_json)?,
-                created_at: r.try_get("created_at")?,
-                last_updated: r.try_get("last_updated")?,
+                created_at: from_epoch(r.try_get::<i64, _>("created_at")?),
+                last_updated: from_epoch(r.try_get::<i64, _>("last_updated")?),
             }))
         } else {
             Ok(None)
@@ -210,7 +211,7 @@ impl Repository<PlatformIdentity> for PlatformIdentityRepository {
             .bind(&identity.platform_display_name)
             .bind(roles_json)
             .bind(data_json)
-            .bind(identity.last_updated)
+            .bind(to_epoch(identity.last_updated))
             .bind(&identity.platform_identity_id)
             .execute(&self.pool)
             .await?;

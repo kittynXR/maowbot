@@ -7,7 +7,7 @@ CREATE TABLE IF NOT EXISTS chat_messages (
     channel TEXT NOT NULL,
     user_id TEXT NOT NULL,       -- references users(user_id)
     message_text TEXT NOT NULL,
-    timestamp INTEGER NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    timestamp INTEGER NOT NULL,
     metadata TEXT,               -- JSON for roles, badges, any ephemeral info
     FOREIGN KEY (user_id) REFERENCES users(user_id)
 );
@@ -19,7 +19,7 @@ CREATE INDEX IF NOT EXISTS idx_chat_messages_platform_channel_timestamp
 CREATE TABLE IF NOT EXISTS bot_events (
     event_id TEXT NOT NULL PRIMARY KEY,
     event_type TEXT NOT NULL,    -- e.g. "plugin_connected", "system_start"
-    event_timestamp TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    event_timestamp INTEGER NOT NULL,
     data TEXT                    -- JSON details
 );
 
@@ -32,7 +32,7 @@ CREATE TABLE IF NOT EXISTS plugins (
     plugin_name TEXT NOT NULL,
     plugin_version TEXT,
     install_path TEXT,           -- if in-process .so/.dll
-    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    created_at INTEGER NOT NULL,
     last_connected_at TIMESTAMP
 );
 
@@ -41,7 +41,7 @@ CREATE TABLE IF NOT EXISTS plugin_events (
     event_id TEXT NOT NULL PRIMARY KEY,
     plugin_id TEXT NOT NULL,
     event_type TEXT NOT NULL,
-    event_timestamp TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    event_timestamp INTEGER NOT NULL,
     data TEXT,                   -- JSON
     FOREIGN KEY (plugin_id) REFERENCES plugins(plugin_id)
 );
@@ -57,7 +57,7 @@ CREATE TABLE IF NOT EXISTS command_logs (
     channel TEXT,
     command_name TEXT NOT NULL,
     arguments TEXT,              -- or could be JSON
-    timestamp TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    timestamp INTEGER NOT NULL,
     FOREIGN KEY (user_id) REFERENCES users(user_id)
 );
 
@@ -71,7 +71,7 @@ CREATE TABLE IF NOT EXISTS moderation_actions (
     affected_user TEXT NOT NULL, -- references users(user_id)
     action_type TEXT NOT NULL,   -- e.g. "ban", "timeout"
     reason TEXT,
-    timestamp TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    timestamp INTEGER NOT NULL,
     FOREIGN KEY (performed_by) REFERENCES users(user_id),
     FOREIGN KEY (affected_user) REFERENCES users(user_id)
 );
@@ -99,8 +99,8 @@ CREATE TABLE IF NOT EXISTS chat_sessions (
     platform TEXT NOT NULL,
     channel TEXT NOT NULL,
     user_id TEXT NOT NULL,         -- references users(user_id)
-    joined_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    left_at TIMESTAMP,             -- set when user leaves
+    joined_at INTEGER NOT NULL,
+    left_at INTEGER NOT NULL,
     session_duration_seconds INTEGER,  -- can be updated when user leaves
     FOREIGN KEY (user_id) REFERENCES users(user_id)
 );
