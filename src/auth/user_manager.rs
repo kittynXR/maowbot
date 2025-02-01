@@ -1,12 +1,10 @@
-// File: src/auth/user_manager.rs
-
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use chrono::{DateTime, Duration, Utc};
-use tokio::sync::Mutex;
 use uuid::Uuid;
 use async_trait::async_trait;
+
+use dashmap::DashMap; // <-- Added for concurrency
 
 use crate::Error;
 use crate::models::{User, Platform, PlatformIdentity};
@@ -18,11 +16,9 @@ use crate::repositories::sqlite::{
     user_analysis::{UserAnalysisRepository, SqliteUserAnalysisRepository},
 };
 
-/// Trait describing how our bot code “manages” user data, i.e. lookups and creation.
 #[async_trait]
 pub trait UserManager: Send + Sync {
-    /// Looks up or creates a user record for `(platform, platform_user_id)`.
-    /// If not found in memory nor DB, we create a new `User` + `PlatformIdentity`.
+    /// Looks up or creates a user record for (platform, platform_user_id).
     async fn get_or_create_user(
         &self,
         platform: Platform,
@@ -30,7 +26,6 @@ pub trait UserManager: Send + Sync {
         platform_username: Option<&str>,
     ) -> Result<User, Error>;
 
-    /// Looks up or creates the user’s analysis/scoring row.
     async fn get_or_create_user_analysis(
         &self,
         user_id: &str,
@@ -56,8 +51,8 @@ pub struct DefaultUserManager {
     identity_repo: PlatformIdentityRepository,
     analysis_repo: SqliteUserAnalysisRepository,
 
-    /// Maps (Platform, platform_user_id) -> CachedUser
-    pub user_cache: Arc<Mutex<HashMap<(Platform, String), CachedUser>>>,
+    /// Concurrency-safe map: (Platform, platform_user_id) -> CachedUser
+    pub user_cache: DashMap<(Platform, String), CachedUser>,
 }
 
 /// Expire entries after 24 hours
@@ -73,7 +68,8 @@ impl DefaultUserManager {
             user_repo,
             identity_repo,
             analysis_repo,
-            user_cache: Arc::new(Mutex::new(HashMap::new())),
+            // Start empty; DashMap is concurrency-safe
+            user_cache: DashMap::new(),
         }
     }
 
@@ -83,8 +79,7 @@ impl DefaultUserManager {
         platform_user_id: &str,
         user: &User
     ) {
-        let mut lock = self.user_cache.lock().await;
-        lock.insert(
+        self.user_cache.insert(
             (platform, platform_user_id.to_string()),
             CachedUser {
                 user: user.clone(),
@@ -94,21 +89,27 @@ impl DefaultUserManager {
     }
 
     pub async fn invalidate_user_in_cache(&self, platform: Platform, platform_user_id: &str) {
-        let mut lock = self.user_cache.lock().await;
-        lock.remove(&(platform, platform_user_id.to_string()));
+        self.user_cache.remove(&(platform, platform_user_id.to_string()));
     }
 
     async fn prune_cache(&self) {
         let now = Utc::now();
-        let mut guard = self.user_cache.lock().await;
-        guard.retain(|_, cached| {
-            let age = now.signed_duration_since(cached.last_access);
-            age < Duration::seconds(CACHE_MAX_AGE_SECS)
-        });
+
+        // Since DashMap doesn't have a built-in "retain" that locks each shard only once,
+        // we gather keys that need removal, then remove them after.
+        let mut to_remove = Vec::new();
+        for entry in self.user_cache.iter() {
+            let age = now.signed_duration_since(entry.value().last_access);
+            if age >= Duration::seconds(CACHE_MAX_AGE_SECS) {
+                to_remove.push(entry.key().clone());
+            }
+        }
+        for key in to_remove {
+            self.user_cache.remove(&key);
+        }
     }
 
     /// [TEST-ONLY] Helper to forcibly set the last_access time
-    /// for an existing cache entry (platform, platform_user_id).
     #[cfg(test)]
     pub async fn test_force_last_access(
         &self,
@@ -116,10 +117,10 @@ impl DefaultUserManager {
         platform_user_id: &str,
         ago_hours: i64,
     ) -> bool {
-        use chrono::{Utc, Duration};
+        use chrono::Duration;
 
-        let mut lock = self.user_cache.lock().await;
-        if let Some(entry) = lock.get_mut(&(platform, platform_user_id.to_string())) {
+        let key = (platform, platform_user_id.to_string());
+        if let Some(mut entry) = self.user_cache.get_mut(&key) {
             entry.last_access = Utc::now() - Duration::hours(ago_hours);
             true
         } else {
@@ -136,29 +137,24 @@ impl UserManager for DefaultUserManager {
         platform_user_id: &str,
         platform_username: Option<&str>,
     ) -> Result<User, Error> {
-
-        // 1) prune old entries
+        // First prune old entries
         self.prune_cache().await;
 
-        // 2) check the in-memory cache
-        {
-            let mut cache_guard = self.user_cache.lock().await;
-            if let Some(entry) = cache_guard.get_mut(&(platform.clone(), platform_user_id.to_string())) {
-                // Found in cache => just refresh last_access & return
-                entry.last_access = Utc::now();
-                // Return a clone of the user (so we don’t hold the lock)
-                return Ok(entry.user.clone());
-            }
+        // Check the in-memory cache
+        if let Some(mut entry) = self.user_cache.get_mut(&(platform.clone(), platform_user_id.to_string())) {
+            // Found => update last_access & return
+            entry.last_access = Utc::now();
+            return Ok(entry.user.clone());
         }
 
-        // 3) If not in cache, try DB
+        // If not in cache, check DB
         let existing_ident = self
             .identity_repo
             .get_by_platform(platform.clone(), platform_user_id)
             .await?;
 
         let user = if let Some(identity) = existing_ident {
-            // found in DB => fetch user
+            // fetch user from DB
             let db_user = self
                 .user_repo
                 .get(&identity.user_id)
@@ -167,10 +163,9 @@ impl UserManager for DefaultUserManager {
 
             // Store in cache
             self.insert_into_cache(platform.clone(), platform_user_id, &db_user).await;
-
             db_user
         } else {
-            // user + identity do not exist => create
+            // not in DB => create
             let new_user_id = Uuid::new_v4().to_string();
             let now = Utc::now().naive_utc();
             let user = User {
@@ -199,9 +194,8 @@ impl UserManager for DefaultUserManager {
             // also create user_analysis row if needed
             let _analysis = self.get_or_create_user_analysis(&new_user_id).await?;
 
-            // insert to cache
+            // add to cache
             self.insert_into_cache(platform.clone(), platform_user_id, &user).await;
-
             user
         };
 
@@ -232,15 +226,17 @@ impl UserManager for DefaultUserManager {
             }
             self.user_repo.update(&user).await?;
 
-            // Invalidate the cache so that subsequent calls re-read the updated record.
-            let mut lock = self.user_cache.lock().await;
-            lock.retain(|_key, cached| {
-                cached.user.user_id != user_id
-            });
+            // Remove any matching entries from the cache so next call re-reads DB
+            let mut keys_to_remove = Vec::new();
+            for item in self.user_cache.iter() {
+                if item.value().user.user_id == user_id {
+                    keys_to_remove.push(item.key().clone());
+                }
+            }
+            for k in keys_to_remove {
+                self.user_cache.remove(&k);
+            }
         }
         Ok(())
     }
-
-
 }
-

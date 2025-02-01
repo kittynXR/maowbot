@@ -1,5 +1,3 @@
-// File: src/auth/manager.rs
-
 use std::collections::HashMap;
 use crate::auth::{AuthenticationHandler, PlatformAuthenticator};
 use crate::Error;
@@ -8,6 +6,7 @@ use crate::repositories::CredentialsRepository;
 
 pub struct AuthManager {
     credentials_repo: Box<dyn CredentialsRepository + Send + Sync + 'static>,
+    /// Keyed by `Platform`, e.g. Twitch -> TwitchAuthenticator
     authenticators: HashMap<Platform, Box<dyn PlatformAuthenticator + Send + Sync + 'static>>,
     auth_handler: Box<dyn AuthenticationHandler + Send + Sync + 'static>,
 }

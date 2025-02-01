@@ -10,11 +10,12 @@ use maowbot::{
     Error,
 };
 use async_trait::async_trait;
-use tokio::sync::Mutex;
 use std::collections::HashMap;
 use chrono::Utc;
 use maowbot::platforms::discord::auth::DiscordAuthenticator;
-use std::sync::Arc;
+
+// ---- NEW: dashmap for concurrency
+use dashmap::DashMap;
 
 #[derive(Default)]
 struct MockAuthHandler {}
@@ -24,6 +25,7 @@ impl AuthenticationHandler for MockAuthHandler {
     async fn handle_prompt(&self, prompt: AuthenticationPrompt) -> Result<AuthenticationResponse, Error> {
         match prompt {
             AuthenticationPrompt::MultipleKeys { fields, .. } => {
+                // ephemeral usage of std::collections::HashMap
                 let mut response = HashMap::new();
                 for field in &fields {
                     response.insert(field.clone(), format!("mock_{}", field));
@@ -35,16 +37,16 @@ impl AuthenticationHandler for MockAuthHandler {
     }
 }
 
+/// Replaced Arc<Mutex<HashMap<...>>> with a single DashMap
 #[derive(Default)]
 struct MockCredentialsRepository {
-    credentials: Arc<Mutex<HashMap<(Platform, String), PlatformCredential>>>,
+    credentials: DashMap<(Platform, String), PlatformCredential>,
 }
 
 #[async_trait]
 impl CredentialsRepository for MockCredentialsRepository {
     async fn store_credentials(&self, cred: &PlatformCredential) -> Result<(), Error> {
-        let mut creds = self.credentials.lock().await;
-        creds.insert(
+        self.credentials.insert(
             (cred.platform.clone(), cred.user_id.clone()),
             cred.clone()
         );
@@ -56,17 +58,17 @@ impl CredentialsRepository for MockCredentialsRepository {
         platform: &Platform,
         user_id: &str
     ) -> Result<Option<PlatformCredential>, Error> {
-        let creds = self.credentials.lock().await;
-        Ok(creds.get(&(platform.clone(), user_id.to_string())).cloned())
+        if let Some(entry) = self.credentials.get(&(platform.clone(), user_id.to_string())) {
+            Ok(Some(entry.value().clone()))
+        } else {
+            Ok(None)
+        }
     }
 
     async fn update_credentials(&self, cred: &PlatformCredential) -> Result<(), Error> {
-        let mut creds = self.credentials.lock().await;
-        if creds.contains_key(&(cred.platform.clone(), cred.user_id.clone())) {
-            creds.insert(
-                (cred.platform.clone(), cred.user_id.clone()),
-                cred.clone()
-            );
+        let key = (cred.platform.clone(), cred.user_id.clone());
+        if self.credentials.contains_key(&key) {
+            self.credentials.insert(key, cred.clone());
             Ok(())
         } else {
             Err(Error::Database(sqlx::Error::RowNotFound))
@@ -78,10 +80,11 @@ impl CredentialsRepository for MockCredentialsRepository {
         platform: &Platform,
         user_id: &str
     ) -> Result<(), Error> {
-        let mut creds = self.credentials.lock().await;
-        match creds.remove(&(platform.clone(), user_id.to_string())) {
-            Some(_) => Ok(()),
-            None => Err(Error::Database(sqlx::Error::RowNotFound))
+        let key = (platform.clone(), user_id.to_string());
+        if self.credentials.remove(&key).is_some() {
+            Ok(())
+        } else {
+            Err(Error::Database(sqlx::Error::RowNotFound))
         }
     }
 }
@@ -91,12 +94,10 @@ impl MockCredentialsRepository {
         Self::default()
     }
     pub async fn credentials_count(&self) -> usize {
-        let creds = self.credentials.lock().await;
-        creds.len()
+        self.credentials.iter().count()
     }
     pub async fn contains_credential(&self, platform: Platform, user_id: &str) -> bool {
-        let creds = self.credentials.lock().await;
-        creds.contains_key(&(platform, user_id.to_string()))
+        self.credentials.contains_key(&(platform, user_id.to_string()))
     }
 }
 

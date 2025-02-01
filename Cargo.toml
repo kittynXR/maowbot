@@ -11,6 +11,8 @@ sqlx = { version = "^0.8", features = ["sqlite","runtime-tokio", "tls-native-tls
 tokio = { version = "^1.43", features = ["full"] }
 tokio-stream = { version = "0.1.17", features = ["net"] }
 
+dashmap = "^6.1"
+
 rcgen = "^0.13"
 
 chrono = { version = "^0.4", features = ["serde"] }

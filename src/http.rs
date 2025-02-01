@@ -34,6 +34,7 @@ use reqwest;
 use std::collections::HashMap;
 use crate::Error;
 
+/// A generic trait for making HTTP requests.
 #[async_trait]
 pub trait HttpClient: Send + Sync {
     type Error: std::error::Error + Send + Sync + 'static;

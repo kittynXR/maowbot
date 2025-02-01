@@ -1,4 +1,3 @@
-// File: src/auth/mod.rs
 use async_trait::async_trait;
 use crate::Error;
 
@@ -11,7 +10,6 @@ pub use user_manager::{UserManager, DefaultUserManager};
 #[cfg(test)]
 mod user_manager_tests;
 
-// The central traits you introduced
 #[derive(Debug, Clone)]
 pub enum AuthenticationPrompt {
     Browser { url: String },
