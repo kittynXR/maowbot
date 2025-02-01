@@ -42,9 +42,9 @@ oauth2 = { version = "5.0.0", features = ["reqwest"] }
 clap = {  version = "^4.5", features = ["derive"] }
 
 # gRPC / protobuf:
-tonic = { version = "^0.10", features = ["transport", "tls"] }
-prost = "^0.12"
-prost-types = "^0.12"
+tonic = { version = "^0.12", features = ["transport", "tls"] }
+prost = "^0.13"
+prost-types = "^0.13"
 
 # --- New or updated below:
 tracing = "^0.1"
@@ -60,4 +60,5 @@ futures-core = "^0.3"
 tokio-test = "^0.4"
 
 [build-dependencies]
-tonic-build = "^0.10"
+tonic-build = "^0.12"
+prost-build = "^0.13"
