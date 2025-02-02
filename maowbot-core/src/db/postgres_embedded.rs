@@ -45,7 +45,7 @@ impl EmbeddedPg {
             host: "https://repo1.maven.org".to_string(),
             operating_system: OperationSystem::Windows,
             architecture: Architecture::Amd64,
-            version: PostgresVersion("15.2-1"),
+            version: PG_V15,
         };
 
         // Create the PgEmbed instance (async in v0.8+).
