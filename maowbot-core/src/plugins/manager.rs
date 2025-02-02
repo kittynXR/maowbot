@@ -186,7 +186,7 @@ impl PluginConnection for InProcessPluginConnection {
     async fn send(&self, response: PluginStreamResponse) -> Result<(), Error> {
         let guard = self.info.lock().await;
         if !guard.is_enabled {
-            return Ok(()); // If disabled, we skip sending.
+            return Ok(()); // If disabled, skip sending.
         }
         self.plugin.send(response).await
     }
@@ -381,9 +381,7 @@ impl PluginManager {
                 for p in lock.iter() {
                     let pi = p.info().await;
                     if pi.name == updated.name {
-                        // Optionally re-apply the same capabilities it already had:
                         p.set_capabilities(pi.capabilities.clone()).await;
-                        // Then toggle the is_enabled field:
                         p.set_enabled(enable).await;
                         break;
                     }
@@ -576,16 +574,8 @@ impl PluginManager {
 
                 // Set plugin name so it shows up properly in manager info.
                 plugin.set_name(plugin_name.clone()).await;
-                // -------------------------------------------------------------
-                // FIX: Now ensure the runtime PluginConnection is enabled if
-                // the JSON says "enabled: true":
+                // Also set the runtime "enabled" field:
                 plugin.set_enabled(is_enabled).await;
-                // -------------------------------------------------------------
-
-                // Optionally you may also re-apply existing capabilities here if needed.
-                // For now we do nothing special with that, but you *could* do:
-                //   let pi = plugin.info().await;
-                //   plugin.set_capabilities(pi.capabilities.clone()).await;
 
                 let welcome = PluginStreamResponse {
                     payload: Some(RespPayload::Welcome(WelcomeResponse {
@@ -783,6 +773,49 @@ impl PluginManager {
         };
         self.broadcast(msg, Some(PluginCapability::ReceiveChatEvents)).await;
     }
+
+    // ---------------------------------------------------
+    // NEW: remove_plugin (disables, unloads, and removes from JSON)
+    // ---------------------------------------------------
+    pub async fn remove_plugin(&self, plugin_name: &str) -> Result<(), Error> {
+        // 1) Find the plugin record by name
+        let maybe_record = {
+            let lock = self.plugin_records.lock().unwrap();
+            lock.iter().find(|r| r.name == plugin_name).cloned()
+        };
+
+        let record = match maybe_record {
+            Some(r) => r,
+            None => {
+                return Err(Error::Platform(format!("No known plugin named '{}'", plugin_name)));
+            }
+        };
+
+        // 2) If plugin is loaded in memory, stop it and remove it from the active connections
+        {
+            let mut lock = self.plugins.lock().await;
+            if let Some(pos) = lock.iter().position(|p| {
+                let pi = futures_lite::future::block_on(p.info());
+                pi.name == record.name
+            }) {
+                let plugin_arc = lock.remove(pos);
+                let _ = plugin_arc.stop().await;
+                info!("Stopped and removed in-memory plugin '{}'", record.name);
+            }
+        }
+
+        // 3) Remove from plugin_records
+        {
+            let mut lock = self.plugin_records.lock().unwrap();
+            lock.retain(|r| r.name != record.name);
+        }
+
+        // 4) Save plugin states
+        self.save_plugin_states();
+        info!("Plugin '{}' removed from JSON records.", plugin_name);
+
+        Ok(())
+    }
 }
 
 /// The Tonic gRPC service that wraps PluginManager.
@@ -849,5 +882,9 @@ impl BotApi for PluginManager {
 
     fn toggle_plugin(&self, plugin_name: &str, enable: bool) -> Result<(), Error> {
         futures_lite::future::block_on(self.toggle_plugin_async(plugin_name, enable))
+    }
+
+    fn remove_plugin(&self, plugin_name: &str) -> Result<(), Error> {
+        futures_lite::future::block_on(self.remove_plugin(plugin_name))
     }
 }

@@ -8,7 +8,6 @@ use std::any::Any;
 use std::time::SystemTime;
 
 use async_trait::async_trait;
-// Use the standard (blocking) Mutex for the TUI thread.
 use std::sync::Mutex;
 
 use maowbot_core::Error;
@@ -96,7 +95,7 @@ impl TuiPlugin {
                         println!("  help      - show this help");
                         println!("  list      - list all known plugins (with enable/disable status) and connected plugins");
                         println!("  status    - show bot status (uptime, connected plugins)");
-                        println!("  plug      - usage: plug <enable|disable> <pluginName>");
+                        println!("  plug      - usage: plug <enable|disable|remove> <pluginName>");
                         println!("  quit      - request the bot to shut down");
                     }
                     "list" => {
@@ -128,29 +127,49 @@ impl TuiPlugin {
                         }
                     }
                     "plug" => {
-                        // Usage: plug <enable|disable> <pluginName>
+                        // Usage: plug <enable|disable|remove> <pluginName>
                         if args.len() < 2 {
-                            println!("Usage: plug <enable|disable> <pluginName>");
+                            println!("Usage: plug <enable|disable|remove> <pluginName>");
                             continue;
                         }
                         let subcmd = args[0];
                         let plugin_name = args[1];
-                        let enable = match subcmd {
-                            "enable" => true,
-                            "disable" => false,
+
+                        match subcmd {
+                            "enable" | "disable" => {
+                                let enable = subcmd == "enable";
+                                if let Some(api) = bot_api_opt {
+                                    match api.toggle_plugin(plugin_name, enable) {
+                                        Ok(_) => {
+                                            println!("Plugin '{}' now {}", plugin_name,
+                                                     if enable { "ENABLED" } else { "DISABLED" });
+                                        }
+                                        Err(e) => {
+                                            println!("Error toggling plugin '{}': {:?}", plugin_name, e);
+                                        }
+                                    }
+                                } else {
+                                    println!("(TUI) Bot API not set => cannot change plugin state");
+                                }
+                            }
+                            "remove" => {
+                                // The new subcommand that removes the plugin from JSON
+                                if let Some(api) = bot_api_opt {
+                                    match api.remove_plugin(plugin_name) {
+                                        Ok(_) => {
+                                            println!("Plugin '{}' was removed from the manager/JSON.", plugin_name);
+                                        }
+                                        Err(e) => {
+                                            println!("Error removing plugin '{}': {:?}", plugin_name, e);
+                                        }
+                                    }
+                                } else {
+                                    println!("(TUI) Bot API not set => cannot remove plugin");
+                                }
+                            }
                             _ => {
-                                println!("Usage: plug <enable|disable> <pluginName>");
-                                continue;
+                                println!("Usage: plug <enable|disable|remove> <pluginName>");
                             }
-                        };
-                        if let Some(api) = bot_api_opt {
-                            // Now simply call the new toggle_plugin method.
-                            match api.toggle_plugin(plugin_name, enable) {
-                                Ok(_) => println!("Plugin '{}' now {}", plugin_name, if enable { "ENABLED" } else { "DISABLED" }),
-                                Err(e) => println!("Error toggling plugin '{}': {:?}", plugin_name, e),
-                            }
-                        } else {
-                            println!("(TUI) Bot API not set => cannot change plugin state");
                         }
                     }
                     "quit" => {
