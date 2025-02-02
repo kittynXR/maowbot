@@ -1,4 +1,4 @@
-// File: src/platforms/twitch/runtime.rs
+// File: src/platforms/twitch_helix/runtime.rs
 
 use std::sync::Arc;
 use async_trait::async_trait;

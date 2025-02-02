@@ -27,7 +27,7 @@ impl UserService {
         // ... same code ...
         let platform = match platform_name {
             "discord" => crate::models::Platform::Discord,
-            "twitch"  => crate::models::Platform::Twitch,
+            "twitch_helix"  => crate::models::Platform::Twitch,
             "vrchat"  => crate::models::Platform::VRChat,
             other => return Err(Error::Platform(format!("Unknown platform: {}", other))),
         };

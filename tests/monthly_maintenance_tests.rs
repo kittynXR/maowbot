@@ -141,8 +141,8 @@ async fn test_archive_one_month_no_attach() -> Result<(), Error> {
     sqlx::query(r#"
         INSERT INTO chat_messages (message_id, platform, channel, user_id, message_text, timestamp, metadata)
         VALUES
-          ('A','twitch','#chan','u1','HelloA',?, '{}'),
-          ('B','twitch','#chan','u2','HelloB',?, '{}')
+          ('A','twitch_helix','#chan','u1','HelloA',?, '{}'),
+          ('B','twitch_helix','#chan','u2','HelloB',?, '{}')
     "#)
         .bind(msg_ts)
         .bind(msg_ts)
@@ -200,8 +200,8 @@ async fn test_maybe_run_monthly_maintenance_integration() -> Result<(), Error> {
     sqlx::query(r#"
       INSERT INTO chat_messages (message_id, platform, channel, user_id, message_text, timestamp, metadata)
       VALUES
-        ('msg001','twitch','#chan','ua','HelloUA',?, '{}'),
-        ('msg002','twitch','#chan','ub','HelloUB',?, '{}')
+        ('msg001','twitch_helix','#chan','ua','HelloUA',?, '{}'),
+        ('msg002','twitch_helix','#chan','ub','HelloUB',?, '{}')
     "#)
         .bind(ts_jan10)
         .bind(ts_jan10)

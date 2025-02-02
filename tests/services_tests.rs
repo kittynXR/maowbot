@@ -50,14 +50,14 @@ async fn test_user_message_services_in_memory_db() -> Result<(), Error> {
 
     // 6) Use user_service to get/create a user
     let user = user_service
-        .get_or_create_user("twitch", "some_twitch_id", Some("TwitchName"))
+        .get_or_create_user("twitch_helix", "some_twitch_id", Some("TwitchName"))
         .await?;
     // Confirm user_id looks like a UUID or is non-empty
     assert_eq!(user.user_id.len(), 36, "Expected a UUID user_id");
 
     // 7) Send a new message to message_service
     message_service
-        .process_incoming_message("twitch", "channel1", &user.user_id, "Hello chat")
+        .process_incoming_message("twitch_helix", "channel1", &user.user_id, "Hello chat")
         .await?;
 
     // 8) Confirm a BotEvent::ChatMessage is published
@@ -68,7 +68,7 @@ async fn test_user_message_services_in_memory_db() -> Result<(), Error> {
     let event = maybe_event.ok_or_else(|| anyhow!("No event received from bus"))?;
     match event {
         BotEvent::ChatMessage { platform, channel, user: user_id2, text, .. } => {
-            assert_eq!(platform, "twitch");
+            assert_eq!(platform, "twitch_helix");
             assert_eq!(channel, "channel1");
             assert_eq!(user_id2, user.user_id, "Should match the user ID we passed in");
             assert_eq!(text, "Hello chat");

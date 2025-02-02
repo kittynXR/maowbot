@@ -109,7 +109,7 @@ async fn test_max_age_trim() -> Result<(), Error> {
     let now = Utc::now().naive_utc();
     // old message from 2 hours ago
     let msg_old = CachedMessage {
-        platform: "twitch".to_string(),
+        platform: "twitch_helix".to_string(),
         channel: "chanA".to_string(),
         user_id: "user_old".to_string(),
         text: "old text".to_string(),
@@ -120,7 +120,7 @@ async fn test_max_age_trim() -> Result<(), Error> {
 
     // new message
     let msg_new = CachedMessage {
-        platform: "twitch".to_string(),
+        platform: "twitch_helix".to_string(),
         channel: "chanA".to_string(),
         user_id: "user_new".to_string(),
         text: "new text".to_string(),

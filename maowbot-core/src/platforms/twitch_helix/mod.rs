@@ -1,4 +1,4 @@
-// File: src/platforms/twitch/mod.rs
+// File: src/platforms/twitch_helix/mod.rs
 
 pub mod auth;
 pub mod runtime;

@@ -1,4 +1,4 @@
-// File: src/platforms/twitch/auth.rs
+// File: src/platforms/twitch_helix/auth.rs
 
 use async_trait::async_trait;
 use chrono::Utc;

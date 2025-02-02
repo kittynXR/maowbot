@@ -3,7 +3,7 @@
 -- 1) Chat Messages
 CREATE TABLE IF NOT EXISTS chat_messages (
     message_id TEXT NOT NULL PRIMARY KEY,
-    platform TEXT NOT NULL,      -- e.g. "twitch", "discord"
+    platform TEXT NOT NULL,      -- e.g. "twitch_helix", "discord"
     channel TEXT NOT NULL,
     user_id TEXT NOT NULL,       -- references users(user_id)
     message_text TEXT NOT NULL,

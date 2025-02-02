@@ -49,7 +49,8 @@ pub trait VirtualPlatform: PlatformIntegration {
 }
 
 // Re-export submodules
-pub mod twitch;
+pub mod twitch_helix;
 pub mod discord;
 pub mod vrchat;
 pub mod manager;
+mod twitch_irc;

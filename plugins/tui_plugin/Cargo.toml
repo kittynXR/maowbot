@@ -18,4 +18,5 @@ tokio = { workspace = true }
 async-trait = "0.1"
 tracing = { workspace = true }
 futures-lite = "2.6"
+futures = "0.3.31"
 

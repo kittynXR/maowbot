@@ -22,6 +22,7 @@ pub enum Platform {
     Twitch,
     Discord,
     VRChat,
+    TwitchIRC,
 }
 
 impl fmt::Display for Platform {
@@ -30,6 +31,20 @@ impl fmt::Display for Platform {
             Platform::Twitch => write!(f, "twitch"),
             Platform::Discord => write!(f, "discord"),
             Platform::VRChat => write!(f, "vrchat"),
+            Platform::TwitchIRC => write!(f, "twitch-irc"),
+        }
+    }
+}
+
+impl FromStr for Platform {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "twitch" => Ok(Platform::Twitch),
+            "discord" => Ok(Platform::Discord),
+            "vrchat" => Ok(Platform::VRChat),
+            "twitch-irc" => Ok(Platform::TwitchIRC),
+            _ => Err(format!("Unknown platform: {}", s)),
         }
     }
 }
@@ -43,19 +58,6 @@ impl fmt::Display for CredentialType {
             CredentialType::JWT => write!(f, "jwt"),
             CredentialType::VerifiableCredential => write!(f, "vc"),
             CredentialType::Custom(s) => write!(f, "custom:{}", s),
-        }
-    }
-}
-
-impl FromStr for Platform {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.to_lowercase().as_str() {
-            "twitch" => Ok(Platform::Twitch),
-            "discord" => Ok(Platform::Discord),
-            "vrchat" => Ok(Platform::VRChat),
-            _ => Err(format!("Unknown platform: {}", s)),
         }
     }
 }

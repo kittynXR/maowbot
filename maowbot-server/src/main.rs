@@ -1,5 +1,3 @@
-// src/main.rs
-
 use clap::Parser;
 use std::time::Duration;
 use std::net::SocketAddr;
@@ -46,36 +44,41 @@ use maowbot_core::plugins::bot_api::BotApi;
 
 /// Command‑line arguments for the server.
 ///
-/// Note: the change here is that we update the default for `server_addr` so that
-/// the server will bind to 0.0.0.0 (all interfaces) rather than only 127.0.0.1.
+/// We add an `--auth` boolean flag:
 #[derive(Parser, Debug, Clone)]
 #[command(name = "maowbot")]
 #[command(author, version, about = "MaowBot - multi‑platform streaming bot with plugin system")]
 struct Args {
+    /// Mode: "server" or "client"
     #[arg(long, default_value = "server")]
     mode: String,
 
-    // Updated default: bind to all interfaces.
+    /// Address to which the server will bind
     #[arg(long, default_value = "0.0.0.0:9999")]
     server_addr: String,
 
+    /// Path to the SQLite database
     #[arg(long, default_value = "data/bot.db")]
     db_path: String,
 
+    /// Passphrase for plugin connections
     #[arg(long)]
     plugin_passphrase: Option<String>,
 
-    // We interpret this path as a path to a dynamic library .so/.dll
+    /// Path to an in‑process plugin .so/.dll (optional)
     #[arg(long)]
     in_process_plugin: Option<String>,
 
+    /// If you want to run in headless mode
     #[arg(long, default_value = "false")]
     headless: bool,
+
+    /// NEW: if present, sets `args.auth == true`
+    #[arg(long, default_value = "false")]
+    auth: bool,
 }
 
 /// Helper function to “discover” a local IP address by opening a UDP socket.
-/// (This is not a full enumeration of all interfaces but at least will add the
-/// outward‐facing IP in many cases.)
 fn get_local_ips() -> Vec<String> {
     let mut ips = Vec::new();
     if let Ok(socket) = std::net::UdpSocket::bind("0.0.0.0:0") {
@@ -90,9 +93,6 @@ fn get_local_ips() -> Vec<String> {
 }
 
 /// Utility function to load or generate self‑signed certificates.
-///
-/// The change here is that we now build a list of subject alternative names
-/// that include “localhost”, “0.0.0.0”, “127.0.0.1”, plus any local IP we can find.
 fn load_or_generate_certs() -> Result<Identity, Error> {
     let cert_folder = "certs";
     let cert_path = format!("{}/server.crt", cert_folder);
@@ -104,7 +104,6 @@ fn load_or_generate_certs() -> Result<Identity, Error> {
         return Ok(Identity::from_pem(cert_pem, key_pem));
     }
 
-    // Build the list of alternative names.
     let mut alt_names = vec![
         "localhost".to_string(),
         "0.0.0.0".to_string(),
@@ -128,7 +127,8 @@ async fn main() -> Result<(), Error> {
     init_tracing();
 
     let args = Args::parse();
-    info!("MaowBot starting. mode={}, headless={}", args.mode, args.headless);
+    info!("MaowBot starting. mode={}, headless={}, auth={}",
+          args.mode, args.headless, args.auth);
 
     match args.mode.as_str() {
         "server" => run_server(args).await?,
@@ -151,11 +151,15 @@ fn init_tracing() {
 }
 
 /// The server logic.
-/// (No changes below except that the TLS cert now covers more addresses.)
 pub async fn run_server(args: Args) -> Result<(), Error> {
     let event_bus = Arc::new(EventBus::new());
     let db = Database::new(&args.db_path).await?;
     db.migrate().await?;
+
+    // Example usage if you wanted to do something special if `--auth` is set:
+    if args.auth {
+        info!("`--auth` argument was provided => special logic here, if needed.");
+    }
 
     // Run monthly maintenance as an example.
     {
@@ -241,7 +245,7 @@ pub async fn run_server(args: Args) -> Result<(), Error> {
 
     let server_future = Server::builder()
         .tls_config(tls_config)?
-        .add_service(maowbot_proto::plugs::plugin_service_server::PluginServiceServer::new(service))
+        .add_service(PluginServiceServer::new(service))
         .serve(addr);
 
     let eb_clone = event_bus.clone();

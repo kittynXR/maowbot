@@ -2,7 +2,7 @@
 CREATE TABLE IF NOT EXISTS link_requests (
     link_request_id TEXT NOT NULL PRIMARY KEY,
     requesting_user_id TEXT NOT NULL,      -- references users(user_id)
-    target_platform TEXT,                  -- e.g. "twitch", "discord", "vrchat"
+    target_platform TEXT,                  -- e.g. "twitch_helix", "discord", "vrchat"
     target_platform_user_id TEXT,          -- e.g. "twitch_12345"
     link_code TEXT,                        -- ephemeral code for user to confirm
     status TEXT NOT NULL DEFAULT 'pending',-- "pending", "approved", "denied", etc

@@ -94,7 +94,7 @@ async fn test_platform_identity() -> Result<(), Error> {
 
     // Create a platform identity
     let platform_identity_id = Uuid::new_v4().to_string();
-    let platform_str = "twitch";
+    let platform_str = "twitch_helix";
     let roles_json = serde_json::to_string(&vec!["broadcaster"]).unwrap();
     let data_json = json!({ "profile_image_url": "https://example.com/image.jpg" }).to_string();
 

@@ -11,14 +11,14 @@ use crate::services::user_service::UserService;
 use crate::Error;
 
 use crate::platforms::discord::runtime::{DiscordPlatform};
-use crate::platforms::twitch::runtime::{TwitchPlatform};
+use crate::platforms::twitch_helix::runtime::{TwitchPlatform};
 use crate::platforms::vrchat::runtime::{VRChatPlatform};
 
 /// PlatformManager is responsible for starting/stopping each platform runtime,
 /// then funneling all inbound messages into our `MessageService`.
 pub struct PlatformManager {
     /// Each runtime might have its own handle so we can stop them if needed
-    // e.g. discord: DiscordPlatform, twitch: TwitchPlatform, etc.
+    // e.g. discord: DiscordPlatform, twitch_helix: TwitchPlatform, etc.
 
     /// Shared message service
     message_svc: Arc<MessageService>,
@@ -123,7 +123,7 @@ impl PlatformManager {
 
             // In a real app, we might have an event loop reading chat messages
             while let Some(twitch_msg) = platform.next_message_event().await {
-                let platform_name = "twitch";
+                let platform_name = "twitch_helix";
                 let channel = twitch_msg.channel.clone();
                 let user_platform_id = twitch_msg.user_id.clone();
                 let text = twitch_msg.text.clone();

@@ -1,3 +1,5 @@
+mod postgres_embedded;
+
 use sqlx::sqlite::{SqlitePoolOptions, SqliteConnectOptions};
 use sqlx::{Pool, Sqlite, SqlitePool};
 use anyhow::Result;
