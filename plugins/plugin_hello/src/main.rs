@@ -1,32 +1,60 @@
+use clap::Parser;
 use tokio::signal;
 use tonic::transport::{Channel, Certificate, ClientTlsConfig};
 use maowbot_proto::plugs::plugin_service_client::PluginServiceClient;
-use maowbot_proto::plugs::{PluginStreamRequest, plugin_stream_request::Payload as ReqPayload, plugin_stream_response::Payload as RespPayload, Hello, LogMessage, RequestCaps, PluginCapability};
+use maowbot_proto::plugs::{
+    PluginStreamRequest,
+    plugin_stream_request::Payload as ReqPayload,
+    plugin_stream_response::Payload as RespPayload,
+    Hello, LogMessage, RequestCaps, PluginCapability
+};
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 use futures_util::StreamExt;
 use std::error::Error;
 
+/// Command-line arguments for plugin_hello
+#[derive(Parser, Debug)]
+#[command(author, version, about="plugin_hello gRPC plugin example")]
+struct HelloArgs {
+    /// The server IP:port to connect to over TLS
+    #[arg(long, default_value = "localhost:9999")]
+    server_ip: String,
+
+    /// If your bot server requires a plugin passphrase, supply it here
+    #[arg(long, default_value = "")]
+    passphrase: String,
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
+    let args = HelloArgs::parse();
+
+    // Load the same self-signed cert that the server wrote to certs/server.crt
     let ca_cert = tokio::fs::read("certs/server.crt").await?;
     let ca_cert = Certificate::from_pem(ca_cert);
     let tls_config = ClientTlsConfig::new()
         .ca_certificate(ca_cert)
+        // We can leave domain_name as "localhost" or omit it; gRPC uses SNI.
         .domain_name("localhost");
 
-    let channel = Channel::from_shared("https://localhost:9999")?
+    // Build a channel to e.g. "https://192.168.1.25:9999" or "https://localhost:9999"
+    let server_url = format!("https://{}", args.server_ip);
+    println!("plugin_hello connecting to {}", server_url);
+
+    let channel = Channel::from_shared(server_url)?
         .tls_config(tls_config)?
         .connect()
         .await?;
 
     let mut client = PluginServiceClient::new(channel);
 
+    // We set up a channel for sending requests to the server stream:
     let (tx, rx) = mpsc::channel::<PluginStreamRequest>(10);
     let in_stream = ReceiverStream::new(rx);
     let mut outbound = client.start_session(in_stream).await?.into_inner();
 
-    // Spawn a task to listen for server -> plugin messages.
+    // Spawn a task to listen for server -> plugin messages
     tokio::spawn(async move {
         while let Some(Ok(response)) = outbound.next().await {
             if let Some(payload) = response.payload {
@@ -44,12 +72,16 @@ async fn main() -> Result<(), Box<dyn Error>> {
                         );
                     },
                     RespPayload::StatusResponse(status) => {
-                        println!("Status => connected_plugins={:?}, uptime={}",
-                                 status.connected_plugins, status.server_uptime);
+                        println!(
+                            "Status => connected_plugins={:?}, uptime={}",
+                            status.connected_plugins, status.server_uptime
+                        );
                     },
                     RespPayload::CapabilityResponse(caps) => {
-                        println!("CapabilityResponse => granted={:?}, denied={:?}",
-                                 caps.granted, caps.denied);
+                        println!(
+                            "CapabilityResponse => granted={:?}, denied={:?}",
+                            caps.granted, caps.denied
+                        );
                     },
                     RespPayload::AuthError(err) => {
                         eprintln!("AuthError => {}", err.reason);
@@ -61,23 +93,21 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 }
             }
         }
-        println!("Server closed plugin stream.");
+        println!("Server closed plugin stream or disconnected.");
     });
 
-    // Send the Hello message.
-    let passphrase = ""; // If your server requires one, put it here
+    // Send Hello with optional passphrase
     tx.send(PluginStreamRequest {
         payload: Some(ReqPayload::Hello(Hello {
             plugin_name: "HelloGrpc".to_string(),
-            passphrase: passphrase.to_string(),
+            passphrase: args.passphrase.clone(),
         })),
     }).await?;
 
+    // Request minimal capability (just to see how the server responds):
     tx.send(PluginStreamRequest {
         payload: Some(ReqPayload::RequestCaps(RequestCaps {
-            requested: vec![
-                PluginCapability::ReceiveChatEvents as i32,
-            ],
+            requested: vec![PluginCapability::ReceiveChatEvents as i32],
         })),
     }).await?;
 
@@ -88,7 +118,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         })),
     }).await?;
 
-    println!("Connected. Press Ctrl+C to exit.");
+    println!("Plugin connected. Press Ctrl+C to exit or kill the process...");
 
     // Wait here until Ctrl+C
     signal::ctrl_c().await?;

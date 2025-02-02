@@ -24,3 +24,4 @@ tonic = { workspace = true }
 tokio-stream = { workspace = true }
 futures-util = { workspace = true }
 rcgen = { workspace = true }
+if-addrs = "^0.13"

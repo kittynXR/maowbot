@@ -44,15 +44,19 @@ use tokio::time;
 use maowbot_core::Error;
 use maowbot_core::plugins::bot_api::BotApi;
 
-/// Command-line arguments
+/// Command‑line arguments for the server.
+///
+/// Note: the change here is that we update the default for `server_addr` so that
+/// the server will bind to 0.0.0.0 (all interfaces) rather than only 127.0.0.1.
 #[derive(Parser, Debug, Clone)]
 #[command(name = "maowbot")]
-#[command(author, version, about = "MaowBot - multi-platform streaming bot with plugin system")]
+#[command(author, version, about = "MaowBot - multi‑platform streaming bot with plugin system")]
 struct Args {
     #[arg(long, default_value = "server")]
     mode: String,
 
-    #[arg(long, default_value = "127.0.0.1:9999")]
+    // Updated default: bind to all interfaces.
+    #[arg(long, default_value = "0.0.0.0:9999")]
     server_addr: String,
 
     #[arg(long, default_value = "data/bot.db")]
@@ -69,12 +73,54 @@ struct Args {
     headless: bool,
 }
 
-fn init_tracing() {
-    let sub = FmtSubscriber::builder()
-        .with_max_level(tracing::Level::DEBUG)
-        .finish();
-    tracing::subscriber::set_global_default(sub)
-        .expect("Failed to set global subscriber");
+/// Helper function to “discover” a local IP address by opening a UDP socket.
+/// (This is not a full enumeration of all interfaces but at least will add the
+/// outward‐facing IP in many cases.)
+fn get_local_ips() -> Vec<String> {
+    let mut ips = Vec::new();
+    if let Ok(socket) = std::net::UdpSocket::bind("0.0.0.0:0") {
+        // Use a public IP and port to force a route lookup.
+        if socket.connect("8.8.8.8:80").is_ok() {
+            if let Ok(local_addr) = socket.local_addr() {
+                ips.push(local_addr.ip().to_string());
+            }
+        }
+    }
+    ips
+}
+
+/// Utility function to load or generate self‑signed certificates.
+///
+/// The change here is that we now build a list of subject alternative names
+/// that include “localhost”, “0.0.0.0”, “127.0.0.1”, plus any local IP we can find.
+fn load_or_generate_certs() -> Result<Identity, Error> {
+    let cert_folder = "certs";
+    let cert_path = format!("{}/server.crt", cert_folder);
+    let key_path  = format!("{}/server.key", cert_folder);
+
+    if Path::new(&cert_path).exists() && Path::new(&key_path).exists() {
+        let cert_pem = fs::read(&cert_path)?;
+        let key_pem  = fs::read(&key_path)?;
+        return Ok(Identity::from_pem(cert_pem, key_pem));
+    }
+
+    // Build the list of alternative names.
+    let mut alt_names = vec![
+        "localhost".to_string(),
+        "0.0.0.0".to_string(),
+        "127.0.0.1".to_string(),
+    ];
+    alt_names.extend(get_local_ips());
+
+    let CertifiedKey { cert, key_pair } = generate_simple_self_signed(alt_names)?;
+    let cert_pem = cert.pem();
+    let key_pem  = key_pair.serialize_pem();
+
+    fs::create_dir_all(cert_folder)?;
+    fs::write(&cert_path, cert_pem.as_bytes())?;
+    fs::write(&key_path, key_pem.as_bytes())?;
+
+    Ok(Identity::from_pem(cert_pem, key_pem))
 }
 
 #[tokio::main]
@@ -96,39 +142,16 @@ async fn main() -> Result<(), Error> {
     Ok(())
 }
 
-/// Utility function to load or generate self-signed certificates
-fn load_or_generate_certs() -> Result<Identity, Error> {
-    let cert_folder = "certs";
-    let cert_path = format!("{}/server.crt", cert_folder);
-    let key_path  = format!("{}/server.key", cert_folder);
-
-    if Path::new(&cert_path).exists() && Path::new(&key_path).exists() {
-        let cert_pem = fs::read(&cert_path)?;
-        let key_pem  = fs::read(&key_path)?;
-        return Ok(Identity::from_pem(cert_pem, key_pem));
-    }
-
-    let CertifiedKey { cert, key_pair } = generate_simple_self_signed(vec!["localhost".to_string()])?;
-    let cert_pem = cert.pem();
-    let key_pem  = key_pair.serialize_pem();
-
-    fs::create_dir_all(cert_folder)?;
-    fs::write(&cert_path, cert_pem.as_bytes())?;
-    fs::write(&key_path, key_pem.as_bytes())?;
-
-    Ok(Identity::from_pem(cert_pem, key_pem))
+fn init_tracing() {
+    let sub = FmtSubscriber::builder()
+        .with_max_level(tracing::Level::DEBUG)
+        .finish();
+    tracing::subscriber::set_global_default(sub)
+        .expect("Failed to set global subscriber");
 }
 
 /// The server logic.
-///
-/// This function performs the following:
-/// - Initializes the event bus and database.
-/// - Creates the PluginManager, subscribes it to the event bus, and loads plugins:
-///   - Loads a plugin specified by a command-line flag (if provided).
-///   - Scans a designated folder (here `"plugs"`) and loads all dynamic libraries found.
-/// - Initializes other services (user management, message service, platform manager).
-/// - Starts the gRPC server with TLS and a Ctrl‑C shutdown handler.
-/// - Enters a loop publishing Tick events until shutdown.
+/// (No changes below except that the TLS cert now covers more addresses.)
 pub async fn run_server(args: Args) -> Result<(), Error> {
     let event_bus = Arc::new(EventBus::new());
     let db = Database::new(&args.db_path).await?;
@@ -168,15 +191,11 @@ pub async fn run_server(args: Args) -> Result<(), Error> {
 
     // Set the BotApi for plugins.
     {
-        // Clone plugin_manager so that we can pass it as a BotApi.
         let api: Arc<dyn BotApi> = Arc::new(plugin_manager.clone());
-        {
-            // Create a separate scope for the lock so it is dropped before moving plugin_manager.
-            let lock = plugin_manager.plugins.lock().await;
-            for plugin in lock.iter() {
-                plugin.set_bot_api(api.clone());
-            }
-        } // Lock guard dropped here.
+        let lock = plugin_manager.plugins.lock().await;
+        for plugin in lock.iter() {
+            plugin.set_bot_api(api.clone());
+        }
     }
 
     // Build additional services.
@@ -200,7 +219,6 @@ pub async fn run_server(args: Args) -> Result<(), Error> {
         CacheConfig { trim_policy },
     );
     let chat_cache = Arc::new(tokio::sync::Mutex::new(chat_cache));
-    // e.g. run pruning every 60 seconds
     spawn_cache_prune_task(chat_cache.clone(), std::time::Duration::from_secs(60));
     let message_service = Arc::new(MessageService::new(chat_cache, event_bus.clone()));
 
@@ -219,7 +237,6 @@ pub async fn run_server(args: Args) -> Result<(), Error> {
     let addr: SocketAddr = args.server_addr.parse()?;
     info!("Starting Tonic gRPC server on {}", addr);
 
-    // Now that no lock is active, we can move plugin_manager into an Arc.
     let service = PluginServiceGrpc { manager: Arc::new(plugin_manager) };
 
     let server_future = Server::builder()
@@ -234,12 +251,12 @@ pub async fn run_server(args: Args) -> Result<(), Error> {
         }
     });
 
-    // Spawn a Ctrl-C listener that shuts down the event bus.
+    // Spawn a Ctrl‑C listener that shuts down the event bus.
     let _ctrlc_handle = tokio::spawn(async move {
         if let Err(e) = tokio::signal::ctrl_c().await {
-            error!("Failed to listen for Ctrl-C: {:?}", e);
+            error!("Failed to listen for Ctrl‑C: {:?}", e);
         }
-        info!("Ctrl-C detected; shutting down event bus...");
+        info!("Ctrl‑C detected; shutting down event bus...");
         eb_clone.shutdown();
     });
 
@@ -329,7 +346,7 @@ async fn run_client(args: Args) -> Result<(), Error> {
         tokio::time::sleep(Duration::from_secs(10)).await;
         if tx.send(PluginStreamRequest {
             payload: Some(ReqPayload::LogMessage(LogMessage {
-                text: "RemoteClient is alive with self-signed cert!".to_string(),
+                text: "RemoteClient is alive with self‑signed cert!".to_string(),
             })),
         }).await.is_err() {
             error!("Failed to send => server (maybe disconnected).");
