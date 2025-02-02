@@ -1,7 +1,9 @@
 // maowbot-core/src/db/mod.rs
-pub mod postgres_embedded;
 
-use sqlx::postgres::{PgPoolOptions};
+// Remove or comment out the old line:
+// pub mod postgres_embedded;
+
+use sqlx::postgres::PgPoolOptions;
 use sqlx::{Pool, Postgres};
 use crate::Error;
 use anyhow::Result;
@@ -14,7 +16,6 @@ pub struct Database {
 impl Database {
     /// Create a new Database connection.
     pub async fn new(database_url: &str) -> Result<Self, Error> {
-        // Example: connect to Postgres with a small pool size, just a demonstration
         let pool = PgPoolOptions::new()
             .max_connections(5)
             .connect(database_url)
@@ -36,7 +37,6 @@ impl Database {
         &self.pool
     }
 
-    /// Optional: if you want a from_pool constructor for tests
     pub fn from_pool(pool: Pool<Postgres>) -> Self {
         Self { pool }
     }

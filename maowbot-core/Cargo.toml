@@ -55,8 +55,5 @@ futures-core = { workspace = true }
 
 libloading = { workspace = true }
 
-pg-embed = { workspace = true }
-tokio-postgres = { workspace = true }
-
 [dev-dependencies]
 tokio-test = { workspace = true }

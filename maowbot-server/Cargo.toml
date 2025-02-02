@@ -27,5 +27,4 @@ futures-util = { workspace = true }
 rcgen = { workspace = true }
 if-addrs = "^0.13"
 
-pg-embed = { workspace = true }
-tokio-postgres = { workspace = true }
+format = "^0.2"

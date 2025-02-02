@@ -6,10 +6,9 @@ use std::fs;
 use std::path::Path;
 use tokio::sync::{Mutex, mpsc};
 use tracing::{error, info};
-use tracing_subscriber::{fmt, EnvFilter, FmtSubscriber};
+use tracing_subscriber::{fmt, EnvFilter};
 
 use maowbot_core::Database;
-use maowbot_core::db::postgres_embedded::EmbeddedPg;
 use maowbot_core::plugins::manager::{PluginManager, PluginServiceGrpc};
 use maowbot_core::eventbus::{EventBus, BotEvent};
 use maowbot_core::repositories::postgres::{
@@ -41,9 +40,13 @@ use futures_util::StreamExt;
 
 use rcgen::{generate_simple_self_signed, CertifiedKey};
 use tokio::time;
+
 use maowbot_core::Error;
 
-/// Command‑line arguments for the server.
+// Import our local portable_postgres helper.
+mod portable_postgres;
+use portable_postgres::*;
+
 #[derive(Parser, Debug, Clone)]
 #[command(name = "maowbot")]
 #[command(author, version, about = "MaowBot - multi‑platform streaming bot with plugin system")]
@@ -56,8 +59,9 @@ struct Args {
     #[arg(long, default_value = "0.0.0.0:9999")]
     server_addr: String,
 
-    /// Postgres connection URL (if not using embedded, must be an absolute URL)
-    #[arg(long, default_value = "postgres://postgres:postgres@localhost/maowbot")]
+    /// Postgres connection URL.
+    /// (We assume a local portable Postgres on port 5432 with user "maow" and database "maowbot")
+    #[arg(long, default_value = "postgres://maow@localhost:5432/maowbot")]
     db_path: String,
 
     /// Passphrase for plugin connections
@@ -72,99 +76,46 @@ struct Args {
     #[arg(long, default_value = "false")]
     headless: bool,
 
-    /// NEW: if present, sets `args.auth == true`
     #[arg(long, default_value = "false")]
     auth: bool,
 }
 
-/// Helper function to “discover” a local IP address by opening a UDP socket.
-fn get_local_ips() -> Vec<String> {
-    let mut ips = Vec::new();
-    if let Ok(socket) = std::net::UdpSocket::bind("0.0.0.0:0") {
-        if socket.connect("8.8.8.8:80").is_ok() {
-            if let Ok(local_addr) = socket.local_addr() {
-                ips.push(local_addr.ip().to_string());
-            }
-        }
-    }
-    ips
-}
-
-/// Utility function to load or generate self‑signed certificates.
-fn load_or_generate_certs() -> Result<Identity, Error> {
-    let cert_folder = "certs";
-    let cert_path = format!("{}/server.crt", cert_folder);
-    let key_path  = format!("{}/server.key", cert_folder);
-
-    if Path::new(&cert_path).exists() && Path::new(&key_path).exists() {
-        let cert_pem = fs::read(&cert_path)?;
-        let key_pem  = fs::read(&key_path)?;
-        return Ok(Identity::from_pem(cert_pem, key_pem));
-    }
-
-    let mut alt_names = vec![
-        "localhost".to_string(),
-        "0.0.0.0".to_string(),
-        "127.0.0.1".to_string(),
-    ];
-    alt_names.extend(get_local_ips());
-
-    let CertifiedKey { cert, key_pair } = generate_simple_self_signed(alt_names)?;
-    let cert_pem = cert.pem();
-    let key_pem  = key_pair.serialize_pem();
-
-    fs::create_dir_all(cert_folder)?;
-    fs::write(&cert_path, cert_pem.as_bytes())?;
-    fs::write(&key_path, key_pem.as_bytes())?;
-
-    Ok(Identity::from_pem(cert_pem, key_pem))
-}
-
-#[tokio::main]
-async fn main() -> Result<(), Error> {
-    init_tracing();
-
-    let args = Args::parse();
-    info!("MaowBot starting. mode={}, headless={}, auth={}", args.mode, args.headless, args.auth);
-
-    match args.mode.as_str() {
-        "server" => run_server(args).await?,
-        "client" => run_client(args).await?,
-        other => {
-            error!("Invalid mode '{}'. Use --mode=server or --mode=client", other);
-        }
-    }
-
-    info!("Main finished. Goodbye!");
-    Ok(())
-}
-
 fn init_tracing() {
     let filter = EnvFilter::from_default_env()
-        .add_directive("pg_embed=trace".parse().unwrap());
-    let sub = fmt()
-        .with_env_filter(filter)
-        .finish();
+        .add_directive("maowbot=info".parse().unwrap_or_default());
+    let sub = fmt().with_env_filter(filter).finish();
     tracing::subscriber::set_global_default(sub)
         .expect("Failed to set global subscriber");
 }
 
 /// The server logic.
-pub async fn run_server(args: Args) -> Result<(), Error> {
-    let event_bus = Arc::new(EventBus::new());
+async fn run_server(args: Args) -> Result<(), Error> {
+    // 1) Start local Postgres if we want to run it ourselves.
+    // Adjust these paths as needed.
+    let pg_bin_dir = "./postgres/bin";   // e.g. "postgres/bin" for Windows
+    let pg_data_dir = "./postgres/data";   // Data will be stored here.
+    let port = 5432;
 
-    let embedded = EmbeddedPg::start().await?;
-    let db_url = embedded.connection_string().to_string();
-    info!("Embedded Postgres started with connection string: {}", db_url);
+    ensure_db_initialized(pg_bin_dir, pg_data_dir)
+        .map_err(|e| Error::Io(e))?;
+    start_postgres(pg_bin_dir, pg_data_dir, port)
+        .map_err(|e| Error::Io(e))?;
 
+    // Create the "maowbot" database if it does not exist.
+    create_database(pg_bin_dir, port, "maowbot")
+        .map_err(|e| Error::Io(e))?;
+
+    // 2) Connect to Postgres via the provided URL.
+    let db_url = args.db_path.clone();
+    info!("Using Postgres DB URL: {}", db_url);
     let db = Database::new(&db_url).await?;
     db.migrate().await?;
 
+    // 3) Initialize event bus & run any tasks.
+    let event_bus = Arc::new(EventBus::new());
     if args.auth {
         info!("`--auth` argument provided; running auth-specific logic as needed.");
     }
-
-    // Run monthly maintenance as an example.
     {
         let repo = PostgresUserAnalysisRepository::new(db.pool().clone());
         if let Err(e) = monthly_maintenance::maybe_run_monthly_maintenance(&db, &repo).await {
@@ -172,7 +123,7 @@ pub async fn run_server(args: Args) -> Result<(), Error> {
         }
     }
 
-    // Set up encryption and authentication.
+    // 4) Setup Auth, Repos, PluginManager, etc.
     let key = [0u8; 32];
     let encryptor = Encryptor::new(&key)?;
     let creds_repo = PostgresCredentialsRepository::new(db.pool().clone(), encryptor);
@@ -181,12 +132,11 @@ pub async fn run_server(args: Args) -> Result<(), Error> {
         Box::new(StubAuthHandler::default()),
     );
 
-    // Create the PluginManager.
     let mut plugin_manager = PluginManager::new(args.plugin_passphrase.clone());
     plugin_manager.subscribe_to_event_bus(event_bus.clone());
     plugin_manager.set_event_bus(event_bus.clone());
 
-    // Load plugins.
+    // Optionally load your in-process plugin.
     if let Some(path) = args.in_process_plugin.as_ref() {
         if let Err(e) = plugin_manager.load_in_process_plugin(path).await {
             error!("Failed to load in-process plugin from {}: {:?}", path, e);
@@ -205,7 +155,6 @@ pub async fn run_server(args: Args) -> Result<(), Error> {
         }
     }
 
-    // Build additional services.
     let user_repo = UserRepository::new(db.pool().clone());
     let identity_repo = PlatformIdentityRepository::new(db.pool().clone());
     let analysis_repo = PostgresUserAnalysisRepository::new(db.pool().clone());
@@ -220,12 +169,11 @@ pub async fn run_server(args: Args) -> Result<(), Error> {
         max_messages_per_user: Some(200),
         min_quality_score: Some(0.2),
     };
-
     let chat_cache = ChatCache::new(
         PostgresUserAnalysisRepository::new(db.pool().clone()),
         CacheConfig { trim_policy },
     );
-    let chat_cache = Arc::new(tokio::sync::Mutex::new(chat_cache));
+    let chat_cache = Arc::new(Mutex::new(chat_cache));
     spawn_cache_prune_task(chat_cache.clone(), Duration::from_secs(60));
     let message_service = Arc::new(MessageService::new(chat_cache, event_bus.clone()));
 
@@ -236,16 +184,12 @@ pub async fn run_server(args: Args) -> Result<(), Error> {
     );
     platform_manager.start_all_platforms().await?;
 
-    // Load or generate TLS certificates.
+    // 5) Build & launch the gRPC server.
     let identity = load_or_generate_certs()?;
     let tls_config = ServerTlsConfig::new().identity(identity);
-
-    // Parse the server address.
     let addr: SocketAddr = args.server_addr.parse()?;
     info!("Starting Tonic gRPC server on {}", addr);
-
     let service = PluginServiceGrpc { manager: Arc::new(plugin_manager) };
-
     let server_future = Server::builder()
         .tls_config(tls_config)?
         .add_service(PluginServiceServer::new(service))
@@ -258,7 +202,7 @@ pub async fn run_server(args: Args) -> Result<(), Error> {
         }
     });
 
-    // Spawn a Ctrl‑C listener that shuts down the event bus.
+    // 6) Handle Ctrl‑C to signal shutdown.
     let _ctrlc_handle = tokio::spawn(async move {
         if let Err(e) = tokio::signal::ctrl_c().await {
             error!("Failed to listen for Ctrl‑C: {:?}", e);
@@ -267,7 +211,7 @@ pub async fn run_server(args: Args) -> Result<(), Error> {
         eb_clone.shutdown();
     });
 
-    // Main loop: publish Tick events every 10 seconds until shutdown.
+    // 7) Main event loop.
     let mut shutdown_rx = event_bus.shutdown_rx.clone();
     loop {
         tokio::select! {
@@ -283,8 +227,13 @@ pub async fn run_server(args: Args) -> Result<(), Error> {
         }
     }
 
+    // 8) Stop the gRPC server.
     info!("Stopping gRPC server...");
     srv_handle.abort();
+
+    // 9) Stop Postgres.
+    stop_postgres(pg_bin_dir, pg_data_dir).map_err(|e| Error::Io(e))?;
+
     Ok(())
 }
 
@@ -297,7 +246,6 @@ async fn run_client(args: Args) -> Result<(), Error> {
     let ca_cert = Certificate::from_pem(ca_cert_pem);
 
     let tls_config = ClientTlsConfig::new().ca_certificate(ca_cert);
-
     let channel = Channel::from_shared(server_url)?
         .tls_config(tls_config)?
         .connect()
@@ -356,10 +304,58 @@ async fn run_client(args: Args) -> Result<(), Error> {
                 text: "RemoteClient is alive with self‑signed cert!".to_string(),
             })),
         }).await.is_err() {
-            error!("Failed to send => server (maybe disconnected).");
+            error!("Failed to send to server (maybe disconnected).");
             break;
         }
     }
 
     Ok(())
+}
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    init_tracing();
+    let args = Args::parse();
+    info!("MaowBot starting. mode={}, headless={}, auth={}", args.mode, args.headless, args.auth);
+
+    let rt = tokio::runtime::Runtime::new()?;
+    let result = match args.mode.as_str() {
+        "server" => rt.block_on(run_server(args)),
+        "client" => rt.block_on(run_client(args)),
+        other => {
+            error!("Invalid mode '{}'. Use --mode=server or --mode=client", other);
+            Ok(())
+        }
+    };
+    info!("Main finished. Goodbye!");
+    result.map_err(|e| e.into())
+}
+
+/// Utility function to load or generate self‑signed certificates.
+fn load_or_generate_certs() -> Result<Identity, Error> {
+    use std::io::Write;
+    let cert_folder = "certs";
+    let cert_path = format!("{}/server.crt", cert_folder);
+    let key_path  = format!("{}/server.key", cert_folder);
+
+    if Path::new(&cert_path).exists() && Path::new(&key_path).exists() {
+        let cert_pem = fs::read(&cert_path)?;
+        let key_pem  = fs::read(&key_path)?;
+        return Ok(Identity::from_pem(cert_pem, key_pem));
+    }
+
+    let alt_names = vec![
+        "localhost".to_string(),
+        "127.0.0.1".to_string(),
+        "0.0.0.0".to_string(),
+    ];
+
+    let CertifiedKey { cert, key_pair } = generate_simple_self_signed(alt_names)?;
+    let cert_pem = cert.pem();
+    let key_pem  = key_pair.serialize_pem();
+
+    fs::create_dir_all(cert_folder)?;
+    fs::File::create(&cert_path)?.write_all(cert_pem.as_bytes())?;
+    fs::File::create(&key_path)?.write_all(key_pem.as_bytes())?;
+
+    Ok(Identity::from_pem(cert_pem, key_pem))
 }
