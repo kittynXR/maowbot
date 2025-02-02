@@ -1,14 +1,12 @@
 // maowbot-core/src/db/mod.rs
 
-// Remove or comment out the old line:
-// pub mod postgres_embedded;
-
 use sqlx::postgres::PgPoolOptions;
 use sqlx::{Pool, Postgres};
 use crate::Error;
 use anyhow::Result;
 
 /// Our Database struct now uses a Pool<Postgres>.
+#[derive(Clone)] // <-- Added derive for Clone
 pub struct Database {
     pool: Pool<Postgres>,
 }

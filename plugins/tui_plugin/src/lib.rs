@@ -256,7 +256,7 @@ impl TuiPlugin {
     }
 
     /// Spawns a task that calls AuthManager::authenticate_platform
-    fn cmd_auth_add(&self, platform_str: String, user_id: String) {
+    fn cmd_auth_add(&self, platform_str: String, _user_id: String) {
         // If we have an AuthManager, do an async call
         if let Some(auth_arc) = self.auth_manager.clone() {
             tokio::spawn(async move {
@@ -339,7 +339,6 @@ impl TuiPlugin {
             println!("(TUI) No AuthManager => cannot do 'auth list'");
         }
     }
-
 }
 
 #[async_trait]
@@ -410,8 +409,9 @@ impl PluginConnection for TuiPlugin {
     }
 
     async fn set_enabled(&self, enable: bool) {
-        let mut guard = self.info.lock();
-        guard.unwrap().is_enabled = enable;
+        // FIX: avoid lock() + an additional unwrap().
+        let mut guard = self.info.lock().unwrap();
+        guard.is_enabled = enable;
     }
 }
 

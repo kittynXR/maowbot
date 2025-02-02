@@ -24,6 +24,9 @@ use maowbot_core::services::message_service::MessageService;
 use maowbot_core::services::user_service::UserService;
 use maowbot_core::tasks::monthly_maintenance;
 use maowbot_core::tasks::cache_maintenance::spawn_cache_prune_task;
+// NEW daily partition import:
+use maowbot_core::tasks::daily_maintenance::spawn_daily_partition_maintenance_task;
+
 use maowbot_core::plugins::bot_api::BotApi;
 
 use tonic::transport::{Server, Identity, Certificate, ServerTlsConfig, Channel, ClientTlsConfig};
@@ -43,7 +46,6 @@ use tokio::time;
 
 use maowbot_core::Error;
 
-// Import our local portable_postgres helper.
 mod portable_postgres;
 use portable_postgres::*;
 
@@ -60,7 +62,6 @@ struct Args {
     server_addr: String,
 
     /// Postgres connection URL.
-    /// (We assume a local portable Postgres on port 5432 with user "maow" and database "maowbot")
     #[arg(long, default_value = "postgres://maow@localhost:5432/maowbot")]
     db_path: String,
 
@@ -91,9 +92,8 @@ fn init_tracing() {
 /// The server logic.
 async fn run_server(args: Args) -> Result<(), Error> {
     // 1) Start local Postgres if we want to run it ourselves.
-    // Adjust these paths as needed.
-    let pg_bin_dir = "./postgres/bin";   // e.g. "postgres/bin" for Windows
-    let pg_data_dir = "./postgres/data";   // Data will be stored here.
+    let pg_bin_dir = "./postgres/bin";
+    let pg_data_dir = "./postgres/data";
     let port = 5432;
 
     ensure_db_initialized(pg_bin_dir, pg_data_dir)
@@ -101,27 +101,31 @@ async fn run_server(args: Args) -> Result<(), Error> {
     start_postgres(pg_bin_dir, pg_data_dir, port)
         .map_err(|e| Error::Io(e))?;
 
-    // Create the "maowbot" database if it does not exist.
     create_database(pg_bin_dir, port, "maowbot")
         .map_err(|e| Error::Io(e))?;
 
-    // 2) Connect to Postgres via the provided URL.
+    // 2) Connect to Postgres
     let db_url = args.db_path.clone();
     info!("Using Postgres DB URL: {}", db_url);
     let db = Database::new(&db_url).await?;
     db.migrate().await?;
 
-    // 3) Initialize event bus & run any tasks.
+    // 3) Initialize event bus & run tasks
     let event_bus = Arc::new(EventBus::new());
     if args.auth {
         info!("`--auth` argument provided; running auth-specific logic as needed.");
     }
+
     {
+        // monthly maintenance example
         let repo = PostgresUserAnalysisRepository::new(db.pool().clone());
         if let Err(e) = monthly_maintenance::maybe_run_monthly_maintenance(&db, &repo).await {
             error!("Monthly maintenance error: {:?}", e);
         }
     }
+
+    // NEW daily partition maintenance:
+    spawn_daily_partition_maintenance_task(db.clone(), 30); // e.g. keep 30 days of partitions
 
     // 4) Setup Auth, Repos, PluginManager, etc.
     let key = [0u8; 32];
@@ -136,17 +140,18 @@ async fn run_server(args: Args) -> Result<(), Error> {
     plugin_manager.subscribe_to_event_bus(event_bus.clone());
     plugin_manager.set_event_bus(event_bus.clone());
 
-    // Optionally load your in-process plugin.
+    // Optionally load your in-process plugin
     if let Some(path) = args.in_process_plugin.as_ref() {
         if let Err(e) = plugin_manager.load_in_process_plugin(path).await {
             error!("Failed to load in-process plugin from {}: {:?}", path, e);
         }
     }
+    // Also load everything in /plugs
     if let Err(e) = plugin_manager.load_plugins_from_folder("plugs").await {
         error!("Failed to load plugins from folder: {:?}", e);
     }
 
-    // Set the BotApi for plugins.
+    // Set BotApi for in-memory plugins
     {
         let api: Arc<dyn BotApi> = Arc::new(plugin_manager.clone());
         let lock = plugin_manager.plugins.lock().await;
@@ -184,7 +189,7 @@ async fn run_server(args: Args) -> Result<(), Error> {
     );
     platform_manager.start_all_platforms().await?;
 
-    // 5) Build & launch the gRPC server.
+    // 5) Build & launch the gRPC server
     let identity = load_or_generate_certs()?;
     let tls_config = ServerTlsConfig::new().identity(identity);
     let addr: SocketAddr = args.server_addr.parse()?;
@@ -202,7 +207,7 @@ async fn run_server(args: Args) -> Result<(), Error> {
         }
     });
 
-    // 6) Handle Ctrl‑C to signal shutdown.
+    // 6) Handle Ctrl‑C to signal shutdown
     let _ctrlc_handle = tokio::spawn(async move {
         if let Err(e) = tokio::signal::ctrl_c().await {
             error!("Failed to listen for Ctrl‑C: {:?}", e);
@@ -211,7 +216,7 @@ async fn run_server(args: Args) -> Result<(), Error> {
         eb_clone.shutdown();
     });
 
-    // 7) Main event loop.
+    // 7) Main event loop
     let mut shutdown_rx = event_bus.shutdown_rx.clone();
     loop {
         tokio::select! {
@@ -227,17 +232,17 @@ async fn run_server(args: Args) -> Result<(), Error> {
         }
     }
 
-    // 8) Stop the gRPC server.
+    // 8) Stop the gRPC server
     info!("Stopping gRPC server...");
     srv_handle.abort();
 
-    // 9) Stop Postgres.
+    // 9) Stop Postgres
     stop_postgres(pg_bin_dir, pg_data_dir).map_err(|e| Error::Io(e))?;
 
     Ok(())
 }
 
-/// The client logic: it must trust the `server.crt` that the bot generates.
+/// The client logic: ...
 async fn run_client(args: Args) -> Result<(), Error> {
     info!("Running in CLIENT mode. Connecting to server...");
 

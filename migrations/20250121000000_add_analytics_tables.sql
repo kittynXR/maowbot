@@ -1,21 +1,5 @@
 -- migrations/20250121000000_add_analytics_tables.sql (Postgres version)
 
--- 1) Chat Messages
-CREATE TABLE IF NOT EXISTS chat_messages (
-    message_id TEXT PRIMARY KEY,
-    platform TEXT NOT NULL,
-    channel TEXT NOT NULL,
-    user_id TEXT NOT NULL,
-    message_text TEXT NOT NULL,
-    timestamp BIGINT NOT NULL,
-    metadata TEXT,
-    CONSTRAINT fk_userid FOREIGN KEY (user_id) REFERENCES users(user_id)
-);
-
-CREATE INDEX IF NOT EXISTS idx_chat_messages_platform_channel_timestamp
-    ON chat_messages (platform, channel, timestamp);
-
--- 2) Bot Events
 CREATE TABLE IF NOT EXISTS bot_events (
     event_id TEXT PRIMARY KEY,
     event_type TEXT NOT NULL,

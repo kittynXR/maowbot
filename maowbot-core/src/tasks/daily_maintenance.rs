@@ -1,160 +1,154 @@
-// src/tasks/daily_maintenance.rs
+// maowbot-core/src/tasks/daily_maintenance.rs
 
-use chrono::{Datelike, NaiveDate, NaiveDateTime, Utc};
-use sqlx::{Row, PgPool};
+use chrono::{Datelike, NaiveDate, Utc};
+use sqlx::{Pool, Postgres, Row};
 use tracing::{info, error};
 
 use crate::Error;
 
-/// Called daily (e.g. on startup) to:
-/// 1) Create partitions for the current month + next month
-/// 2) Drop partitions older than 30 days
-pub async fn run_daily_partition_maintenance(pool: &PgPool) -> Result<(), Error> {
-    let today = Utc::now().date_naive();
-
-    // current month
-    let (curr_name, curr_start, curr_end) = monthly_partition_info(today.year(), today.month())?;
-    ensure_partition_exists(pool, &curr_name, curr_start, curr_end).await?;
-
-    // next month
-    let (ny, nm) = next_month(today.year(), today.month());
-    let (next_name, next_start, next_end) = monthly_partition_info(ny, nm)?;
-    ensure_partition_exists(pool, &next_name, next_start, next_end).await?;
-
-    // drop partitions older than 30 days
-    let cutoff_days = 30;
-    drop_old_partitions(pool, cutoff_days).await?;
-
-    Ok(())
+/// Spawns a background task that runs once a day (or at a chosen interval)
+/// and handles partition creation + old-partition drop.
+pub fn spawn_daily_partition_maintenance_task(
+    db: crate::db::Database,
+    cutoff_days: i64, // e.g. 30
+) {
+    // Spawn an asynchronous repeating task. In production you might want a more robust cron-like approach.
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(24 * 3600));
+        loop {
+            interval.tick().await;
+            if let Err(e) = run_daily_partition_maintenance(&db, cutoff_days).await {
+                error!("Daily partition maintenance failed: {:?}", e);
+            }
+        }
+    });
 }
 
-async fn ensure_partition_exists(
-    pool: &PgPool,
-    table_name: &str,
-    range_start: i64,
-    range_end: i64
+/// Called once a day to (a) create partitions for the current & next month
+/// and (b) drop partitions older than `cutoff_days`.
+pub async fn run_daily_partition_maintenance(
+    db: &crate::db::Database,
+    cutoff_days: i64,
 ) -> Result<(), Error> {
-    let row = sqlx::query("SELECT to_regclass($1) AS regclass")
-        .bind(table_name)
-        .fetch_one(pool)
-        .await?;
+    info!("Starting daily partition maintenance for chat_messages ...");
+    let pool = db.pool();
 
-    let exists: Option<String> = row.try_get("regclass")?;
-    if exists.is_some() {
-        info!("Partition '{}' already exists.", table_name);
-        return Ok(());
+    // (1) Ensure partitions exist for the current month and next month
+    let now = Utc::now().naive_utc().date();
+    let first_of_current = NaiveDate::from_ymd_opt(now.year(), now.month(), 1)
+        .ok_or_else(|| Error::Parse("Could not parse date for current month".to_string()))?;
+    let first_of_next = if now.month() == 12 {
+        NaiveDate::from_ymd_opt(now.year() + 1, 1, 1)
+    } else {
+        NaiveDate::from_ymd_opt(now.year(), now.month() + 1, 1)
     }
+        .ok_or_else(|| Error::Parse("Could not parse date for next month".to_string()))?;
 
-    info!(
-        "Creating partition '{}' for range [{}, {})",
-        table_name, range_start, range_end
-    );
-    let create_sql = format!(
-        "CREATE TABLE {child} PARTITION OF chat_messages
-         FOR VALUES FROM ({start}) TO ({end});",
-        child = table_name,
-        start = range_start,
-        end = range_end
-    );
+    create_month_partition_if_needed(pool, first_of_current).await?;
+    create_month_partition_if_needed(pool, first_of_next).await?;
 
-    sqlx::query(&create_sql)
-        .execute(pool)
-        .await?;
+    // (2) Drop partitions that are older than the cutoff
+    drop_old_chat_partitions(pool, cutoff_days).await?;
 
-    info!("Partition '{}' created successfully.", table_name);
+    info!("Daily partition maintenance complete.");
     Ok(())
 }
 
-/// If end range of a partition is < now - cutoff_days, we drop that partition.
-async fn drop_old_partitions(pool: &PgPool, cutoff_days: i64) -> Result<(), Error> {
-    let now_epoch = Utc::now().timestamp();
-    let cutoff_epoch = now_epoch - cutoff_days * 86400;
+/// Helper that creates a monthly partition if it does not already exist.
+async fn create_month_partition_if_needed(
+    pool: &Pool<Postgres>,
+    first_day_of_month: NaiveDate,
+) -> Result<(), Error> {
+    let year = first_day_of_month.year();
+    let month = first_day_of_month.month();
 
-    // find all child partitions in 'public' schema that match chat_messages_YYYY_MM
-    let rows = sqlx::query(r#"
-        SELECT relname
-        FROM pg_class
-        WHERE relname LIKE 'chat_messages_%'
-          AND relnamespace = (
-              SELECT oid FROM pg_namespace WHERE nspname = 'public'
-          )
-    "#)
-        .fetch_all(pool)
-        .await?;
+    // Define the boundary from the first day to the first day of next month.
+    let next_month = if month == 12 {
+        NaiveDate::from_ymd_opt(year + 1, 1, 1).unwrap()
+    } else {
+        NaiveDate::from_ymd_opt(year, month + 1, 1).unwrap()
+    };
 
-    let partitions = rows.into_iter()
-        .filter_map(|r| r.try_get("relname").ok())
-        .collect::<Vec<String>>();
+    let partition_name = format!("chat_messages_{:04}{:02}", year, month);
 
-    if partitions.is_empty() {
-        info!("No child partitions found to drop.");
-        return Ok(());
-    }
+    let range_start = first_day_of_month.and_hms_opt(0, 0, 0).unwrap().timestamp();
+    let range_end = next_month.and_hms_opt(0, 0, 0).unwrap().timestamp();
 
-    let mut to_drop = Vec::new();
+    // Here we assume that chat_messages is defined as a RANGE partitioned table on the "timestamp" column.
+    let create_sql = format!(
+        r#"
+        CREATE TABLE IF NOT EXISTS {partition_name}
+        PARTITION OF chat_messages
+        FOR VALUES FROM ({range_start}) TO ({range_end});
+        "#,
+        partition_name = partition_name,
+        range_start = range_start,
+        range_end = range_end,
+    );
 
-    for part in &partitions {
-        if let Some((y,m)) = parse_partition_name(part) {
-            let (_name, _start, end) = monthly_partition_info(y, m)?;
-            if end < cutoff_epoch {
-                to_drop.push(part.clone());
+    // Instead of acquiring a connection, we pass the pool (which implements Executor)
+    sqlx::query(&create_sql).execute(pool).await?;
+    info!("Partition ensured: {}", partition_name);
+
+    Ok(())
+}
+
+/// Drops partitions older than `cutoff_days` by checking their range boundaries.
+async fn drop_old_chat_partitions(pool: &Pool<Postgres>, cutoff_days: i64) -> Result<(), Error> {
+    // 1) Determine the cutoff timestamp
+    let now = Utc::now().timestamp();
+    let cutoff_ts = now - (cutoff_days * 86400);
+
+    // 2) Query for child partitions of chat_messages
+    let child_partitions_sql = r#"
+        SELECT (inhrelid::regclass)::text AS partition_name
+        FROM pg_inherits
+        WHERE inhparent::regclass = 'chat_messages'::regclass;
+    "#;
+
+
+    let rows = sqlx::query(child_partitions_sql).fetch_all(pool).await?;
+    for row in rows {
+        let partition_name: String = row.get("partition_name");
+        // Expecting a name like "chat_messages_202501"
+
+        // Query the boundary expression for this partition
+        let boundary_sql = format!(
+            r#"
+            SELECT pg_get_expr(relpartbound, oid) AS boundary
+            FROM pg_class
+            WHERE relname = '{partition_name}';
+            "#,
+            partition_name = partition_name
+        );
+
+        let boundary_val: (Option<String>,) =
+            sqlx::query_as(&boundary_sql).fetch_one(pool).await.unwrap_or((None,));
+
+        if let Some(expr_text) = boundary_val.0 {
+            // Typically the expression looks like: `FOR VALUES FROM (1672531200) TO (1675209600)`
+            if let Some(to_val) = parse_upper_bound(&expr_text) {
+                if to_val < cutoff_ts {
+                    let drop_sql = format!("DROP TABLE IF EXISTS {};", partition_name);
+                    let _ = sqlx::query(&drop_sql).execute(pool).await?;
+                    info!("Dropped old partition: {}", partition_name);
+                }
             }
         }
     }
 
-    if to_drop.is_empty() {
-        info!("No partitions older than cutoff_days={}", cutoff_days);
-        return Ok(());
-    }
-
-    for part in to_drop {
-        let sql = format!("DROP TABLE IF EXISTS {} CASCADE;", part);
-        info!("Dropping old partition '{}'", part);
-        if let Err(e) = sqlx::query(&sql).execute(pool).await {
-            error!("Failed to drop partition '{}': {:?}", part, e);
-        } else {
-            info!("Partition '{}' dropped.", part);
-        }
-    }
     Ok(())
 }
 
-/// Return (table_name, start_epoch, end_epoch) for year/month partition
-fn monthly_partition_info(year: i32, month: u32) -> Result<(String, i64, i64), Error> {
-    let table_name = format!("chat_messages_{:04}_{:02}", year, month);
-    let start_date = NaiveDate::from_ymd_opt(year, month, 1)
-        .ok_or_else(|| Error::Parse("Invalid partition date".into()))?
-        .and_hms_opt(0,0,0)
-        .ok_or_else(|| Error::Parse("Invalid partition date hour/min/sec".into()))?;
-    let (ny, nm) = next_month(year, month);
-    let end_date = NaiveDate::from_ymd_opt(ny, nm, 1)
-        .ok_or_else(|| Error::Parse("Invalid next partition date".into()))?
-        .and_hms_opt(0,0,0)
-        .ok_or_else(|| Error::Parse("Invalid next partition date hour/min/sec".into()))?;
-
-    let start_epoch = start_date.and_utc().timestamp();
-    let end_epoch   = end_date.and_utc().timestamp();
-
-    Ok((table_name, start_epoch, end_epoch))
-}
-
-/// Return next month for e.g. (2025,12) => (2026,1)
-fn next_month(year: i32, month: u32) -> (i32, u32) {
-    if month == 12 {
-        (year + 1, 1)
-    } else {
-        (year, month + 1)
+/// A very basic parser to extract the upper bound (the value after "TO (") from the boundary expression.
+fn parse_upper_bound(bound_expr: &str) -> Option<i64> {
+    let s = bound_expr.to_lowercase();
+    if let Some(idx) = s.find("to (") {
+        let part = &s[(idx + 4)..];
+        if let Some(end_paren) = part.find(')') {
+            let val_str = part[..end_paren].trim();
+            return val_str.parse::<i64>().ok();
+        }
     }
-}
-
-/// parse "chat_messages_YYYY_MM"
-fn parse_partition_name(name: &str) -> Option<(i32, u32)> {
-    let parts: Vec<&str> = name.split('_').collect();
-    if parts.len() == 3 {
-        let yr = parts[1].parse::<i32>().ok()?;
-        let mo = parts[2].parse::<u32>().ok()?;
-        Some((yr, mo))
-    } else {
-        None
-    }
+    None
 }
