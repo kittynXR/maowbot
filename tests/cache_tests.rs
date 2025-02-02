@@ -12,7 +12,7 @@ use maowbot::cache::{
     CachedMessage
 };
 use maowbot::models::user_analysis::UserAnalysis;
-use maowbot::repositories::sqlite::user_analysis::UserAnalysisRepository;
+use maowbot::repositories::postgres::user_analysis::UserAnalysisRepository;
 
 /// A mock repository that stores user_analysis in-memory only.
 #[derive(Clone, Default)]

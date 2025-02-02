@@ -4,11 +4,11 @@ use std::path::PathBuf;
 use tempfile::NamedTempFile;
 use tokio::fs;
 use chrono::NaiveDateTime;
-use sqlx::{SqlitePool, Row};
-use sqlx::sqlite::{SqlitePoolOptions, SqliteConnectOptions};
+use sqlx::{PostgresPool, Row};
+use sqlx::postgres::{PostgresPoolOptions, PostgresConnectOptions};
 use maowbot::Error;
 use maowbot::Database;
-use maowbot::repositories::sqlite::user_analysis::SqliteUserAnalysisRepository;
+use maowbot::repositories::postgres::user_analysis::PostgresUserAnalysisRepository;
 use maowbot::tasks::monthly_maintenance::{
     archive_one_month_no_attach, maybe_run_monthly_maintenance, collect_missing_months, parse_year_month,
 };
@@ -20,12 +20,12 @@ fn parse_to_seconds(s: &str) -> Result<i64, Error> {
     Ok(dt.timestamp())
 }
 
-async fn create_single_conn_pool(db_path: &str) -> Result<SqlitePool, Error> {
+async fn create_single_conn_pool(db_path: &str) -> Result<PostgresPool, Error> {
     let abs_path = std::env::current_dir()?.join(db_path);
-    let connect_opts = SqliteConnectOptions::new()
+    let connect_opts = PostgresConnectOptions::new()
         .filename(abs_path)
         .create_if_missing(true);
-    let pool = SqlitePoolOptions::new()
+    let pool = PostgresPoolOptions::new()
         .max_connections(1)
         .connect_with(connect_opts)
         .await?;
@@ -36,7 +36,7 @@ async fn create_single_conn_pool(db_path: &str) -> Result<SqlitePool, Error> {
     Ok(pool)
 }
 
-async fn create_test_schema(pool: &SqlitePool) -> Result<(), Error> {
+async fn create_test_schema(pool: &PostgresPool) -> Result<(), Error> {
     // Create minimal tables using INTEGER timestamps.
     sqlx::query(r#"
         CREATE TABLE IF NOT EXISTS users (
@@ -168,10 +168,10 @@ async fn test_archive_one_month_no_attach() -> Result<(), Error> {
     db.pool().close().await;
 
     // Confirm archive DB has the messages.
-    let arch_opts = SqliteConnectOptions::new()
+    let arch_opts = PostgresConnectOptions::new()
         .filename(&archive_path)
         .create_if_missing(false);
-    let arch_pool = SqlitePoolOptions::new()
+    let arch_pool = PostgresPoolOptions::new()
         .max_connections(1)
         .connect_with(arch_opts)
         .await?;
@@ -214,7 +214,7 @@ async fn test_maybe_run_monthly_maintenance_integration() -> Result<(), Error> {
         std::fs::remove_file(&arch_file)?;
     }
 
-    let analysis_repo = SqliteUserAnalysisRepository::new(db.pool().clone());
+    let analysis_repo = PostgresUserAnalysisRepository::new(db.pool().clone());
     maowbot::tasks::monthly_maintenance::maybe_run_monthly_maintenance(&db, &analysis_repo).await?;
 
     let row = sqlx::query("SELECT COUNT(*) as cnt FROM chat_messages")
@@ -232,10 +232,10 @@ async fn test_maybe_run_monthly_maintenance_integration() -> Result<(), Error> {
     db.pool().close().await;
     assert!(arch_file.exists(), "Should have created january archive");
 
-    let arch_opts = SqliteConnectOptions::new()
+    let arch_opts = PostgresConnectOptions::new()
         .filename(&arch_file)
         .create_if_missing(false);
-    let arch_pool = SqlitePoolOptions::new()
+    let arch_pool = PostgresPoolOptions::new()
         .max_connections(1)
         .connect_with(arch_opts)
         .await?;

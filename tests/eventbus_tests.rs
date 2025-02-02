@@ -1,151 +1,139 @@
-// tests/eventbus_tests.rs
+// File: maowbot-core/src/auth/user_manager_tests.rs
+#[cfg(test)]
+mod tests {
+    use uuid::Uuid;
+    use std::env;
 
-use std::sync::Arc;
-use async_trait::async_trait;
-use chrono::Utc;
-use tokio::time::Duration;
-use tokio::sync::Mutex;
-
-use maowbot::Error;
-use maowbot::eventbus::{EventBus, BotEvent};
-use maowbot::eventbus::db_logger::spawn_db_logger_task;
-use maowbot::plugins::manager::{
-    PluginManager, PluginConnection, PluginConnectionInfo
-};
-use maowbot_proto::plugs::{
-    PluginCapability,
-    PluginStreamResponse,
-};
-use maowbot::repositories::sqlite::analytics::{ChatMessage, AnalyticsRepo};
-
-/// ---------- Mock Analytics Repo ----------
-#[derive(Clone)]
-struct MockAnalyticsRepo {
-    messages: Arc<Mutex<Vec<ChatMessage>>>,
-}
-
-impl MockAnalyticsRepo {
-    fn new() -> Self {
-        Self {
-            messages: Arc::new(Mutex::new(vec![])),
-        }
-    }
-}
-
-#[async_trait]
-impl AnalyticsRepo for MockAnalyticsRepo {
-    async fn insert_chat_message(&self, msg: &ChatMessage) -> Result<(), Error> {
-        let mut lock = self.messages.lock().await;
-        lock.push(msg.clone());
-        Ok(())
-    }
-}
-
-/// ---------- Mock Plugin ----------
-#[derive(Clone)]
-struct MockPlugin {
-    info: Arc<Mutex<PluginConnectionInfo>>,
-    received: Arc<Mutex<Vec<String>>>,
-}
-
-impl MockPlugin {
-    fn new(name: &str, capabilities: Vec<PluginCapability>) -> Self {
-        Self {
-            info: Arc::new(Mutex::new(PluginConnectionInfo {
-                name: name.into(),
-                capabilities,
-            })),
-            received: Arc::new(Mutex::new(vec![])),
-        }
-    }
-}
-
-#[async_trait]
-impl PluginConnection for MockPlugin {
-    async fn info(&self) -> PluginConnectionInfo {
-        let guard = self.info.lock().await;
-        guard.clone()
-    }
-
-    async fn set_capabilities(&self, caps: Vec<PluginCapability>) {
-        let mut guard = self.info.lock().await;
-        guard.capabilities = caps;
-    }
-
-    async fn set_name(&self, new_name: String) {
-        let mut guard = self.info.lock().await;
-        guard.name = new_name;
-    }
-
-    /// Replaces the old `send(&self, event: BotToPlugin)` signature
-    async fn send(&self, response: PluginStreamResponse) -> Result<(), Error> {
-        // Store the debug-printed form of the response
-        let mut lock = self.received.lock().await;
-        lock.push(format!("{:?}", response));
-        Ok(())
-    }
-
-    async fn stop(&self) -> Result<(), Error> {
-        Ok(())
-    }
-
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
-    }
-}
-
-/// ---------- The actual test ----------
-#[tokio::test]
-async fn test_eventbus_integration() -> Result<(), Error> {
-    // 1) Create an EventBus
-    let bus = Arc::new(EventBus::new());
-
-    // 2) Create a MockAnalyticsRepo
-    let mock_repo = MockAnalyticsRepo::new();
-
-    // 3) Spawn the DB logger task with short flush interval
-    spawn_db_logger_task(&bus, mock_repo.clone(), 10, 1);
-
-    // 4) Create a PluginManager, subscribe to the bus
-    let plugin_mgr = PluginManager::new(None);
-    plugin_mgr.subscribe_to_event_bus(bus.clone());
-
-    // 5) Add a mock plugin that can receive chat events
-    let mock_plugin = MockPlugin::new("mock_plugin", vec![PluginCapability::ReceiveChatEvents]);
-    {
-        let mut list = plugin_mgr.plugins.lock().await;
-        list.push(Arc::new(mock_plugin.clone()) as Arc<dyn PluginConnection>);
-    }
-
-    // 6) Publish a single ChatMessage event
-    let evt = BotEvent::ChatMessage {
-        platform: "test_platform".into(),
-        channel: "test_channel".into(),
-        user: "test_user".into(),
-        text: "hello world".into(),
-        timestamp: Utc::now(),
+    use crate::Database;
+    use crate::models::{Platform, User};
+    use crate::repositories::postgres::{
+        user::UserRepository,
+        platform_identity::PlatformIdentityRepository,
+        user_analysis::PostgresUserAnalysisRepository,
     };
-    bus.publish(evt).await;
+    use crate::auth::{UserManager, DefaultUserManager};
+    use crate::Error;
 
-    // 7) Sleep briefly to ensure it’s logged/batched
-    tokio::time::sleep(Duration::from_millis(50)).await;
+    /// A helper to create a **Postgres** test DB connection, run migrations,
+    /// and build a DefaultUserManager that uses Postgres repositories.
+    async fn setup_user_manager() -> Result<DefaultUserManager, Error> {
+        // 1) Use an env var or fallback
+        let test_db_url = env::var("TEST_DATABASE_URL")
+            .unwrap_or_else(|_| "postgres://maow:maow@localhost/maowbot_test".to_string());
 
-    // 8) Trigger a final flush
-    bus.shutdown();
-    tokio::time::sleep(Duration::from_millis(50)).await;
+        // 2) Create DB object + run migrations
+        let db = Database::new(&test_db_url).await?;
+        db.migrate().await?;
 
-    // 9) Check that the DB logger inserted the message
-    let lock = mock_repo.messages.lock().await;
-    assert_eq!(lock.len(), 1, "DB logger should have inserted 1 message");
-    assert_eq!(lock[0].message_text, "hello world");
+        // 3) Create Postgres-based repositories
+        let user_repo = UserRepository::new(db.pool().clone());
+        let ident_repo = PlatformIdentityRepository::new(db.pool().clone());
+        let analysis_repo = PostgresUserAnalysisRepository::new(db.pool().clone());
 
-    // 10) Check the plugin’s received events
-    let recvd = mock_plugin.received.lock().await;
-    assert_eq!(recvd.len(), 1, "Should have 1 inbound event");
-    assert!(
-        recvd[0].contains("ChatMessage"),
-        "Expected debug output containing ChatMessage"
-    );
+        // 4) Build our DefaultUserManager
+        Ok(DefaultUserManager::new(user_repo, ident_repo, analysis_repo))
+    }
 
-    Ok(())
+    #[tokio::test]
+    async fn test_get_or_create_user_new() -> Result<(), Error> {
+        let manager = setup_user_manager().await?;
+
+        // A random new platform_user_id
+        let random_id = Uuid::new_v4().to_string();
+
+        // This user doesn’t exist => should be created
+        let user = manager
+            .get_or_create_user(Platform::Discord, &random_id, Some("testuser"))
+            .await?;
+        assert!(!user.user_id.is_empty(), "Should have a new user_id");
+        assert!(user.is_active);
+        assert!(user.last_seen.timestamp() > 0);
+
+        // Next time we call get_or_create with same IDs,
+        // we should retrieve the same user from the cache or DB
+        let user2 = manager
+            .get_or_create_user(Platform::Discord, &random_id, Some("testuser2"))
+            .await?;
+
+        assert_eq!(user.user_id, user2.user_id, "Should be the same user");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_get_or_create_user_cache_hit() -> Result<(), Error> {
+        let manager = setup_user_manager().await?;
+
+        let user_id = Uuid::new_v4().to_string(); // random platform ID
+        let user = manager
+            .get_or_create_user(Platform::Twitch, &user_id, Some("TwitchDude"))
+            .await?;
+
+        // The second call should be a "cache hit"
+        let user2 = manager
+            .get_or_create_user(Platform::Twitch, &user_id, Some("NewName"))
+            .await?;
+
+        // Confirm it returns the same user ID
+        assert_eq!(user.user_id, user2.user_id);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_update_user_activity() -> Result<(), Error> {
+        let manager = setup_user_manager().await?;
+        let user = manager
+            .get_or_create_user(Platform::VRChat, "vrchat_123", Some("VRChatter"))
+            .await?;
+        let old_seen = user.last_seen;
+
+        // Wait 1 second
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+
+        // Update with new username
+        manager
+            .update_user_activity(&user.user_id, Some("VRChatterNew"))
+            .await?;
+
+        // Retrieve again
+        let updated_user = manager
+            .get_or_create_user(Platform::VRChat, "vrchat_123", None)
+            .await?;
+
+        assert!(
+            updated_user.last_seen > old_seen,
+            "Should have a more recent last_seen"
+        );
+        assert_eq!(
+            updated_user.global_username,
+            Some("VRChatterNew".to_string())
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_cache_ttl_expiration() -> Result<(), Error> {
+        let manager = setup_user_manager().await?;
+
+        // Insert user in the cache
+        let user = manager
+            .get_or_create_user(Platform::Discord, "some_discord_id", Some("DiscordTest"))
+            .await?;
+
+        // Force last_access to 25 hours ago => simulating stale
+        let changed = manager
+            .test_force_last_access(Platform::Discord, "some_discord_id", 25)
+            .await;
+        assert!(changed, "Should have updated the existing cache entry");
+
+        // Next call => should prune stale cache entry, then re-insert
+        let user2 = manager
+            .get_or_create_user(Platform::Discord, "some_discord_id", Some("DiscordTest2"))
+            .await?;
+
+        // They should be the same DB user, but the old cache entry was removed internally
+        assert_eq!(user.user_id, user2.user_id);
+        Ok(())
+    }
 }

@@ -17,7 +17,7 @@ use maowbot_proto::plugs::{
     plugin_stream_response::Payload as RespPayload,
     Shutdown,
 };
-use maowbot::repositories::sqlite::analytics::{SqliteAnalyticsRepository, AnalyticsRepo};
+use maowbot::repositories::postgres::analytics::{PostgresAnalyticsRepository, AnalyticsRepo};
 use async_trait::async_trait;
 
 #[derive(Clone)]
@@ -91,7 +91,7 @@ async fn test_graceful_shutdown_data_flush() -> Result<(), Error> {
         tx.commit().await?;
     }
 
-    let analytics_repo = SqliteAnalyticsRepository::new(db.pool().clone());
+    let analytics_repo = PostgresAnalyticsRepository::new(db.pool().clone());
     let event_bus = Arc::new(EventBus::new());
 
     // logger
@@ -150,7 +150,7 @@ async fn test_plugin_initiated_shutdown() -> Result<(), Error> {
     }
 
     // Create repo + event bus + logger
-    let analytics_repo = SqliteAnalyticsRepository::new(db.pool().clone());
+    let analytics_repo = PostgresAnalyticsRepository::new(db.pool().clone());
     let event_bus = Arc::new(EventBus::new());
     let logger_handle = spawn_db_logger_task(&event_bus, analytics_repo.clone(), 5, 1);
 
@@ -209,7 +209,7 @@ async fn test_no_new_events_after_shutdown() -> Result<(), Error> {
     let db = Database::new(":memory:").await?;
     db.migrate().await?;
 
-    let analytics_repo = SqliteAnalyticsRepository::new(db.pool().clone());
+    let analytics_repo = PostgresAnalyticsRepository::new(db.pool().clone());
     let event_bus = Arc::new(EventBus::new());
 
     let logger_handle = spawn_db_logger_task(&event_bus, analytics_repo.clone(), 5, 1);

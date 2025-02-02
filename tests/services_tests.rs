@@ -4,10 +4,10 @@ use anyhow::anyhow;
 use tokio::sync::Mutex;
 use tokio::time::{timeout, Duration};
 
-use maowbot::{Database, auth::user_manager::DefaultUserManager, repositories::sqlite::{
+use maowbot::{Database, auth::user_manager::DefaultUserManager, repositories::postgres::{
     user::UserRepository,
     platform_identity::PlatformIdentityRepository,
-    user_analysis::SqliteUserAnalysisRepository,
+    user_analysis::PostgresUserAnalysisRepository,
 }, eventbus::{EventBus, BotEvent}, cache::{ChatCache, CacheConfig, TrimPolicy}, services::{
     user_service::UserService,
     message_service::MessageService,
@@ -23,7 +23,7 @@ async fn test_user_message_services_in_memory_db() -> Result<(), Error> {
     // 2) Build repos + default user manager
     let user_repo = UserRepository::new(db.pool().clone());
     let ident_repo = PlatformIdentityRepository::new(db.pool().clone());
-    let analysis_repo = SqliteUserAnalysisRepository::new(db.pool().clone());
+    let analysis_repo = PostgresUserAnalysisRepository::new(db.pool().clone());
     let default_user_manager = DefaultUserManager::new(user_repo, ident_repo, analysis_repo);
 
     // 3) Create user service
@@ -39,7 +39,7 @@ async fn test_user_message_services_in_memory_db() -> Result<(), Error> {
         min_quality_score: None,
     };
     let cache = ChatCache::new(
-        SqliteUserAnalysisRepository::new(db.pool().clone()),
+        PostgresUserAnalysisRepository::new(db.pool().clone()),
         CacheConfig { trim_policy }
     );
     let chat_cache = Arc::new(Mutex::new(cache));

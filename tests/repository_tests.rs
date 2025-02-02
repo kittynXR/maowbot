@@ -1,6 +1,6 @@
 // tests/repository_tests.rs
 
-use maowbot::{Database, models::{User, Platform, PlatformIdentity}, repositories::sqlite::{UserRepository, PlatformIdentityRepository}, repositories::Repository, Error};
+use maowbot::{Database, models::{User, Platform, PlatformIdentity}, repositories::postgres::{UserRepository, PlatformIdentityRepository}, repositories::Repository, Error};
 use chrono::Utc;
 use serde_json::json;
 use uuid::Uuid;
