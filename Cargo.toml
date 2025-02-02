@@ -17,7 +17,7 @@ edition = "2021"
 maowbot-proto = { path = "maowbot-proto" }
 
 twitch_api = {  version="^0.7.0-rc", features = ["client", "helix", "reqwest"] }
-sqlx = { version = "^0.8", features = ["sqlite","runtime-tokio", "tls-native-tls", "chrono"] }
+sqlx = { version = "^0.8", features = ["postgres", "runtime-tokio", "tls-native-tls", "chrono"] }
 
 tokio = { version = "^1.43", features = ["full"] }
 tokio-test = { version = "^0.4" }
@@ -55,7 +55,8 @@ prost-types = { version = "^0.13" }
 
 # --- New or updated below:
 tracing = "^0.1"
-tracing-subscriber = "^0.3"
+tracing-subscriber = { version = "^0.3", features = ["env-filter"]}
+tracing-log = "^0.2"
 rustls-pemfile = "^2.2"
 futures-lite = "^2.6"
 tempfile = "^3.16"

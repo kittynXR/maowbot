@@ -4,7 +4,7 @@ use uuid::Uuid;
 
 use crate::Database;
 use crate::models::{Platform, User};
-use crate::repositories::sqlite::{
+use crate::repositories::postgres::{
     user::UserRepository,
     platform_identity::PlatformIdentityRepository,
     user_analysis::{SqliteUserAnalysisRepository},

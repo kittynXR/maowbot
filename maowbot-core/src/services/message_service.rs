@@ -17,13 +17,13 @@ use crate::Error;
 ///
 /// We can also do any on-the-fly filtering or spam logic here.
 pub struct MessageService {
-    chat_cache: Arc<Mutex<ChatCache<crate::repositories::sqlite::user_analysis::SqliteUserAnalysisRepository>>>,
+    chat_cache: Arc<Mutex<ChatCache<crate::repositories::postgres::user_analysis::PostgresUserAnalysisRepository>>>,
     event_bus: Arc<EventBus>,
 }
 
 impl MessageService {
     pub fn new(
-        chat_cache: Arc<Mutex<ChatCache<crate::repositories::sqlite::user_analysis::SqliteUserAnalysisRepository>>>,
+        chat_cache: Arc<Mutex<ChatCache<crate::repositories::postgres::user_analysis::PostgresUserAnalysisRepository>>>,
         event_bus: Arc<EventBus>,
     ) -> Self {
         Self {

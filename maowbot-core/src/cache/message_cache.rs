@@ -3,7 +3,7 @@
 use std::collections::{BTreeMap, HashMap};
 use chrono::{Utc, NaiveDateTime, Duration};
 use crate::models::User;
-use crate::repositories::sqlite::user_analysis::UserAnalysisRepository;
+use crate::repositories::postgres::user_analysis::UserAnalysisRepository;
 use crate::models::user_analysis::UserAnalysis;
 
 /// Single cached chat message

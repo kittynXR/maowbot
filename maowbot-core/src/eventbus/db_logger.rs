@@ -12,7 +12,7 @@ use tracing::{info, error};
 use chrono::Utc;
 use crate::Error;
 use crate::eventbus::{EventBus, BotEvent};
-use crate::repositories::sqlite::analytics::{AnalyticsRepo, ChatMessage};
+use crate::repositories::postgres::analytics::{AnalyticsRepo, ChatMessage};
 
 
 /// Spawns an asynchronous task to receive events from the bus

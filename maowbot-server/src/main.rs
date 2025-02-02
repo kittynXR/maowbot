@@ -6,15 +6,16 @@ use std::fs;
 use std::path::Path;
 use tokio::sync::{Mutex, mpsc};
 use tracing::{error, info};
-use tracing_subscriber::FmtSubscriber;
+use tracing_subscriber::{fmt, EnvFilter, FmtSubscriber};
 
 use maowbot_core::Database;
+use maowbot_core::db::postgres_embedded::EmbeddedPg;
 use maowbot_core::plugins::manager::{PluginManager, PluginServiceGrpc};
 use maowbot_core::eventbus::{EventBus, BotEvent};
-use maowbot_core::repositories::sqlite::{
+use maowbot_core::repositories::postgres::{
     PlatformIdentityRepository,
-    SqliteCredentialsRepository,
-    SqliteUserAnalysisRepository,
+    PostgresCredentialsRepository,
+    PostgresUserAnalysisRepository,
     UserRepository,
 };
 use maowbot_core::auth::{AuthManager, DefaultUserManager, StubAuthHandler};
@@ -24,6 +25,7 @@ use maowbot_core::services::message_service::MessageService;
 use maowbot_core::services::user_service::UserService;
 use maowbot_core::tasks::monthly_maintenance;
 use maowbot_core::tasks::cache_maintenance::spawn_cache_prune_task;
+use maowbot_core::plugins::bot_api::BotApi;
 
 use tonic::transport::{Server, Identity, Certificate, ServerTlsConfig, Channel, ClientTlsConfig};
 use maowbot_proto::plugs::plugin_service_server::PluginServiceServer;
@@ -40,11 +42,8 @@ use futures_util::StreamExt;
 use rcgen::{generate_simple_self_signed, CertifiedKey};
 use tokio::time;
 use maowbot_core::Error;
-use maowbot_core::plugins::bot_api::BotApi;
 
 /// Command‑line arguments for the server.
-///
-/// We add an `--auth` boolean flag:
 #[derive(Parser, Debug, Clone)]
 #[command(name = "maowbot")]
 #[command(author, version, about = "MaowBot - multi‑platform streaming bot with plugin system")]
@@ -57,8 +56,8 @@ struct Args {
     #[arg(long, default_value = "0.0.0.0:9999")]
     server_addr: String,
 
-    /// Path to the SQLite database
-    #[arg(long, default_value = "data/bot.db")]
+    /// Postgres connection URL (if not using embedded, must be an absolute URL)
+    #[arg(long, default_value = "postgres://postgres:postgres@localhost/maowbot")]
     db_path: String,
 
     /// Passphrase for plugin connections
@@ -82,7 +81,6 @@ struct Args {
 fn get_local_ips() -> Vec<String> {
     let mut ips = Vec::new();
     if let Ok(socket) = std::net::UdpSocket::bind("0.0.0.0:0") {
-        // Use a public IP and port to force a route lookup.
         if socket.connect("8.8.8.8:80").is_ok() {
             if let Ok(local_addr) = socket.local_addr() {
                 ips.push(local_addr.ip().to_string());
@@ -127,8 +125,7 @@ async fn main() -> Result<(), Error> {
     init_tracing();
 
     let args = Args::parse();
-    info!("MaowBot starting. mode={}, headless={}, auth={}",
-          args.mode, args.headless, args.auth);
+    info!("MaowBot starting. mode={}, headless={}, auth={}", args.mode, args.headless, args.auth);
 
     match args.mode.as_str() {
         "server" => run_server(args).await?,
@@ -143,8 +140,10 @@ async fn main() -> Result<(), Error> {
 }
 
 fn init_tracing() {
-    let sub = FmtSubscriber::builder()
-        .with_max_level(tracing::Level::DEBUG)
+    let filter = EnvFilter::from_default_env()
+        .add_directive("pg_embed=trace".parse().unwrap());
+    let sub = fmt()
+        .with_env_filter(filter)
         .finish();
     tracing::subscriber::set_global_default(sub)
         .expect("Failed to set global subscriber");
@@ -153,17 +152,21 @@ fn init_tracing() {
 /// The server logic.
 pub async fn run_server(args: Args) -> Result<(), Error> {
     let event_bus = Arc::new(EventBus::new());
-    let db = Database::new(&args.db_path).await?;
+
+    let embedded = EmbeddedPg::start().await?;
+    let db_url = embedded.connection_string().to_string();
+    info!("Embedded Postgres started with connection string: {}", db_url);
+
+    let db = Database::new(&db_url).await?;
     db.migrate().await?;
 
-    // Example usage if you wanted to do something special if `--auth` is set:
     if args.auth {
-        info!("`--auth` argument was provided => special logic here, if needed.");
+        info!("`--auth` argument provided; running auth-specific logic as needed.");
     }
 
     // Run monthly maintenance as an example.
     {
-        let repo = SqliteUserAnalysisRepository::new(db.pool().clone());
+        let repo = PostgresUserAnalysisRepository::new(db.pool().clone());
         if let Err(e) = monthly_maintenance::maybe_run_monthly_maintenance(&db, &repo).await {
             error!("Monthly maintenance error: {:?}", e);
         }
@@ -172,7 +175,7 @@ pub async fn run_server(args: Args) -> Result<(), Error> {
     // Set up encryption and authentication.
     let key = [0u8; 32];
     let encryptor = Encryptor::new(&key)?;
-    let creds_repo = SqliteCredentialsRepository::new(db.pool().clone(), encryptor);
+    let creds_repo = PostgresCredentialsRepository::new(db.pool().clone(), encryptor);
     let _auth_manager = AuthManager::new(
         Box::new(creds_repo.clone()),
         Box::new(StubAuthHandler::default()),
@@ -183,7 +186,7 @@ pub async fn run_server(args: Args) -> Result<(), Error> {
     plugin_manager.subscribe_to_event_bus(event_bus.clone());
     plugin_manager.set_event_bus(event_bus.clone());
 
-    // Load plugins:
+    // Load plugins.
     if let Some(path) = args.in_process_plugin.as_ref() {
         if let Err(e) = plugin_manager.load_in_process_plugin(path).await {
             error!("Failed to load in-process plugin from {}: {:?}", path, e);
@@ -205,7 +208,7 @@ pub async fn run_server(args: Args) -> Result<(), Error> {
     // Build additional services.
     let user_repo = UserRepository::new(db.pool().clone());
     let identity_repo = PlatformIdentityRepository::new(db.pool().clone());
-    let analysis_repo = SqliteUserAnalysisRepository::new(db.pool().clone());
+    let analysis_repo = PostgresUserAnalysisRepository::new(db.pool().clone());
     let default_user_mgr = DefaultUserManager::new(user_repo, identity_repo, analysis_repo);
     let user_manager = Arc::new(default_user_mgr);
     let user_service = Arc::new(UserService::new(user_manager.clone()));
@@ -219,11 +222,11 @@ pub async fn run_server(args: Args) -> Result<(), Error> {
     };
 
     let chat_cache = ChatCache::new(
-        SqliteUserAnalysisRepository::new(db.pool().clone()),
+        PostgresUserAnalysisRepository::new(db.pool().clone()),
         CacheConfig { trim_policy },
     );
     let chat_cache = Arc::new(tokio::sync::Mutex::new(chat_cache));
-    spawn_cache_prune_task(chat_cache.clone(), std::time::Duration::from_secs(60));
+    spawn_cache_prune_task(chat_cache.clone(), Duration::from_secs(60));
     let message_service = Arc::new(MessageService::new(chat_cache, event_bus.clone()));
 
     let platform_manager = maowbot_core::platforms::manager::PlatformManager::new(
@@ -285,12 +288,12 @@ pub async fn run_server(args: Args) -> Result<(), Error> {
     Ok(())
 }
 
-/// The client logic: it must trust the `server.crt` that the bot generates
+/// The client logic: it must trust the `server.crt` that the bot generates.
 async fn run_client(args: Args) -> Result<(), Error> {
     info!("Running in CLIENT mode. Connecting to server...");
 
     let server_url = format!("https://{}", args.server_addr);
-    let ca_cert_pem = std::fs::read("certs/server.crt")?;
+    let ca_cert_pem = fs::read("certs/server.crt")?;
     let ca_cert = Certificate::from_pem(ca_cert_pem);
 
     let tls_config = ClientTlsConfig::new().ca_certificate(ca_cert);

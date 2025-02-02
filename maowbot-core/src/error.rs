@@ -1,5 +1,5 @@
 // src/error.rs
-
+use pg_embed::pg_errors::PgEmbedError;
 use oauth2::http;
 use thiserror::Error;
 
@@ -66,6 +66,9 @@ pub enum Error {
 
     #[error("Library loading error: {0}")]
     LibLoading(#[from] libloading::Error),
+
+    #[error("PgEmbed error: {0}")]
+    PgEmbed(#[from] PgEmbedError),
 
 }
 

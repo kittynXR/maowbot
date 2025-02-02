@@ -10,11 +10,13 @@ use crate::Error;
 use crate::models::{User, Platform, PlatformIdentity};
 use crate::models::user_analysis::UserAnalysis;
 use crate::repositories::Repository;
-use crate::repositories::sqlite::{
+use crate::repositories::postgres::{
     user::UserRepository,
     platform_identity::PlatformIdentityRepository,
-    user_analysis::{UserAnalysisRepository, SqliteUserAnalysisRepository},
+    user_analysis::{UserAnalysisRepository, PostgresUserAnalysisRepository},
 };
+use crate::repositories::postgres::platform_identity::PlatformIdentityRepo;
+use crate::repositories::postgres::user::UserRepo;
 
 #[async_trait]
 pub trait UserManager: Send + Sync {
@@ -49,7 +51,7 @@ struct CachedUser {
 pub struct DefaultUserManager {
     user_repo: UserRepository,
     identity_repo: PlatformIdentityRepository,
-    analysis_repo: SqliteUserAnalysisRepository,
+    analysis_repo: PostgresUserAnalysisRepository,
 
     /// Concurrency-safe map: (Platform, platform_user_id) -> CachedUser
     pub user_cache: DashMap<(Platform, String), CachedUser>,
@@ -62,7 +64,7 @@ impl DefaultUserManager {
     pub fn new(
         user_repo: UserRepository,
         identity_repo: PlatformIdentityRepository,
-        analysis_repo: SqliteUserAnalysisRepository,
+        analysis_repo: PostgresUserAnalysisRepository,
     ) -> Self {
         Self {
             user_repo,

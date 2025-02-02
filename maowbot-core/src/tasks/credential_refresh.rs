@@ -2,17 +2,18 @@
 
 use chrono::{Duration};
 use tracing::{info, error};
-use crate::repositories::sqlite::SqliteCredentialsRepository;
+use crate::repositories::postgres::PostgresCredentialsRepository;
 use crate::auth::AuthManager;
 // use crate::models::Platform;
 use crate::Error;
+use crate::repositories::postgres::credentials::CredentialsRepository;
 
 /// Checks for credentials that will expire within `within_minutes` from now.
 /// For each such credential, calls `AuthManager::refresh_platform_credentials`.
 ///
 /// Returns Ok(()) even if some credentials fail to refresh (logs errors).
 pub async fn refresh_expiring_tokens(
-    creds_repo: &SqliteCredentialsRepository,
+    creds_repo: &PostgresCredentialsRepository,
     auth_manager: &mut AuthManager,
     within_minutes: i64,
 ) -> Result<(), Error> {

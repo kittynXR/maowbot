@@ -21,24 +21,28 @@ pub trait PlatformIdentityRepository {
                         -> impl std::future::Future<Output = Result<Vec<PlatformIdentity>, Error>> + Send;
 }
 
-#[async_trait]
-pub trait CredentialsRepository: Send + Sync {
-    async fn store_credentials(&self, cred: &PlatformCredential) -> Result<(), Error>;
-
-    async fn get_credentials(
-        &self,
-        platform: &Platform,  // Change to borrow Platform
-        user_id: &str
-    ) -> Result<Option<PlatformCredential>, Error>;
-
-    async fn update_credentials(&self, cred: &PlatformCredential) -> Result<(), Error>;
-
-    async fn delete_credentials(
-        &self,
-        platform: &Platform,  // Change to borrow Platform
-        user_id: &str
-    ) -> Result<(), Error>;
-}
+pub use postgres::credentials::{
+    CredentialsRepository,
+    PostgresCredentialsRepository,
+};
+// #[async_trait]
+// pub trait CredentialsRepository: Send + Sync {
+//     async fn store_credentials(&self, cred: &PlatformCredential) -> Result<(), Error>;
+//
+//     async fn get_credentials(
+//         &self,
+//         platform: &Platform,  // Change to borrow Platform
+//         user_id: &str
+//     ) -> Result<Option<PlatformCredential>, Error>;
+//
+//     async fn update_credentials(&self, cred: &PlatformCredential) -> Result<(), Error>;
+//
+//     async fn delete_credentials(
+//         &self,
+//         platform: &Platform,  // Change to borrow Platform
+//         user_id: &str
+//     ) -> Result<(), Error>;
+// }
 
 // Module declarations
-pub mod sqlite;
+pub mod postgres;

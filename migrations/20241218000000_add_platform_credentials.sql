@@ -1,18 +1,19 @@
--- add platform credentials
+-- migrations/20241218000000_add_platform_credentials.sql (Postgres version)
 
-CREATE TABLE platform_credentials (
-    credential_id TEXT NOT NULL PRIMARY KEY,
+CREATE TABLE IF NOT EXISTS platform_credentials (
+    credential_id TEXT PRIMARY KEY,
     platform TEXT NOT NULL,
-    credential_type TEXT NOT NULL, -- 'oauth', 'token', 'apikey', 'vc', etc
-    user_id TEXT NOT NULL, -- reference to the bot operator/broadcaster
-    primary_token TEXT NOT NULL, -- encrypted main token
-    refresh_token TEXT, -- encrypted refresh token if applicable
-    additional_data TEXT, -- encrypted JSON for extra auth data
-    expires_at INTEGER NOT NULL,
-    created_at INTEGER NOT NULL,
-    updated_at INTEGER NOT NULL,
-    FOREIGN KEY (user_id) REFERENCES users(user_id),
+    credential_type TEXT NOT NULL,
+    user_id TEXT NOT NULL,
+    primary_token TEXT NOT NULL,
+    refresh_token TEXT,
+    additional_data TEXT,
+    expires_at BIGINT,
+    created_at BIGINT NOT NULL,
+    updated_at BIGINT NOT NULL,
+    CONSTRAINT fk_userid FOREIGN KEY (user_id) REFERENCES users(user_id),
     UNIQUE (platform, user_id)
 );
 
-CREATE INDEX idx_platform_credentials_user ON platform_credentials(user_id, platform);
+CREATE INDEX IF NOT EXISTS idx_platform_credentials_user
+    ON platform_credentials (user_id, platform);

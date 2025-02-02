@@ -1,44 +1,30 @@
-mod postgres_embedded;
+// maowbot-core/src/db/mod.rs
+pub mod postgres_embedded;
 
-use sqlx::sqlite::{SqlitePoolOptions, SqliteConnectOptions};
-use sqlx::{Pool, Sqlite, SqlitePool};
-use anyhow::Result;
+use sqlx::postgres::{PgPoolOptions};
+use sqlx::{Pool, Postgres};
 use crate::Error;
+use anyhow::Result;
 
+/// Our Database struct now uses a Pool<Postgres>.
 pub struct Database {
-    pool: Pool<Sqlite>,
+    pool: Pool<Postgres>,
 }
 
 impl Database {
+    /// Create a new Database connection.
     pub async fn new(database_url: &str) -> Result<Self, Error> {
-        if database_url == ":memory:" {
-            // Use an in-memory DB
-            // `SqliteConnectOptions` has a special method for in-memory, or you can do:
-            let pool = SqlitePool::connect(":memory:").await?;
-            return Ok(Self { pool });
-        } else {
-            // 1) Build absolute path so we can pass it to .filename(...)
-            let path = std::env::current_dir()?.join(database_url);
+        // Example: connect to Postgres with a small pool size, just a demonstration
+        let pool = PgPoolOptions::new()
+            .max_connections(5)
+            .connect(database_url)
+            .await?;
 
-            // If you need to log path after the `.filename(...)`, clone it:
-            let path_clone = path.clone();
-
-            // Build connect opts
-            let connect_opts = SqliteConnectOptions::new()
-                .filename(path) // consumes the original
-                .create_if_missing(true);
-
-            let pool = SqlitePoolOptions::new()
-                .connect_with(connect_opts)
-                .await?;
-
-            println!("Connected to SQLite local file at {:?}", path_clone);
-
-            Ok(Self { pool })
-
-        }
+        println!("Connected to Postgres at {}", database_url);
+        Ok(Self { pool })
     }
 
+    /// Run migrations in the `migrations/` folder.
     pub async fn migrate(&self) -> Result<(), Error> {
         println!("Applying migrations...");
         sqlx::migrate!("../migrations").run(&self.pool).await?;
@@ -46,12 +32,12 @@ impl Database {
         Ok(())
     }
 
-    pub fn pool(&self) -> &Pool<Sqlite> {
+    pub fn pool(&self) -> &Pool<Postgres> {
         &self.pool
     }
 
-    /// Optional: if you want a “from_pool” constructor for tests
-    pub fn from_pool(pool: SqlitePool) -> Self {
+    /// Optional: if you want a from_pool constructor for tests
+    pub fn from_pool(pool: Pool<Postgres>) -> Self {
         Self { pool }
     }
 }

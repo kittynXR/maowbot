@@ -1,26 +1,22 @@
--- migrations/20250128000000_add_user_analysis_history.sql
+-- migrations/20250128000000_add_user_analysis_history.sql (Postgres)
 
 CREATE TABLE IF NOT EXISTS user_analysis_history (
-    user_analysis_history_id TEXT NOT NULL PRIMARY KEY,
-    user_id TEXT NOT NULL,                -- references users(user_id)
-    year_month TEXT NOT NULL,             -- e.g. "2025-01"
+    user_analysis_history_id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    year_month TEXT NOT NULL,
     spam_score REAL NOT NULL DEFAULT 0,
     intelligibility_score REAL NOT NULL DEFAULT 0,
     quality_score REAL NOT NULL DEFAULT 0,
     horni_score REAL NOT NULL DEFAULT 0,
-    ai_notes TEXT,                        -- monthly summary from the AI
-    created_at INTEGER NOT NULL,
-
-    FOREIGN KEY (user_id) REFERENCES users(user_id)
+    ai_notes TEXT,
+    created_at BIGINT NOT NULL,
+    CONSTRAINT fk_user FOREIGN KEY (user_id) REFERENCES users(user_id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_user_analysis_history_user_month
     ON user_analysis_history (user_id, year_month);
 
 CREATE TABLE IF NOT EXISTS maintenance_state (
-    state_key TEXT NOT NULL PRIMARY KEY,
+    state_key TEXT PRIMARY KEY,
     state_value TEXT
 );
-
--- We will store "archived_until" => "YYYY-MM" in that table
--- Example row: ("archived_until", "2024-12")

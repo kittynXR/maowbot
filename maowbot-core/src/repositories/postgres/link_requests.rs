@@ -1,11 +1,11 @@
-use sqlx::{Pool, Sqlite, Row};
+// src/repositories/postgres/link_requests.rs
 use crate::Error;
 use async_trait::async_trait;
-use chrono::{NaiveDateTime, Utc};
+use chrono::Utc;
+use sqlx::{Pool, Postgres, Row};
 use uuid::Uuid;
 use crate::utils::time::{to_epoch, from_epoch};
 
-/// Reflects one row in the `link_requests` table
 #[derive(Debug, Clone)]
 pub struct LinkRequest {
     pub link_request_id: String,
@@ -14,8 +14,8 @@ pub struct LinkRequest {
     pub target_platform_user_id: Option<String>,
     pub link_code: Option<String>,
     pub status: String,
-    pub created_at: NaiveDateTime,
-    pub updated_at: NaiveDateTime,
+    pub created_at: i64,
+    pub updated_at: i64,
 }
 
 impl LinkRequest {
@@ -25,6 +25,7 @@ impl LinkRequest {
         target_platform_user_id: Option<&str>,
         link_code: Option<&str>,
     ) -> Self {
+        let now = Utc::now().naive_utc();
         Self {
             link_request_id: Uuid::new_v4().to_string(),
             requesting_user_id: requesting_user_id.to_string(),
@@ -32,8 +33,8 @@ impl LinkRequest {
             target_platform_user_id: target_platform_user_id.map(|s| s.to_string()),
             link_code: link_code.map(|s| s.to_string()),
             status: "pending".to_string(),
-            created_at: Utc::now().naive_utc(),
-            updated_at: Utc::now().naive_utc(),
+            created_at: to_epoch(now),
+            updated_at: to_epoch(now),
         }
     }
 }
@@ -46,20 +47,19 @@ pub trait LinkRequestsRepository {
     async fn delete_link_request(&self, link_request_id: &str) -> Result<(), Error>;
 }
 
-/// Concrete implementation with SQLite
 #[derive(Clone)]
-pub struct SqliteLinkRequestsRepository {
-    pool: Pool<Sqlite>,
+pub struct PostgresLinkRequestsRepository {
+    pool: Pool<Postgres>,
 }
 
-impl SqliteLinkRequestsRepository {
-    pub fn new(pool: Pool<Sqlite>) -> Self {
+impl PostgresLinkRequestsRepository {
+    pub fn new(pool: Pool<Postgres>) -> Self {
         Self { pool }
     }
 }
 
 #[async_trait]
-impl LinkRequestsRepository for SqliteLinkRequestsRepository {
+impl LinkRequestsRepository for PostgresLinkRequestsRepository {
     async fn create_link_request(&self, req: &LinkRequest) -> Result<(), Error> {
         sqlx::query(
             r#"
@@ -73,8 +73,8 @@ impl LinkRequestsRepository for SqliteLinkRequestsRepository {
                 created_at,
                 updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            "#
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            "#,
         )
             .bind(&req.link_request_id)
             .bind(&req.requesting_user_id)
@@ -82,8 +82,8 @@ impl LinkRequestsRepository for SqliteLinkRequestsRepository {
             .bind(&req.target_platform_user_id)
             .bind(&req.link_code)
             .bind(&req.status)
-            .bind(to_epoch(req.created_at))
-            .bind(to_epoch(req.updated_at))
+            .bind(req.created_at)
+            .bind(req.updated_at)
             .execute(&self.pool)
             .await?;
         Ok(())
@@ -92,17 +92,18 @@ impl LinkRequestsRepository for SqliteLinkRequestsRepository {
     async fn get_link_request(&self, link_request_id: &str) -> Result<Option<LinkRequest>, Error> {
         let row = sqlx::query(
             r#"
-            SELECT link_request_id,
-                   requesting_user_id,
-                   target_platform,
-                   target_platform_user_id,
-                   link_code,
-                   status,
-                   created_at,
-                   updated_at
+            SELECT
+                link_request_id,
+                requesting_user_id,
+                target_platform,
+                target_platform_user_id,
+                link_code,
+                status,
+                created_at,
+                updated_at
             FROM link_requests
-            WHERE link_request_id = ?
-            "#
+            WHERE link_request_id = $1
+            "#,
         )
             .bind(link_request_id)
             .fetch_optional(&self.pool)
@@ -116,8 +117,8 @@ impl LinkRequestsRepository for SqliteLinkRequestsRepository {
                 target_platform_user_id: r.try_get("target_platform_user_id")?,
                 link_code: r.try_get("link_code")?,
                 status: r.try_get("status")?,
-                created_at: from_epoch(r.try_get::<i64, _>("created_at")?),
-                updated_at: from_epoch(r.try_get::<i64, _>("updated_at")?),
+                created_at: r.try_get::<i64, _>("created_at")?,
+                updated_at: r.try_get::<i64, _>("updated_at")?,
             }))
         } else {
             Ok(None)
@@ -125,35 +126,33 @@ impl LinkRequestsRepository for SqliteLinkRequestsRepository {
     }
 
     async fn update_link_request(&self, req: &LinkRequest) -> Result<(), Error> {
-        let now = Utc::now().naive_utc();
-
+        let now = to_epoch(Utc::now().naive_utc());
         sqlx::query(
             r#"
             UPDATE link_requests
-            SET requesting_user_id = ?,
-                target_platform = ?,
-                target_platform_user_id = ?,
-                link_code = ?,
-                status = ?,
-                updated_at = ?
-            WHERE link_request_id = ?
-            "#
+            SET requesting_user_id = $1,
+                target_platform = $2,
+                target_platform_user_id = $3,
+                link_code = $4,
+                status = $5,
+                updated_at = $6
+            WHERE link_request_id = $7
+            "#,
         )
             .bind(&req.requesting_user_id)
             .bind(&req.target_platform)
             .bind(&req.target_platform_user_id)
             .bind(&req.link_code)
             .bind(&req.status)
-            .bind(to_epoch(now))
+            .bind(now)
             .bind(&req.link_request_id)
             .execute(&self.pool)
             .await?;
-
         Ok(())
     }
 
     async fn delete_link_request(&self, link_request_id: &str) -> Result<(), Error> {
-        sqlx::query("DELETE FROM link_requests WHERE link_request_id = ?")
+        sqlx::query("DELETE FROM link_requests WHERE link_request_id = $1")
             .bind(link_request_id)
             .execute(&self.pool)
             .await?;

@@ -1,33 +1,41 @@
-// src/repositories/sqlite/user.rs
+// src/repositories/postgres/user.rs
 
-use crate::utils::time::{to_epoch, from_epoch, current_epoch};
 use crate::models::User;
+use crate::utils::time::{to_epoch, from_epoch, current_epoch};
 use crate::Error;
-use sqlx::Row;
+use sqlx::{Pool, Postgres, Row};
+
+#[async_trait::async_trait]
+pub trait UserRepo {
+    async fn create(&self, user: &User) -> Result<(), Error>;
+    async fn get(&self, id: &str) -> Result<Option<User>, Error>;
+    async fn update(&self, user: &User) -> Result<(), Error>;
+    async fn delete(&self, id: &str) -> Result<(), Error>;
+}
 
 pub struct UserRepository {
-    pub pool: sqlx::Pool<sqlx::Sqlite>,
+    pub pool: Pool<Postgres>,
 }
 
 impl UserRepository {
-    /// Constructor for UserRepository.
-    pub fn new(pool: sqlx::Pool<sqlx::Sqlite>) -> Self {
+    pub fn new(pool: Pool<Postgres>) -> Self {
         Self { pool }
     }
 }
 
 #[async_trait::async_trait]
-impl crate::repositories::Repository<User> for UserRepository {
+impl UserRepo for UserRepository {
     async fn create(&self, user: &User) -> Result<(), Error> {
+        // Insert with placeholders $1..$5
         sqlx::query(
             r#"
             INSERT INTO users (user_id, created_at, last_seen, is_active, global_username)
-            VALUES (?, ?, ?, ?, ?)
-            "#
+            VALUES ($1, $2, $3, $4, $5)
+            "#,
         )
             .bind(&user.user_id)
-            .bind(current_epoch())
-            .bind(current_epoch())
+            .bind(to_epoch(user.created_at))
+            .bind(to_epoch(user.last_seen))
             .bind(user.is_active)
             .bind(&user.global_username)
             .execute(&self.pool)
@@ -40,8 +48,8 @@ impl crate::repositories::Repository<User> for UserRepository {
             r#"
             SELECT user_id, global_username, created_at, last_seen, is_active
             FROM users
-            WHERE user_id = ?
-            "#
+            WHERE user_id = $1
+            "#,
         )
             .bind(id)
             .fetch_optional(&self.pool)
@@ -64,11 +72,11 @@ impl crate::repositories::Repository<User> for UserRepository {
         sqlx::query(
             r#"
             UPDATE users
-            SET global_username = ?,
-                last_seen = ?,
-                is_active = ?
-            WHERE user_id = ?
-            "#
+            SET global_username = $1,
+                last_seen = $2,
+                is_active = $3
+            WHERE user_id = $4
+            "#,
         )
             .bind(&user.global_username)
             .bind(to_epoch(user.last_seen))
@@ -80,7 +88,7 @@ impl crate::repositories::Repository<User> for UserRepository {
     }
 
     async fn delete(&self, id: &str) -> Result<(), Error> {
-        sqlx::query("DELETE FROM users WHERE user_id = ?")
+        sqlx::query("DELETE FROM users WHERE user_id = $1")
             .bind(id)
             .execute(&self.pool)
             .await?;

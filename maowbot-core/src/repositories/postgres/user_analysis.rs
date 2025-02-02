@@ -1,13 +1,11 @@
-// File: src/repositories/sqlite/user_analysis.rs
+// src/repositories/postgres/user_analysis.rs
 
-use sqlx::{Pool, Sqlite, Row};
+use sqlx::{Pool, Postgres, Row};
 use async_trait::async_trait;
-use chrono::Utc;
 use crate::utils::time::{to_epoch, from_epoch, current_epoch};
 use crate::Error;
 use crate::models::UserAnalysis;
 
-/// Trait for user analysis repository
 #[async_trait]
 pub trait UserAnalysisRepository: Send + Sync {
     async fn create_analysis(&self, analysis: &UserAnalysis) -> Result<(), Error>;
@@ -15,20 +13,19 @@ pub trait UserAnalysisRepository: Send + Sync {
     async fn update_analysis(&self, analysis: &UserAnalysis) -> Result<(), Error>;
 }
 
-/// Concrete SQLite repo
 #[derive(Clone)]
-pub struct SqliteUserAnalysisRepository {
-    pool: Pool<Sqlite>,
+pub struct PostgresUserAnalysisRepository {
+    pool: Pool<Postgres>,
 }
 
-impl SqliteUserAnalysisRepository {
-    pub fn new(pool: Pool<Sqlite>) -> Self {
+impl PostgresUserAnalysisRepository {
+    pub fn new(pool: Pool<Postgres>) -> Self {
         Self { pool }
     }
 }
 
 #[async_trait]
-impl UserAnalysisRepository for SqliteUserAnalysisRepository {
+impl UserAnalysisRepository for PostgresUserAnalysisRepository {
     async fn create_analysis(&self, analysis: &UserAnalysis) -> Result<(), Error> {
         sqlx::query(
             r#"
@@ -43,8 +40,9 @@ impl UserAnalysisRepository for SqliteUserAnalysisRepository {
                 moderator_notes,
                 created_at,
                 updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            "#
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+            "#,
         )
             .bind(&analysis.user_analysis_id)
             .bind(&analysis.user_id)
@@ -76,8 +74,8 @@ impl UserAnalysisRepository for SqliteUserAnalysisRepository {
                 created_at,
                 updated_at
             FROM user_analysis
-            WHERE user_id = ?
-            "#
+            WHERE user_id = $1
+            "#,
         )
             .bind(user_id)
             .fetch_optional(&self.pool)
@@ -106,15 +104,15 @@ impl UserAnalysisRepository for SqliteUserAnalysisRepository {
         sqlx::query(
             r#"
             UPDATE user_analysis
-            SET spam_score = ?,
-                intelligibility_score = ?,
-                quality_score = ?,
-                horni_score = ?,
-                ai_notes = ?,
-                moderator_notes = ?,
-                updated_at = ?
-            WHERE user_analysis_id = ?
-            "#
+            SET spam_score = $1,
+                intelligibility_score = $2,
+                quality_score = $3,
+                horni_score = $4,
+                ai_notes = $5,
+                moderator_notes = $6,
+                updated_at = $7
+            WHERE user_analysis_id = $8
+            "#,
         )
             .bind(analysis.spam_score)
             .bind(analysis.intelligibility_score)

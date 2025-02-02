@@ -1,17 +1,17 @@
--- migrations/20250121000002_add_user_analysis.sql
+-- migrations/20250127000000_add_user_analysis.sql (Postgres)
 
 CREATE TABLE IF NOT EXISTS user_analysis (
-    user_analysis_id TEXT NOT NULL PRIMARY KEY,
-    user_id TEXT NOT NULL, -- references users(user_id)
+    user_analysis_id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
     spam_score REAL NOT NULL DEFAULT 0,
     intelligibility_score REAL NOT NULL DEFAULT 0,
     quality_score REAL NOT NULL DEFAULT 0,
     horni_score REAL NOT NULL DEFAULT 0,
-    ai_notes TEXT,         -- freeform AI metadata
-    moderator_notes TEXT,  -- mod's hand-written notes
-    created_at INTEGER NOT NULL,
-    updated_at INTEGER NOT NULL,
-    FOREIGN KEY (user_id) REFERENCES users(user_id)
+    ai_notes TEXT,
+    moderator_notes TEXT,
+    created_at BIGINT NOT NULL,
+    updated_at BIGINT NOT NULL,
+    CONSTRAINT fk_user FOREIGN KEY (user_id) REFERENCES users(user_id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_user_analysis_user
