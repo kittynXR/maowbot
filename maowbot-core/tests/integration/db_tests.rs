@@ -1,21 +1,21 @@
 // tests/db_tests.rs
 
-use maowbot_core::{Database, models::{User, Platform, PlatformIdentity}, Error};
 use chrono::Utc;
-use std::{env, fs};
 use serde_json::json;
+use sqlx::{Row};
 use uuid::Uuid;
-use sqlx::{Row, Error as SqlxError};
-use maowbot_core::utils::time::{from_epoch};
-use crate::test_utils::{create_test_db_pool, clean_database};
+
+use maowbot_core::{
+    db::Database,
+    Error,
+    models::{Platform, PlatformIdentity},
+    utils::time::from_epoch,
+};
+use crate::test_utils::helpers::setup_test_database;
 
 #[tokio::test]
 async fn test_database_connection() -> Result<(), Error> {
-    let db_url = "postgres://maow@localhost/maowbot";
-    let db = Database::new(db_url).await?;
-    db.migrate().await?;
-
-    clean_database(db.pool()).await?;
+    let db = setup_test_database().await?;
 
     let now = Utc::now().naive_utc();
     sqlx::query(
@@ -42,31 +42,27 @@ async fn test_database_connection() -> Result<(), Error> {
 
     let created_epoch: i64 = row.try_get("created_at")?;
     let last_seen_epoch: i64 = row.try_get("last_seen")?;
+
     let created_at = from_epoch(created_epoch);
     let last_seen = from_epoch(last_seen_epoch);
 
     assert_eq!(row.try_get::<String, _>("user_id")?, "test_user");
+    assert!(created_at.timestamp() > 0);
+    assert!(last_seen.timestamp() > 0);
+
     Ok(())
 }
 
 #[tokio::test]
 async fn test_migration() -> Result<(), Error> {
-    let db_url = "postgres://maow@localhost/maowbot";
-    let db = Database::new(db_url).await?;
-    db.migrate().await?;
-
-    clean_database(db.pool()).await?;
+    // Just ensure migrations run without error and the DB is valid
+    let _db = setup_test_database().await?;
     Ok(())
 }
 
 #[tokio::test]
 async fn test_platform_identity() -> Result<(), Error> {
-    let db_url = "postgres://maow@localhost/maowbot";
-    let db = Database::new(db_url).await?;
-    db.migrate().await?;
-
-    // Clean the database state.
-    clean_database(db.pool()).await?;
+    let db = setup_test_database().await?;
 
     let now = Utc::now().naive_utc();
     sqlx::query(

@@ -1,16 +1,23 @@
-// tests/integration/credential_tests.rs
+// tests/credential_tests.rs
 
-use maowbot_core::{Database, models::*, repositories::CredentialsRepository, repositories::postgres::PostgresCredentialsRepository, crypto::Encryptor, Error};
 use chrono::Utc;
-use uuid::Uuid;
 use sqlx::Executor;
+use uuid::Uuid;
+
+use maowbot_core::{
+    crypto::Encryptor,
+    models::{CredentialType, Platform, PlatformCredential},
+    repositories::{CredentialsRepository},
+    repositories::postgres::PostgresCredentialsRepository,
+    Error,
+};
+use crate::test_utils::helpers::setup_test_database;
 
 #[tokio::test]
 async fn test_credential_storage() -> Result<(), Error> {
-    let db_url = "postgres://maow@localhost/maowbot";
-    let db = Database::new(db_url).await?;
-    db.migrate().await?;
+    let db = setup_test_database().await?;
 
+    // We still need an Encryptor for the credential repository
     let key = [0u8; 32]; // test key
     let encryptor = Encryptor::new(&key)?;
 
@@ -45,7 +52,9 @@ async fn test_credential_storage() -> Result<(), Error> {
     };
 
     repo.store_credentials(&test_cred).await?;
-    let retrieved = repo.get_credentials(&Platform::Twitch, "test_user")
+
+    let retrieved = repo
+        .get_credentials(&Platform::Twitch, "test_user")
         .await?
         .expect("Credentials should exist");
 

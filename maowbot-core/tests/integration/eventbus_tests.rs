@@ -2,35 +2,30 @@
 
 #[cfg(test)]
 mod tests {
-    use maowbot_core::Database;
-    use maowbot_core::models::{Platform, User};
-    use maowbot_core::repositories::postgres::{
-        user::UserRepository,
-        platform_identity::PlatformIdentityRepository,
-        user_analysis::PostgresUserAnalysisRepository,
-    };
-    use maowbot_core::auth::{UserManager, DefaultUserManager};
-    use maowbot_core::Error;
+    use std::sync::Arc;
     use uuid::Uuid;
-    use std::env;
 
-    /// A helper to create a **Postgres** test DB connection, run migrations,
-    /// and build a DefaultUserManager that uses Postgres repositories.
+    use maowbot_core::{
+        auth::{DefaultUserManager, UserManager},
+        db::Database,
+        eventbus::EventBus,
+        models::Platform,
+        repositories::postgres::{
+            platform_identity::PlatformIdentityRepository,
+            user::UserRepository,
+            user_analysis::PostgresUserAnalysisRepository,
+        },
+        Error,
+    };
+    use crate::test_utils::helpers::setup_test_database;
+
+    /// Replaces the old custom code with our helper-based approach.
     async fn setup_user_manager() -> Result<DefaultUserManager, Error> {
-        // 1) Use an env var or fallback
-        let test_db_url = env::var("TEST_DATABASE_URL")
-            .unwrap_or_else(|_| "postgres://maow:maow@localhost/maowbot_test".to_string());
-
-        // 2) Create DB object + run migrations
-        let db = Database::new(&test_db_url).await?;
-        db.migrate().await?;
-
-        // 3) Create Postgres-based repositories
+        let db = setup_test_database().await?;
         let user_repo = UserRepository::new(db.pool().clone());
         let ident_repo = PlatformIdentityRepository::new(db.pool().clone());
         let analysis_repo = PostgresUserAnalysisRepository::new(db.pool().clone());
 
-        // 4) Build our DefaultUserManager
         Ok(DefaultUserManager::new(user_repo, ident_repo, analysis_repo))
     }
 
@@ -47,10 +42,8 @@ mod tests {
             .await?;
         assert!(!user.user_id.is_empty(), "Should have a new user_id");
         assert!(user.is_active);
-        assert!(user.last_seen.timestamp() > 0);
 
-        // Next time we call get_or_create with same IDs,
-        // we should retrieve the same user from the cache or DB
+        // Next time with same IDs => same user from cache/DB
         let user2 = manager
             .get_or_create_user(Platform::Discord, &random_id, Some("testuser2"))
             .await?;

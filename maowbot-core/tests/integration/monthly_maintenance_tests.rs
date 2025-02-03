@@ -18,20 +18,6 @@ fn parse_to_seconds(s: &str) -> Result<i64, Error> {
     Ok(dt.timestamp())
 }
 
-async fn create_single_conn_pool(_db_path: &str) -> Result<PgPool, Error> {
-    // Use a dedicated test database.
-    let connect_opts = PgConnectOptions::new()
-        .host("localhost")
-        .port(5432)
-        .username("maow")
-        .database("maowbot"); // ensure this test database exists and is dedicated for testing
-    let pool = PgPoolOptions::new()
-        .max_connections(1)
-        .connect_with(connect_opts)
-        .await?;
-    Ok(pool)
-}
-
 async fn create_test_schema(pool: &PgPool) -> Result<(), Error> {
     // Drop tables if they exist so we get a clean slate.
     sqlx::query("DROP TABLE IF EXISTS chat_messages CASCADE;").execute(pool).await?;
@@ -105,11 +91,6 @@ async fn create_test_schema(pool: &PgPool) -> Result<(), Error> {
     Ok(())
 }
 
-async fn create_test_database(_db_path: &str) -> Result<Database, Error> {
-    let pool = create_single_conn_pool(_db_path).await?;
-    Ok(Database::from_pool(pool))
-}
-
 #[tokio::test]
 async fn test_collect_missing_months_logic() -> Result<(), Error> {
     let months = collect_missing_months(Some("2024-11"), "2025-01")?;
@@ -130,11 +111,7 @@ async fn test_parse_year_month() -> Result<(), Error> {
 
 #[tokio::test]
 async fn test_archive_one_month_no_attach() -> Result<(), Error> {
-    // We'll insert rows using today's timestamp so they fit into the current partition.
-    let tmp_main = NamedTempFile::new()?;
-    let main_db_path = tmp_main.path().display().to_string();
-    let db = create_test_database(&main_db_path).await?;
-    create_test_schema(db.pool()).await?;
+    let db = setup_test_database().await?;
 
     // Insert dummy users.
     let now = Utc::now().timestamp();
@@ -210,11 +187,7 @@ async fn test_archive_one_month_no_attach() -> Result<(), Error> {
 
 #[tokio::test]
 async fn test_maybe_run_monthly_maintenance_integration() -> Result<(), Error> {
-    // We'll insert data using today's timestamp.
-    let tmpfile = NamedTempFile::new()?;
-    let main_db_path = tmpfile.path().display().to_string();
-    let db = create_test_database(&main_db_path).await?;
-    create_test_schema(db.pool()).await?;
+    let db = setup_test_database().await?;
 
     let now = Utc::now().timestamp();
     // Insert two users.

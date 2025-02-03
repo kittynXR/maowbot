@@ -1,32 +1,26 @@
 // tests/integration/user_manager_tests.rs
 
 use uuid::Uuid;
+
 use maowbot_core::{
     auth::{DefaultUserManager, UserManager},
+    db::Database,
     Error,
-    models::{Platform, User},
+    models::Platform,
     repositories::postgres::{
         user::UserRepository,
         platform_identity::PlatformIdentityRepository,
         user_analysis::PostgresUserAnalysisRepository,
     },
-    db::Database,
 };
-use crate::test_utils::{create_test_db_pool, clean_database};
+use crate::test_utils::helpers::{setup_test_database};
 
-/// Creates a test Postgres DB pool, cleans it, runs migrations,
-/// and returns a fully ready DefaultUserManager for testing.
+/// Simplify test setup by using our helper.
 async fn setup_user_manager() -> Result<DefaultUserManager, Error> {
-    let pool = create_test_db_pool().await?;
-    clean_database(&pool).await?;
-
-    let db = Database::from_pool(pool.clone());
-    db.migrate().await?;
-
+    let db = setup_test_database().await?;
     let user_repo = UserRepository::new(db.pool().clone());
     let ident_repo = PlatformIdentityRepository::new(db.pool().clone());
     let analysis_repo = PostgresUserAnalysisRepository::new(db.pool().clone());
-
     Ok(DefaultUserManager::new(user_repo, ident_repo, analysis_repo))
 }
 
@@ -44,7 +38,7 @@ async fn test_get_or_create_user() -> Result<(), Error> {
     let user2 = manager
         .get_or_create_user(Platform::Discord, &random_id, Some("testuser2"))
         .await?;
-    assert_eq!(user.user_id, user2.user_id, "Should fetch same user from cache/DB");
+    assert_eq!(user.user_id, user2.user_id);
 
     Ok(())
 }
@@ -102,13 +96,13 @@ async fn test_cache_ttl_expiration() -> Result<(), Error> {
     let changed = manager
         .test_force_last_access(Platform::Discord, platform_user_id, 25)
         .await;
-    assert!(changed, "Should have updated the cache entry to 25h old");
+    assert!(changed);
 
     let user2 = manager
         .get_or_create_user(Platform::Discord, platform_user_id, Some("DiscordTest2"))
         .await?;
 
-    assert_eq!(user.user_id, user2.user_id, "Should be same DB user, old cache entry was pruned");
+    assert_eq!(user.user_id, user2.user_id);
 
     Ok(())
 }

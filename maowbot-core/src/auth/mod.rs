@@ -7,9 +7,6 @@ pub mod user_manager;
 pub use manager::AuthManager;
 pub use user_manager::{UserManager, DefaultUserManager};
 
-#[cfg(test)]
-mod user_manager_tests;
-
 #[derive(Debug, Clone)]
 pub enum AuthenticationPrompt {
     Browser { url: String },
