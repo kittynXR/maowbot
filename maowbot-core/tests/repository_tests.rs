@@ -1,10 +1,16 @@
 // tests/repository_tests.rs
-
-use maowbot::{Database, models::{User, Platform, PlatformIdentity}, repositories::postgres::{UserRepository, PlatformIdentityRepository}, repositories::Repository, Error};
+use maowbot_core::Database;
+use maowbot_core::models::{Platform, PlatformIdentity, User};
+use maowbot_core::repositories::postgres::UserRepository;
+use maowbot_core::repositories::postgres::platform_identity::{PlatformIdentityRepo, PlatformIdentityRepository};
+use maowbot_core::repositories::Repository;
+use maowbot_core::Error;
 use chrono::Utc;
 use serde_json::json;
 use uuid::Uuid;
-use maowbot::utils::time::{to_epoch, from_epoch};
+use maowbot_core::utils::time::{to_epoch, from_epoch};
+use sqlx::Executor;
+use maowbot_core::repositories::postgres::user::UserRepo;
 
 async fn setup_test_db() -> Database {
     let db = Database::new(":memory:").await.unwrap();

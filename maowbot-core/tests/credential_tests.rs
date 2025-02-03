@@ -1,15 +1,18 @@
 // tests/credential_tests.rs
 
-use maowbot::{Database, models::*, repositories::CredentialsRepository, repositories::postgres::PostgresCredentialsRepository, crypto::Encryptor, Error};
+use maowbot_core::{Database, models::*, repositories::CredentialsRepository, repositories::postgres::PostgresCredentialsRepository, crypto::Encryptor, Error};
 use chrono::Utc;
 use uuid::Uuid;
 use sqlx::{Row};
+use sqlx::Executor;
 
 async fn setup_test_db() -> (Database, Encryptor) {
-    let db = Database::new(":memory:").await.unwrap();
+    // Use a proper absolute Postgres URL:
+    let db_url = "postgres://maow@localhost/maowbot";
+    let db = Database::new(db_url).await.unwrap();
     db.migrate().await.unwrap();
 
-    // In production, this key would come from secure config
+    // In production, this key would come from secure config.
     let key = [0u8; 32]; // Test key
     let encryptor = Encryptor::new(&key).unwrap();
 
@@ -23,19 +26,19 @@ async fn test_credential_storage() -> Result<(), Error> {
 
     let now = Utc::now().naive_utc();
 
-    // Must insert a user first, due to the FOREIGN KEY constraint
     sqlx::query(
         r#"
-        INSERT INTO users (user_id, created_at, last_seen, is_active)
-        VALUES (?, ?, ?, ?)
-        "#
-    )
+            INSERT INTO users (user_id, created_at, last_seen, is_active)
+            VALUES ($1, $2, $3, $4)
+            "#
+        )
         .bind("test_user")
-        .bind(now)
-        .bind(now)
+        .bind(now.timestamp()) // converting to an integer
+        .bind(now.timestamp())
         .bind(true)
         .execute(db.pool())
         .await?;
+
 
     let test_cred = PlatformCredential {
         credential_id: "test_id".to_string(),

@@ -1,45 +1,42 @@
 // tests/db_tests.rs
 
-use maowbot::{Database, models::{User, Platform, PlatformIdentity}, Error};
+use maowbot_core::{Database, models::{User, Platform, PlatformIdentity}, Error};
 use chrono::Utc;
 use std::{env, fs};
 use serde_json::json;
 use uuid::Uuid;
 use sqlx::{Row, Error as SqlxError};
-use maowbot::utils::time::{from_epoch};
+use maowbot_core::utils::time::{from_epoch};
 
 #[tokio::test]
-async fn test_database_connection() -> Result<(), Error> {
-    // Build a test database file path.
-    let db_path = env::current_dir()?.join("data/test.db");
-    if db_path.exists() {
-        fs::remove_file(&db_path)?;
-    }
-
-    let db = Database::new(db_path.to_str().unwrap()).await?;
+async fn test_database_connection() -> Result<(), maowbot_core::Error> {
+    let db_url = "postgres://maow@localhost/maowbot";
+    let db = Database::new(db_url).await?;
     db.migrate().await?;
 
+    // Clean the database state.
+    clean_database(db.pool()).await?;
+
     let now = Utc::now().naive_utc();
-    // Insert a user, storing timestamps as epoch seconds.
     sqlx::query(
         r#"
-        INSERT INTO users (user_id, created_at, last_seen, is_active)
-        VALUES (?, ?, ?, ?)
-        "#
-    )
+            INSERT INTO users (user_id, created_at, last_seen, is_active)
+            VALUES ($1, $2, $3, $4)
+            "#
+        )
         .bind("test_user")
-        .bind(now.timestamp())  // store as INTEGER
+        .bind(now.timestamp())
         .bind(now.timestamp())
         .bind(true)
         .execute(db.pool())
         .await?;
 
-    // Fetch the user and convert the stored epoch integers back to NaiveDateTime.
+    // Continue with your assertions...
     let row = sqlx::query(
         r#"
         SELECT user_id, global_username, created_at, last_seen, is_active
         FROM users
-        WHERE user_id = ?
+        WHERE user_id = $1
         "#
     )
         .bind("test_user")
@@ -52,47 +49,43 @@ async fn test_database_connection() -> Result<(), Error> {
     let last_seen = from_epoch(last_seen_epoch);
 
     assert_eq!(row.try_get::<String, _>("user_id")?, "test_user");
-    // Optionally, you can compare the converted NaiveDateTime values with your original timestamps.
-
     Ok(())
 }
 
 #[tokio::test]
 async fn test_migration() -> Result<(), Error> {
-    let db = Database::new(":memory:").await?;
+    let db_url = "postgres://maow@localhost/maowbot";
+    let db = Database::new(db_url).await?;
     db.migrate().await?;
-    Ok(())
-}
 
-/// Basic file-access test (non-async)
-#[test]
-fn test_file_access() {
-    let db_path = std::path::Path::new("data/test.db");
-    if db_path.exists() {
-        std::fs::remove_file(&db_path).unwrap();
-    }
-    let file = std::fs::File::create(&db_path);
-    assert!(file.is_ok(), "Failed to create test database file");
+    // Clean the database state.
+    clean_database(db.pool()).await?;
+    Ok(())
 }
 
 #[tokio::test]
 async fn test_platform_identity() -> Result<(), Error> {
-    let db = Database::new(":memory:").await?;
+    let db_url = "postgres://maow@localhost/maowbot";
+    let db = Database::new(db_url).await?;
     db.migrate().await?;
 
-    // First create a user
+    // Clean the database state.
+    clean_database(db.pool()).await?;
+
     let now = Utc::now().naive_utc();
     sqlx::query(
-        "INSERT INTO users (user_id, created_at, last_seen, is_active) VALUES (?, ?, ?, ?)"
+        r#"
+        INSERT INTO users (user_id, created_at, last_seen, is_active)
+        VALUES ($1, $2, $3, $4)
+        "#
     )
         .bind("test_user")
-        .bind(now)
-        .bind(now)
+        .bind(now.timestamp())
+        .bind(now.timestamp())
         .bind(true)
         .execute(db.pool())
         .await?;
 
-    // Create a platform identity
     let platform_identity_id = Uuid::new_v4().to_string();
     let platform_str = "twitch_helix";
     let roles_json = serde_json::to_string(&vec!["broadcaster"]).unwrap();
@@ -105,7 +98,7 @@ async fn test_platform_identity() -> Result<(), Error> {
             platform_username, platform_display_name, platform_roles,
             platform_data, created_at, last_updated
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
         "#
     )
         .bind(&platform_identity_id)
@@ -116,17 +109,16 @@ async fn test_platform_identity() -> Result<(), Error> {
         .bind("Twitch User")
         .bind(roles_json)
         .bind(data_json)
-        .bind(now)
-        .bind(now)
+        .bind(now.timestamp())
+        .bind(now.timestamp())
         .execute(db.pool())
         .await?;
 
-    // Verify
     let row = sqlx::query(
         r#"
         SELECT platform_identity_id, platform_user_id, platform_username
         FROM platform_identities
-        WHERE platform_identity_id = ?
+        WHERE platform_identity_id = $1
         "#
     )
         .bind(&platform_identity_id)
@@ -141,5 +133,16 @@ async fn test_platform_identity() -> Result<(), Error> {
     assert_eq!(fetched_puid, "twitch_123");
     assert_eq!(fetched_uname, "twitchuser");
 
+    Ok(())
+}
+
+async fn clean_database(pool: &sqlx::Pool<sqlx::Postgres>) -> Result<(), maowbot_core::Error> {
+    // Truncate all tables that might contain duplicate keys.
+    sqlx::query("TRUNCATE TABLE platform_identities CASCADE;")
+        .execute(pool)
+        .await?;
+    sqlx::query("TRUNCATE TABLE users CASCADE;")
+        .execute(pool)
+        .await?;
     Ok(())
 }

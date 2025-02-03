@@ -1,10 +1,8 @@
-// tests/twitch_runtime_tests.rs
+// tests/twitch_helix_runtime_tests
 
-use maowbot::platforms::twitch::runtime::{
-    TwitchPlatform, TwitchMessageEvent
-};
-use maowbot::platforms::{PlatformIntegration, PlatformAuth, ConnectionStatus};
-use maowbot::Error;
+use maowbot_core::platforms::twitch_helix::runtime::{TwitchPlatform, TwitchMessageEvent};
+use maowbot_core::platforms::{PlatformIntegration, PlatformAuth, ConnectionStatus};
+use maowbot_core::Error;
 
 #[tokio::test]
 async fn test_twitch_connect_disconnect() -> Result<(), Error> {

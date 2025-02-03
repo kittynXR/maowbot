@@ -4,7 +4,7 @@ use anyhow::anyhow;
 use tokio::sync::Mutex;
 use tokio::time::{timeout, Duration};
 
-use maowbot::{Database, auth::user_manager::DefaultUserManager, repositories::postgres::{
+use maowbot_core::{Database, auth::user_manager::DefaultUserManager, repositories::postgres::{
     user::UserRepository,
     platform_identity::PlatformIdentityRepository,
     user_analysis::PostgresUserAnalysisRepository,
@@ -64,7 +64,7 @@ async fn test_user_message_services_in_memory_db() -> Result<(), Error> {
     //    - `timeout(...)` returns Result<Option<T>, Elapsed>
     //    - `rx.recv()` returns Option<BotEvent>
     // We handle both:
-    let maybe_event = timeout(Duration::from_secs(1), rx.recv()).await?;
+    let maybe_event = timeout(Duration::from_secs(1), rx.await.recv()).await?;
     let event = maybe_event.ok_or_else(|| anyhow!("No event received from bus"))?;
     match event {
         BotEvent::ChatMessage { platform, channel, user: user_id2, text, .. } => {

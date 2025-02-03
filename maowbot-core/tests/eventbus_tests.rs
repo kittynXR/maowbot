@@ -4,15 +4,15 @@ mod tests {
     use uuid::Uuid;
     use std::env;
 
-    use crate::Database;
-    use crate::models::{Platform, User};
-    use crate::repositories::postgres::{
+    use maowbot_core::Database;
+    use maowbot_core::models::{Platform, User};
+    use maowbot_core::repositories::postgres::{
         user::UserRepository,
         platform_identity::PlatformIdentityRepository,
         user_analysis::PostgresUserAnalysisRepository,
     };
-    use crate::auth::{UserManager, DefaultUserManager};
-    use crate::Error;
+    use maowbot_core::auth::{UserManager, DefaultUserManager};
+    use maowbot_core::Error;
 
     /// A helper to create a **Postgres** test DB connection, run migrations,
     /// and build a DefaultUserManager that uses Postgres repositories.

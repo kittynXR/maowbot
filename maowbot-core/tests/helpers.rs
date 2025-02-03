@@ -1,8 +1,9 @@
 // tests/helpers.rs (a small test-only module)
+use sqlx::Executor;
 use sqlx::{Pool, Postgres};
 use sqlx::postgres::PgPoolOptions;
-use crate::Database;
-use crate::Error;
+use maowbot_core::Database;
+use maowbot_core::Error;
 
 pub async fn create_test_db_pool() -> Result<Pool<Postgres>, Error> {
     let url = std::env::var("TEST_DATABASE_URL")

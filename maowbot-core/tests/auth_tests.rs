@@ -1,6 +1,6 @@
 // tests/auth_tests.rs
 
-use maowbot::{
+use maowbot_core::{
     auth::{
         AuthManager, AuthenticationPrompt, AuthenticationResponse,
         AuthenticationHandler, PlatformAuthenticator,
@@ -11,8 +11,8 @@ use maowbot::{
 };
 use async_trait::async_trait;
 use std::collections::HashMap;
-use chrono::Utc;
-use maowbot::platforms::discord::auth::DiscordAuthenticator;
+use chrono::{Duration, Utc};
+use maowbot_core::platforms::discord::auth::DiscordAuthenticator;
 
 // ---- NEW: dashmap for concurrency
 use dashmap::DashMap;
@@ -86,6 +86,10 @@ impl CredentialsRepository for MockCredentialsRepository {
         } else {
             Err(Error::Database(sqlx::Error::RowNotFound))
         }
+    }
+
+    async fn get_expiring_credentials(&self, _within: Duration) -> Result<Vec<PlatformCredential>, Error> {
+        Ok(Vec::new())
     }
 }
 

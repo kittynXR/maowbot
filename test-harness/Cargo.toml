@@ -1,0 +1,9 @@
+[package]
+name = "test-harness"
+version = "0.1.0"
+edition = "2021"
+description = "Integration tests for MaowBot"
+
+[dependencies]
+maowbot-core = { path = "../maowbot-core" }
+maowbot-proto = { path = "../maowbot-proto" }

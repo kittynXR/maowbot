@@ -9,8 +9,8 @@ use tokio::task::JoinHandle;
 use tokio_stream::wrappers::TcpListenerStream;
 use tonic::transport::Server;
 
-use maowbot::eventbus::EventBus;
-use maowbot::plugins::manager::{PluginManager, PluginServiceGrpc};
+use maowbot_core::eventbus::EventBus;
+use maowbot_core::plugins::manager::{PluginManager, PluginServiceGrpc};
 use maowbot_proto::plugs::{
     plugin_service_server::PluginServiceServer,
     plugin_service_client::PluginServiceClient,

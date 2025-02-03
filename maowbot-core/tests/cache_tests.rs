@@ -4,15 +4,15 @@ use std::collections::HashMap;
 use async_trait::async_trait;
 use chrono::{Utc, NaiveDateTime, Duration};
 
-use maowbot::Error;
-use maowbot::cache::{
+use maowbot_core::Error;
+use maowbot_core::cache::{
     ChatCache,
     CacheConfig,
     TrimPolicy,
     CachedMessage
 };
-use maowbot::models::user_analysis::UserAnalysis;
-use maowbot::repositories::postgres::user_analysis::UserAnalysisRepository;
+use maowbot_core::models::user_analysis::UserAnalysis;
+use maowbot_core::repositories::postgres::user_analysis::UserAnalysisRepository;
 
 /// A mock repository that stores user_analysis in-memory only.
 #[derive(Clone, Default)]

@@ -1,6 +1,6 @@
 // tests/platform_tests.rs
 
-use maowbot::{platforms::*, Error};
+use maowbot_core::{platforms::*, Error};
 use async_trait::async_trait;
 
 #[tokio::test]

@@ -111,8 +111,6 @@ impl DefaultUserManager {
         }
     }
 
-    /// [TEST-ONLY] Helper to forcibly set the last_access time
-    #[cfg(test)]
     pub async fn test_force_last_access(
         &self,
         platform: Platform,

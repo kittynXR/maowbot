@@ -1,23 +1,27 @@
 // tests/shutdown_tests.rs
 
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio::time::{sleep, Duration};
 use chrono::Utc;
+use sqlx::Executor;
 
-use maowbot::{Database, Error};
-use maowbot::eventbus::{EventBus, BotEvent};
-use maowbot::eventbus::db_logger::spawn_db_logger_task;
-use maowbot::plugins::manager::{
+use maowbot_core::{Database, Error};
+use maowbot_core::eventbus::{EventBus, BotEvent};
+use maowbot_core::eventbus::db_logger::spawn_db_logger_task;
+use maowbot_core::plugins::manager::{
     PluginManager, PluginConnection, PluginConnectionInfo
 };
+use maowbot_proto::plugs::plugin_stream_request::Payload as ReqPayload;
 use maowbot_proto::plugs::{
     PluginCapability,
     PluginStreamResponse,
     plugin_stream_response::Payload as RespPayload,
     Shutdown,
 };
-use maowbot::repositories::postgres::analytics::{PostgresAnalyticsRepository, AnalyticsRepo};
+use maowbot_core::repositories::postgres::analytics::{PostgresAnalyticsRepository, AnalyticsRepo};
 use async_trait::async_trait;
 
 #[derive(Clone)]
@@ -31,6 +35,7 @@ impl ShutdownTestPlugin {
         let info = PluginConnectionInfo {
             name: name.to_string(),
             capabilities,
+            is_enabled: false,
         };
         Self {
             info: Arc::new(Mutex::new(info)),
@@ -53,6 +58,11 @@ impl PluginConnection for ShutdownTestPlugin {
     async fn set_name(&self, new_name: String) {
         let mut guard = self.info.lock().await;
         guard.name = new_name;
+    }
+
+    async fn set_enabled(&self, enabled: bool) {
+        let mut info = self.info.lock().await;
+        info.is_enabled = enabled;
     }
 
     async fn send(&self, response: PluginStreamResponse) -> Result<(), Error> {
