@@ -1,9 +1,53 @@
 // File: maowbot-core/tests/test_utils/mod.rs
+// (You already have `pub mod helpers;` in here. No changes needed.)
 
-use sqlx::{Pool, Postgres, Executor};
+// File: maowbot-core/tests/test_utils/helpers.rs
+use sqlx::{Pool, Postgres, Executor, PgConnection, Connection};
 use sqlx::postgres::PgPoolOptions;
 use crate::Error;
 use crate::Database;
+
+/// Create the test database if it does not exist yet.
+pub async fn ensure_test_database_exists() -> Result<(), Error> {
+    // Connect to the "postgres" database as an admin or superuser.
+    // Adjust username/host as needed for your environment:
+    let admin_url = std::env::var("DATABASE_ADMIN_URL")
+        .unwrap_or_else(|_| "postgres://maow@localhost/postgres".to_string());
+
+    // Attempt to connect to the "postgres" DB
+    let mut conn = PgConnection::connect(&admin_url).await?;
+
+    // The database we want to ensure is present:
+    let test_db = "maowbot_test";
+
+    // Some Postgres versions support `CREATE DATABASE IF NOT EXISTS`,
+    // but that’s non‐standard. We can do a try/ignore approach:
+    let create_db_sql = format!("CREATE DATABASE {test_db};");
+    match sqlx::query(&create_db_sql).execute(&mut conn).await {
+        Ok(_) => {
+            println!("Created test DB '{test_db}'.");
+        }
+        Err(e) => {
+            // Check for "already exists" error code 42P04
+            if let Some(db_err) = e.as_database_error() {
+                if let Some(code) = db_err.code() {
+                    if code == "42P04" {
+                        // 42P04 => "duplicate_database"
+                        println!("Test DB '{test_db}' already exists; ignoring.");
+                    } else {
+                        return Err(Error::Database(e));
+                    }
+                } else {
+                    return Err(Error::Database(e));
+                }
+            } else {
+                return Err(Error::Database(e));
+            }
+        }
+    }
+
+    Ok(())
+}
 
 /// Create a connection pool to the test DB.
 /// By default looks for `TEST_DATABASE_URL` in env,
@@ -21,14 +65,6 @@ pub async fn create_test_db_pool() -> Result<Pool<Postgres>, Error> {
 }
 
 /// Wipes out test data so each test can start fresh.
-///
-/// Adjust the list of tables here to match your schema.
-/// For example, you can either:
-///   - Truncate all known tables, OR
-///   - Drop and recreate the schema entirely, OR
-///   - Use whatever approach best suits your testing style.
-///
-/// Below is an example “TRUNCATE ... CASCADE” pattern.
 pub async fn clean_database(pool: &Pool<Postgres>) -> Result<(), Error> {
     sqlx::query(r#"
         TRUNCATE TABLE
@@ -54,14 +90,16 @@ pub async fn clean_database(pool: &Pool<Postgres>) -> Result<(), Error> {
     Ok(())
 }
 
-/// If you want a convenience function that returns a fully migrated Database:
+/// Returns a migrated, empty test DB handle.
 pub async fn setup_test_database() -> Result<Database, Error> {
+    // 1) Make sure the test database exists:
+    ensure_test_database_exists().await?;
+
+    // 2) Now connect to `maowbot_test` and run migrations/clean:
     let pool = create_test_db_pool().await?;
-    // Wrap in our maowbot_core::Database
     let db = Database::from_pool(pool);
-    // Run migrations
     db.migrate().await?;
-    // Clean existing data
     clean_database(db.pool()).await?;
+
     Ok(db)
 }
