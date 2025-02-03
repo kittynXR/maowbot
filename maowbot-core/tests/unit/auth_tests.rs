@@ -1,4 +1,4 @@
-// tests/auth_tests.rs
+// tests/unit/auth_tests.rs
 
 use maowbot_core::{
     auth::{
@@ -13,8 +13,6 @@ use async_trait::async_trait;
 use std::collections::HashMap;
 use chrono::{Duration, Utc};
 use maowbot_core::platforms::discord::auth::DiscordAuthenticator;
-
-// ---- NEW: dashmap for concurrency
 use dashmap::DashMap;
 
 #[derive(Default)]
@@ -25,7 +23,6 @@ impl AuthenticationHandler for MockAuthHandler {
     async fn handle_prompt(&self, prompt: AuthenticationPrompt) -> Result<AuthenticationResponse, Error> {
         match prompt {
             AuthenticationPrompt::MultipleKeys { fields, .. } => {
-                // ephemeral usage of std::collections::HashMap
                 let mut response = HashMap::new();
                 for field in &fields {
                     response.insert(field.clone(), format!("mock_{}", field));
@@ -37,7 +34,6 @@ impl AuthenticationHandler for MockAuthHandler {
     }
 }
 
-/// Replaced Arc<Mutex<HashMap<...>>> with a single DashMap
 #[derive(Default)]
 struct MockCredentialsRepository {
     credentials: DashMap<(Platform, String), PlatformCredential>,
@@ -144,7 +140,6 @@ async fn test_auth_manager_with_unregistered_platform() -> Result<(), Error> {
         Box::new(auth_handler),
     );
 
-    // Try to authenticate with a platform that is unregistered
     let result = auth_manager.authenticate_platform(Platform::VRChat).await;
     assert!(result.is_err());
     Ok(())
@@ -160,11 +155,9 @@ async fn test_error_scenarios() -> Result<(), Error> {
         Box::new(auth_handler),
     );
 
-    // Test unregistered platform
     let result = auth_manager.authenticate_platform(Platform::VRChat).await;
     assert!(matches!(result, Err(Error::Platform(_))));
 
-    // Test refreshing with no credentials stored => should fail
     let result = auth_manager.refresh_platform_credentials(&Platform::Twitch, "test_user").await;
     assert!(matches!(result, Err(Error::Auth(_))));
 
@@ -181,13 +174,11 @@ async fn test_discord_credentials() -> Result<(), Error> {
         Box::new(auth_handler),
     );
 
-    // Register DiscordAuthenticator
     auth_manager.register_authenticator(
         Platform::Discord,
         Box::new(DiscordAuthenticator::new()),
     );
 
-    // Test Discord bot token authentication
     let result = auth_manager.authenticate_platform(Platform::Discord).await?;
     assert_eq!(result.platform, Platform::Discord);
     assert_eq!(result.credential_type, CredentialType::BearerToken);

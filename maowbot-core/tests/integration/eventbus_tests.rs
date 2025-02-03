@@ -1,52 +1,61 @@
-// tests/user_manager_tests.rs
+// tests/integration/eventbus_tests.rs
 
-use sqlx::{Pool, Postgres};
-use sqlx::postgres::PgPoolOptions;
-use crate::Error;
-
+#[cfg(test)]
 mod tests {
-    use uuid::Uuid;
-    use std::env;
-    use crate::Database;
-    use crate::models::{Platform, User};
-    use crate::repositories::postgres::{
-        platform_identity::PlatformIdentityRepository,
+    use maowbot_core::Database;
+    use maowbot_core::models::{Platform, User};
+    use maowbot_core::repositories::postgres::{
         user::UserRepository,
+        platform_identity::PlatformIdentityRepository,
         user_analysis::PostgresUserAnalysisRepository,
     };
-    use crate::auth::{DefaultUserManager, UserManager};
-    use crate::Error;
-    use crate::auth::user_manager_tests::{clean_database, create_test_db_pool};
+    use maowbot_core::auth::{UserManager, DefaultUserManager};
+    use maowbot_core::Error;
+    use uuid::Uuid;
+    use std::env;
 
-    /// A helper to create a test Postgres DB connection, run migrations, and build a DefaultUserManager.
+    /// A helper to create a **Postgres** test DB connection, run migrations,
+    /// and build a DefaultUserManager that uses Postgres repositories.
     async fn setup_user_manager() -> Result<DefaultUserManager, Error> {
-        let pool = create_test_db_pool().await?;
+        // 1) Use an env var or fallback
+        let test_db_url = env::var("TEST_DATABASE_URL")
+            .unwrap_or_else(|_| "postgres://maow:maow@localhost/maowbot_test".to_string());
 
-        // 2) Wipe the schema or data if you want a clean start
-        clean_database(&pool).await?;
-
-        // 3) Now wrap in your "Database" struct
-        let db = Database::from_pool(pool.clone());
+        // 2) Create DB object + run migrations
+        let db = Database::new(&test_db_url).await?;
         db.migrate().await?;
 
-        // 3) Create the repositories.
+        // 3) Create Postgres-based repositories
         let user_repo = UserRepository::new(db.pool().clone());
         let ident_repo = PlatformIdentityRepository::new(db.pool().clone());
         let analysis_repo = PostgresUserAnalysisRepository::new(db.pool().clone());
 
-        // 4) Build the user manager.
+        // 4) Build our DefaultUserManager
         Ok(DefaultUserManager::new(user_repo, ident_repo, analysis_repo))
     }
 
     #[tokio::test]
-    async fn test_get_or_create_user() -> Result<(), Error> {
+    async fn test_get_or_create_user_new() -> Result<(), Error> {
         let manager = setup_user_manager().await?;
+
+        // A random new platform_user_id
         let random_id = Uuid::new_v4().to_string();
 
+        // This user doesn’t exist => should be created
         let user = manager
             .get_or_create_user(Platform::Discord, &random_id, Some("testuser"))
             .await?;
-        assert!(!user.user_id.is_empty());
+        assert!(!user.user_id.is_empty(), "Should have a new user_id");
+        assert!(user.is_active);
+        assert!(user.last_seen.timestamp() > 0);
+
+        // Next time we call get_or_create with same IDs,
+        // we should retrieve the same user from the cache or DB
+        let user2 = manager
+            .get_or_create_user(Platform::Discord, &random_id, Some("testuser2"))
+            .await?;
+
+        assert_eq!(user.user_id, user2.user_id, "Should be the same user");
         Ok(())
     }
 
@@ -59,12 +68,12 @@ mod tests {
             .get_or_create_user(Platform::Twitch, &user_id, Some("TwitchDude"))
             .await?;
 
-        // The first call hits the DB; the second call is the "cache hit".
+        // The second call should be a "cache hit"
         let user2 = manager
             .get_or_create_user(Platform::Twitch, &user_id, Some("NewName"))
             .await?;
 
-        // Confirm it returns the same user (no new DB record).
+        // Confirm it returns the same user ID
         assert_eq!(user.user_id, user2.user_id);
 
         Ok(())
@@ -86,6 +95,7 @@ mod tests {
             .update_user_activity(&user.user_id, Some("VRChatterNew"))
             .await?;
 
+        // Retrieve again
         let updated_user = manager
             .get_or_create_user(Platform::VRChat, "vrchat_123", None)
             .await?;
@@ -106,67 +116,24 @@ mod tests {
     async fn test_cache_ttl_expiration() -> Result<(), Error> {
         let manager = setup_user_manager().await?;
 
-        // Insert user in the cache by calling get_or_create_user
+        // Insert user in the cache
         let user = manager
             .get_or_create_user(Platform::Discord, "some_discord_id", Some("DiscordTest"))
             .await?;
 
-        // Force the last_access to 25 hours ago (simulate an expired cache entry).
+        // Force last_access to 25 hours ago => simulating stale
         let changed = manager
             .test_force_last_access(Platform::Discord, "some_discord_id", 25)
             .await;
         assert!(changed, "Should have updated the existing cache entry");
 
-        // Now calling get_or_create_user should prune that stale entry first,
-        // then re-insert. We'll confirm it's still the same DB user though:
+        // Next call => should prune stale cache entry, then re-insert
         let user2 = manager
             .get_or_create_user(Platform::Discord, "some_discord_id", Some("DiscordTest2"))
             .await?;
 
-        // Both user + user2 should be the same DB user, but the old cache entry was removed internally.
+        // They should be the same DB user, but the old cache entry was removed internally
         assert_eq!(user.user_id, user2.user_id);
         Ok(())
     }
-}
-
-pub async fn create_test_db_pool() -> Result<Pool<Postgres>, Error> {
-    let url = std::env::var("TEST_DATABASE_URL")
-        .unwrap_or_else(|_| "postgres://maow@localhost/maowbot".to_string());
-
-    // We can allow only 1 connection if you want to ensure a serial approach:
-    // .max_connections(1)
-    let pool = PgPoolOptions::new()
-        .max_connections(5)
-        .connect(&url)
-        .await?;
-
-    Ok(pool)
-}
-
-pub async fn clean_database(pool: &Pool<Postgres>) -> Result<(), Error> {
-    // We list all known tables, and “TRUNCATE ... RESTART IDENTITY CASCADE”
-    // so we clear them out for a fresh test run.
-    // For example:
-    sqlx::query(r#"
-        TRUNCATE TABLE
-            users,
-            platform_identities,
-            platform_credentials,
-            user_analysis,
-            link_requests,
-            user_audit_log,
-            daily_stats,
-            chat_sessions,
-            bot_events,
-            command_logs,
-            chat_messages,
-            plugin_events,
-            user_analysis_history,
-            maintenance_state
-        RESTART IDENTITY CASCADE;
-    "#)
-        .execute(pool)
-        .await?;
-
-    Ok(())
 }

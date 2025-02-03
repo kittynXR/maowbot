@@ -1,70 +1,114 @@
-// File: maowbot-core/tests/integration/user_manager_tests.rs
+// tests/integration/user_manager_tests.rs
 
 use uuid::Uuid;
 use maowbot_core::{
     auth::{DefaultUserManager, UserManager},
-    models::Platform,
+    Error,
+    models::{Platform, User},
     repositories::postgres::{
         user::UserRepository,
         platform_identity::PlatformIdentityRepository,
         user_analysis::PostgresUserAnalysisRepository,
     },
     db::Database,
-    Error,
 };
 use crate::test_utils::{create_test_db_pool, clean_database};
 
-#[tokio::test]
-async fn test_get_or_create_user() -> Result<(), Error> {
-    // 1) Create test pool + clean it
+/// Creates a test Postgres DB pool, cleans it, runs migrations,
+/// and returns a fully ready DefaultUserManager for testing.
+async fn setup_user_manager() -> Result<DefaultUserManager, Error> {
     let pool = create_test_db_pool().await?;
     clean_database(&pool).await?;
 
-    // 2) Wrap in Database, run migrations
     let db = Database::from_pool(pool.clone());
     db.migrate().await?;
 
-    // 3) Repositories + manager
-    let user_repo = UserRepository::new(pool.clone());
-    let ident_repo = PlatformIdentityRepository::new(pool.clone());
-    let analysis_repo = PostgresUserAnalysisRepository::new(pool.clone());
-    let user_manager = DefaultUserManager::new(user_repo, ident_repo, analysis_repo);
+    let user_repo = UserRepository::new(db.pool().clone());
+    let ident_repo = PlatformIdentityRepository::new(db.pool().clone());
+    let analysis_repo = PostgresUserAnalysisRepository::new(db.pool().clone());
 
-    // 4) Test
+    Ok(DefaultUserManager::new(user_repo, ident_repo, analysis_repo))
+}
+
+#[tokio::test]
+async fn test_get_or_create_user() -> Result<(), Error> {
+    let manager = setup_user_manager().await?;
     let random_id = Uuid::new_v4().to_string();
-    let user = user_manager
+
+    let user = manager
         .get_or_create_user(Platform::Discord, &random_id, Some("testuser"))
         .await?;
+    assert!(!user.user_id.is_empty());
+    assert!(user.is_active);
 
-    assert!(!user.user_id.is_empty(), "Should create a new user_id");
+    let user2 = manager
+        .get_or_create_user(Platform::Discord, &random_id, Some("testuser2"))
+        .await?;
+    assert_eq!(user.user_id, user2.user_id, "Should fetch same user from cache/DB");
+
     Ok(())
 }
 
 #[tokio::test]
-async fn test_user_cache_expiration() -> Result<(), Error> {
-    // This time we use the “setup_test_database()” convenience if you prefer
-    let db = crate::test_utils::setup_test_database().await?;
-
-    // 1) Build repos + user_manager
-    let user_repo = maowbot_core::repositories::postgres::user::UserRepository::new(db.pool().clone());
-    let ident_repo = maowbot_core::repositories::postgres::platform_identity::PlatformIdentityRepository::new(db.pool().clone());
-    let analysis_repo = maowbot_core::repositories::postgres::user_analysis::PostgresUserAnalysisRepository::new(db.pool().clone());
-    let manager = DefaultUserManager::new(user_repo, ident_repo, analysis_repo);
-
-    // 2) Insert user to test cache expiration
+async fn test_get_or_create_user_cache_hit() -> Result<(), Error> {
+    let manager = setup_user_manager().await?;
     let user_id = Uuid::new_v4().to_string();
-    manager
+
+    let user = manager
         .get_or_create_user(Platform::Twitch, &user_id, Some("TwitchDude"))
         .await?;
 
-    // Force last_access
-    let changed = manager.test_force_last_access(Platform::Twitch, &user_id, 25).await;
-    assert!(changed);
-
-    // Next call should prune + re-create
     let user2 = manager
         .get_or_create_user(Platform::Twitch, &user_id, Some("NewName"))
         .await?;
-    assert!(!user2.user_id.is_empty());
+    assert_eq!(user.user_id, user2.user_id);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_update_user_activity() -> Result<(), Error> {
+    let manager = setup_user_manager().await?;
+    let user = manager
+        .get_or_create_user(Platform::VRChat, "vrchat_123", Some("VRChatter"))
+        .await?;
+    let old_seen = user.last_seen;
+
+    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+
+    manager
+        .update_user_activity(&user.user_id, Some("VRChatterNew"))
+        .await?;
+
+    let updated_user = manager
+        .get_or_create_user(Platform::VRChat, "vrchat_123", None)
+        .await?;
+
+    assert!(updated_user.last_seen > old_seen);
+    assert_eq!(updated_user.global_username, Some("VRChatterNew".to_string()));
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_cache_ttl_expiration() -> Result<(), Error> {
+    let manager = setup_user_manager().await?;
+    let platform_user_id = "some_discord_id";
+
+    let user = manager
+        .get_or_create_user(Platform::Discord, platform_user_id, Some("DiscordTest"))
+        .await?;
+
+    let changed = manager
+        .test_force_last_access(Platform::Discord, platform_user_id, 25)
+        .await;
+    assert!(changed, "Should have updated the cache entry to 25h old");
+
+    let user2 = manager
+        .get_or_create_user(Platform::Discord, platform_user_id, Some("DiscordTest2"))
+        .await?;
+
+    assert_eq!(user.user_id, user2.user_id, "Should be same DB user, old cache entry was pruned");
+
     Ok(())
 }

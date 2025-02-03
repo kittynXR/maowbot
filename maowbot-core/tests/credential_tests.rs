@@ -1,44 +1,35 @@
-// tests/credential_tests.rs
+// tests/integration/credential_tests.rs
 
 use maowbot_core::{Database, models::*, repositories::CredentialsRepository, repositories::postgres::PostgresCredentialsRepository, crypto::Encryptor, Error};
 use chrono::Utc;
 use uuid::Uuid;
-use sqlx::{Row};
 use sqlx::Executor;
-
-async fn setup_test_db() -> (Database, Encryptor) {
-    // Use a proper absolute Postgres URL:
-    let db_url = "postgres://maow@localhost/maowbot";
-    let db = Database::new(db_url).await.unwrap();
-    db.migrate().await.unwrap();
-
-    // In production, this key would come from secure config.
-    let key = [0u8; 32]; // Test key
-    let encryptor = Encryptor::new(&key).unwrap();
-
-    (db, encryptor)
-}
 
 #[tokio::test]
 async fn test_credential_storage() -> Result<(), Error> {
-    let (db, encryptor) = setup_test_db().await;
+    let db_url = "postgres://maow@localhost/maowbot";
+    let db = Database::new(db_url).await?;
+    db.migrate().await?;
+
+    let key = [0u8; 32]; // test key
+    let encryptor = Encryptor::new(&key)?;
+
     let repo = PostgresCredentialsRepository::new(db.pool().clone(), encryptor);
 
     let now = Utc::now().naive_utc();
 
+    // Create a user row so FKs pass
     sqlx::query(
         r#"
             INSERT INTO users (user_id, created_at, last_seen, is_active)
-            VALUES ($1, $2, $3, $4)
-            "#
-        )
+            VALUES ($1, $2, $2, $3)
+        "#
+    )
         .bind("test_user")
-        .bind(now.timestamp()) // converting to an integer
         .bind(now.timestamp())
         .bind(true)
         .execute(db.pool())
         .await?;
-
 
     let test_cred = PlatformCredential {
         credential_id: "test_id".to_string(),
@@ -53,10 +44,7 @@ async fn test_credential_storage() -> Result<(), Error> {
         updated_at: now,
     };
 
-    // Store credentials
     repo.store_credentials(&test_cred).await?;
-
-    // Retrieve
     let retrieved = repo.get_credentials(&Platform::Twitch, "test_user")
         .await?
         .expect("Credentials should exist");

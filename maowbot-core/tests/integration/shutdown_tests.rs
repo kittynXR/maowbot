@@ -1,13 +1,9 @@
-// tests/shutdown_tests.rs
+// tests/integration/shutdown_tests.rs
 
-use std::future::Future;
-use std::pin::Pin;
 use std::sync::Arc;
-use tokio::sync::Mutex;
-use tokio::time::{sleep, Duration};
+use tokio::time::Duration;
 use chrono::Utc;
 use sqlx::Executor;
-
 use maowbot_core::{Database, Error};
 use maowbot_core::eventbus::{EventBus, BotEvent};
 use maowbot_core::eventbus::db_logger::spawn_db_logger_task;
@@ -15,19 +11,13 @@ use maowbot_core::plugins::manager::{
     PluginManager, PluginConnection, PluginConnectionInfo
 };
 use maowbot_proto::plugs::plugin_stream_request::Payload as ReqPayload;
-use maowbot_proto::plugs::{
-    PluginCapability,
-    PluginStreamResponse,
-    plugin_stream_response::Payload as RespPayload,
-    Shutdown,
-};
+use maowbot_proto::plugs::{PluginCapability, PluginStreamResponse, plugin_stream_response::Payload as RespPayload, Shutdown};
 use maowbot_core::repositories::postgres::analytics::{PostgresAnalyticsRepository, AnalyticsRepo};
 use async_trait::async_trait;
 
 #[derive(Clone)]
 struct ShutdownTestPlugin {
-    info: Arc<Mutex<PluginConnectionInfo>>,
-    received_responses: Arc<Mutex<Vec<String>>>,
+    info: Arc<tokio::sync::Mutex<PluginConnectionInfo>>,
 }
 
 impl ShutdownTestPlugin {
@@ -38,8 +28,7 @@ impl ShutdownTestPlugin {
             is_enabled: false,
         };
         Self {
-            info: Arc::new(Mutex::new(info)),
-            received_responses: Arc::new(Mutex::new(vec![])),
+            info: Arc::new(tokio::sync::Mutex::new(info)),
         }
     }
 }
@@ -66,8 +55,8 @@ impl PluginConnection for ShutdownTestPlugin {
     }
 
     async fn send(&self, response: PluginStreamResponse) -> Result<(), Error> {
-        let mut lock = self.received_responses.lock().await;
-        lock.push(format!("{:?}", response));
+        // For this test, we do nothing with the response
+        let _ = response;
         Ok(())
     }
 
@@ -85,7 +74,6 @@ async fn test_graceful_shutdown_data_flush() -> Result<(), Error> {
     let db = Database::new(":memory:").await?;
     db.migrate().await?;
 
-    // Insert some dummy users for foreign key references via a transaction
     {
         let mut tx = db.pool().begin().await?;
         for i in 0..3 {
@@ -93,7 +81,7 @@ async fn test_graceful_shutdown_data_flush() -> Result<(), Error> {
             tx.execute(
                 sqlx::query(
                     r#"INSERT INTO users (user_id, created_at, last_seen, is_active)
-                       VALUES (?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 1)"#
+                       VALUES ($1, strftime('%s','now'), strftime('%s','now'), 1)"#
                 )
                     .bind(user_id)
             ).await?;
@@ -103,11 +91,8 @@ async fn test_graceful_shutdown_data_flush() -> Result<(), Error> {
 
     let analytics_repo = PostgresAnalyticsRepository::new(db.pool().clone());
     let event_bus = Arc::new(EventBus::new());
-
-    // logger
     let logger_handle = spawn_db_logger_task(&event_bus, analytics_repo.clone(), 5, 1);
 
-    // Publish some chat messages
     for i in 0..3 {
         event_bus
             .publish(BotEvent::ChatMessage {
@@ -121,62 +106,47 @@ async fn test_graceful_shutdown_data_flush() -> Result<(), Error> {
     }
 
     tokio::time::sleep(Duration::from_millis(50)).await;
-
-    // Graceful shutdown
     event_bus.shutdown();
-
-    // Wait for logger to flush
     logger_handle.await.unwrap();
 
-    // Confirm those 3 messages got inserted
     let rows = analytics_repo
         .get_recent_messages("shutdown_test", "my_channel", 10)
         .await?;
-    assert_eq!(
-        rows.len(),
-        3,
-        "All 3 chat messages should have been flushed"
-    );
+    assert_eq!(rows.len(), 3);
 
     Ok(())
 }
 
-/// Test that if a plugin sends `Shutdown` request (plugin->bot), the manager calls event_bus.shutdown().
 #[tokio::test]
 async fn test_plugin_initiated_shutdown() -> Result<(), Error> {
     let db = Database::new(":memory:").await?;
     db.migrate().await?;
 
-    // Insert a user row for foreign key usage
     {
         let mut tx = db.pool().begin().await?;
         tx.execute(
             sqlx::query(
                 r#"INSERT INTO users (user_id, created_at, last_seen, is_active)
-                   VALUES ('some_user', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 1)"#
+                   VALUES ('some_user', strftime('%s','now'), strftime('%s','now'), 1)"#
             )
         ).await?;
         tx.commit().await?;
     }
 
-    // Create repo + event bus + logger
     let analytics_repo = PostgresAnalyticsRepository::new(db.pool().clone());
     let event_bus = Arc::new(EventBus::new());
     let logger_handle = spawn_db_logger_task(&event_bus, analytics_repo.clone(), 5, 1);
 
-    // Create plugin manager
     let mut plugin_mgr = PluginManager::new(None);
     plugin_mgr.set_event_bus(event_bus.clone());
     plugin_mgr.subscribe_to_event_bus(event_bus.clone());
 
-    // Add plugin
     let plugin = ShutdownTestPlugin::new("shutdown_initiator", vec![]);
     {
         let mut lock = plugin_mgr.plugins.lock().await;
         lock.push(Arc::new(plugin.clone()));
     }
 
-    // Publish a chat message first
     event_bus
         .publish(BotEvent::ChatMessage {
             platform: "plugin_shutdown_test".to_string(),
@@ -189,7 +159,6 @@ async fn test_plugin_initiated_shutdown() -> Result<(), Error> {
 
     tokio::time::sleep(Duration::from_millis(50)).await;
 
-    // --- Emulate plugin => manager "Shutdown" message:
     plugin_mgr
         .on_inbound_message(
             ReqPayload::Shutdown(Shutdown {}),
@@ -197,13 +166,9 @@ async fn test_plugin_initiated_shutdown() -> Result<(), Error> {
         )
         .await;
 
-    // Now the event bus should be shut down
-    assert!(event_bus.is_shutdown(), "Expected bus.shutdown() to have been called");
-
-    // Wait for final flush
+    assert!(event_bus.is_shutdown());
     logger_handle.await.unwrap();
 
-    // Confirm that the chat message made it to DB
     let rows = analytics_repo
         .get_recent_messages("plugin_shutdown_test", "chan", 10)
         .await?;
@@ -213,7 +178,6 @@ async fn test_plugin_initiated_shutdown() -> Result<(), Error> {
     Ok(())
 }
 
-/// Test that after shutdown, no new messages are processed or stored.
 #[tokio::test]
 async fn test_no_new_events_after_shutdown() -> Result<(), Error> {
     let db = Database::new(":memory:").await?;
@@ -221,13 +185,10 @@ async fn test_no_new_events_after_shutdown() -> Result<(), Error> {
 
     let analytics_repo = PostgresAnalyticsRepository::new(db.pool().clone());
     let event_bus = Arc::new(EventBus::new());
-
     let logger_handle = spawn_db_logger_task(&event_bus, analytics_repo.clone(), 5, 1);
 
-    // Immediately shut down
     event_bus.shutdown();
 
-    // Attempt to publish post-shutdown
     event_bus
         .publish(BotEvent::ChatMessage {
             platform: "unused".to_string(),
@@ -238,14 +199,12 @@ async fn test_no_new_events_after_shutdown() -> Result<(), Error> {
         })
         .await;
 
-    // Wait for final flush
     logger_handle.await.unwrap();
 
-    // Should be zero
     let rows = analytics_repo
         .get_recent_messages("unused", "unused", 10)
         .await?;
-    assert_eq!(rows.len(), 0, "No messages should be stored post-shutdown");
+    assert_eq!(rows.len(), 0);
 
     Ok(())
 }

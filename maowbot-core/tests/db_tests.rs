@@ -7,31 +7,28 @@ use serde_json::json;
 use uuid::Uuid;
 use sqlx::{Row, Error as SqlxError};
 use maowbot_core::utils::time::{from_epoch};
+use crate::test_utils::{create_test_db_pool, clean_database};
 
 #[tokio::test]
-async fn test_database_connection() -> Result<(), maowbot_core::Error> {
+async fn test_database_connection() -> Result<(), Error> {
     let db_url = "postgres://maow@localhost/maowbot";
     let db = Database::new(db_url).await?;
     db.migrate().await?;
 
-    // Clean the database state.
     clean_database(db.pool()).await?;
 
     let now = Utc::now().naive_utc();
     sqlx::query(
         r#"
             INSERT INTO users (user_id, created_at, last_seen, is_active)
-            VALUES ($1, $2, $3, $4)
-            "#
-        )
+            VALUES ($1, $2, $2, TRUE)
+        "#
+    )
         .bind("test_user")
         .bind(now.timestamp())
-        .bind(now.timestamp())
-        .bind(true)
         .execute(db.pool())
         .await?;
 
-    // Continue with your assertions...
     let row = sqlx::query(
         r#"
         SELECT user_id, global_username, created_at, last_seen, is_active
@@ -58,7 +55,6 @@ async fn test_migration() -> Result<(), Error> {
     let db = Database::new(db_url).await?;
     db.migrate().await?;
 
-    // Clean the database state.
     clean_database(db.pool()).await?;
     Ok(())
 }
@@ -133,16 +129,5 @@ async fn test_platform_identity() -> Result<(), Error> {
     assert_eq!(fetched_puid, "twitch_123");
     assert_eq!(fetched_uname, "twitchuser");
 
-    Ok(())
-}
-
-async fn clean_database(pool: &sqlx::Pool<sqlx::Postgres>) -> Result<(), maowbot_core::Error> {
-    // Truncate all tables that might contain duplicate keys.
-    sqlx::query("TRUNCATE TABLE platform_identities CASCADE;")
-        .execute(pool)
-        .await?;
-    sqlx::query("TRUNCATE TABLE users CASCADE;")
-        .execute(pool)
-        .await?;
     Ok(())
 }
