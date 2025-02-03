@@ -13,7 +13,7 @@ use maowbot_core::{
         user_analysis::PostgresUserAnalysisRepository,
     },
 };
-use crate::test_utils::helpers::{setup_test_database};
+use maowbot_core::test_utils::helpers::*;
 
 /// Simplify test setup by using our helper.
 async fn setup_user_manager() -> Result<DefaultUserManager, Error> {

@@ -18,6 +18,7 @@ use maowbot_proto::plugs::{
     plugin_stream_response::Payload as RespPayload,
     Hello, LogMessage,
 };
+use maowbot_core::test_utils::helpers::*;
 
 #[tokio::test]
 async fn test_grpc_end_to_end_hello() -> Result<(), Box<dyn std::error::Error>> {

@@ -33,11 +33,27 @@ impl CredentialsRepository for MockCredentialsRepository {
     }
 }
 
-// Similarly define a mock AuthHandler if needed, etc.
+struct MockAuthHandler;
+
+#[async_trait]
+impl AuthenticationHandler for MockAuthHandler {
+    async fn handle_prompt(&self, prompt: AuthenticationPrompt) -> Result<AuthenticationResponse, Error> {
+        // For this test, you can either return an error or a dummy response.
+        // Here, we simply return an error to simulate the unimplemented path.
+        Err(Error::Auth("Not implemented".into()))
+    }
+}
+
+impl Default for MockAuthHandler {
+    fn default() -> Self {
+        MockAuthHandler
+    }
+}
 
 #[tokio::test]
 async fn test_auth_manager_happy_path() -> Result<(), Error> {
     let creds_repo = MockCredentialsRepository::default();
+    let auth_handler = MockAuthHandler::default();
 
     let mut manager = AuthManager::new(
         Box::new(creds_repo),

@@ -1,4 +1,4 @@
-// tests/integration/shutdown_tests.rs
+// maowbot-core/tests/integration/shutdown_tests.rs
 
 use std::sync::Arc;
 use tokio::time::Duration;
@@ -18,11 +18,11 @@ use maowbot_proto::plugs::{
     PluginCapability,
     PluginStreamResponse,
     plugin_stream_response::Payload as RespPayload,
-    Shutdown
+    Shutdown,
 };
 use async_trait::async_trait;
 
-use crate::test_utils::helpers::setup_test_database;
+use maowbot_core::test_utils::helpers::setup_test_database;
 
 #[derive(Clone)]
 struct ShutdownTestPlugin {
@@ -30,11 +30,12 @@ struct ShutdownTestPlugin {
 }
 
 impl ShutdownTestPlugin {
+    // FIXED: Set is_enabled to true so that shutdown requests are processed.
     fn new(name: &str, capabilities: Vec<PluginCapability>) -> Self {
         let info = PluginConnectionInfo {
             name: name.to_string(),
             capabilities,
-            is_enabled: false,
+            is_enabled: true,
         };
         Self {
             info: Arc::new(tokio::sync::Mutex::new(info)),
@@ -63,9 +64,8 @@ impl PluginConnection for ShutdownTestPlugin {
         info.is_enabled = enabled;
     }
 
-    async fn send(&self, response: PluginStreamResponse) -> Result<(), Error> {
+    async fn send(&self, _response: PluginStreamResponse) -> Result<(), Error> {
         // For this test, we do nothing with the response
-        let _ = response;
         Ok(())
     }
 

@@ -1,16 +1,20 @@
-// tests/integration/monthly_maintenance_tests.rs
+// File: maowbot-core/tests/integration/monthly_maintenance_tests.rs
+
 use std::path::PathBuf;
-use tempfile::NamedTempFile;
 use chrono::{NaiveDateTime, Utc};
 use sqlx::{Executor, PgPool, Row};
 use sqlx::postgres::{PgPoolOptions, PgConnectOptions};
-use maowbot_core::Error;
-use maowbot_core::Database;
-use maowbot_core::repositories::postgres::user_analysis::PostgresUserAnalysisRepository;
-use maowbot_core::tasks::monthly_maintenance::{
-    maybe_run_monthly_maintenance, collect_missing_months, parse_year_month,
+
+use maowbot_core::{
+    Error,
+    db::Database,
+    repositories::postgres::user_analysis::PostgresUserAnalysisRepository,
+    tasks::monthly_maintenance::{
+        maybe_run_monthly_maintenance, collect_missing_months, parse_year_month,
+    },
+    utils::time::to_epoch,
 };
-use maowbot_core::utils::time::to_epoch;
+use maowbot_core::test_utils::helpers::setup_test_database;
 
 /// Helper: Parse a date string ("YYYY-MM-DD HH:MM:SS") into epoch seconds.
 fn parse_to_seconds(s: &str) -> Result<i64, Error> {
@@ -18,76 +22,18 @@ fn parse_to_seconds(s: &str) -> Result<i64, Error> {
     Ok(dt.timestamp())
 }
 
+/// Demonstration of a specialized schema creation (unused here),
+/// but left for reference if you want a custom test schema.
 async fn create_test_schema(pool: &PgPool) -> Result<(), Error> {
-    // Drop tables if they exist so we get a clean slate.
+    // Example: drop everything for a fresh start
     sqlx::query("DROP TABLE IF EXISTS chat_messages CASCADE;").execute(pool).await?;
     sqlx::query("DROP TABLE IF EXISTS users CASCADE;").execute(pool).await?;
     sqlx::query("DROP TABLE IF EXISTS maintenance_state;").execute(pool).await?;
     sqlx::query("DROP TABLE IF EXISTS user_analysis CASCADE;").execute(pool).await?;
     sqlx::query("DROP TABLE IF EXISTS user_analysis_history;").execute(pool).await?;
 
-    // Create the tables as defined (non-partitioned for test simplicity)
-    sqlx::query(r#"
-        CREATE TABLE users (
-            user_id TEXT PRIMARY KEY,
-            global_username TEXT,
-            created_at INTEGER NOT NULL DEFAULT (EXTRACT(EPOCH FROM NOW())::integer),
-            last_seen INTEGER NOT NULL DEFAULT (EXTRACT(EPOCH FROM NOW())::integer),
-            is_active BOOLEAN NOT NULL DEFAULT TRUE
-        );
-    "#).execute(pool).await?;
-
-    sqlx::query(r#"
-        CREATE TABLE chat_messages (
-            message_id TEXT PRIMARY KEY,
-            platform TEXT NOT NULL,
-            channel TEXT NOT NULL,
-            user_id TEXT NOT NULL,
-            message_text TEXT NOT NULL,
-            timestamp INTEGER NOT NULL,
-            metadata TEXT,
-            FOREIGN KEY (user_id) REFERENCES users(user_id)
-        );
-    "#).execute(pool).await?;
-
-    sqlx::query(r#"
-        CREATE TABLE maintenance_state (
-            state_key TEXT PRIMARY KEY,
-            state_value TEXT
-        );
-    "#).execute(pool).await?;
-
-    sqlx::query(r#"
-        CREATE TABLE user_analysis (
-            user_analysis_id TEXT PRIMARY KEY,
-            user_id TEXT NOT NULL,
-            spam_score REAL NOT NULL DEFAULT 0,
-            intelligibility_score REAL NOT NULL DEFAULT 0,
-            quality_score REAL NOT NULL DEFAULT 0,
-            horni_score REAL NOT NULL DEFAULT 0,
-            ai_notes TEXT,
-            moderator_notes TEXT,
-            created_at INTEGER NOT NULL DEFAULT (EXTRACT(EPOCH FROM NOW())::integer),
-            updated_at INTEGER NOT NULL DEFAULT (EXTRACT(EPOCH FROM NOW())::integer),
-            FOREIGN KEY (user_id) REFERENCES users(user_id)
-        );
-    "#).execute(pool).await?;
-
-    sqlx::query(r#"
-        CREATE TABLE user_analysis_history (
-            user_analysis_history_id TEXT PRIMARY KEY,
-            user_id TEXT NOT NULL,
-            year_month TEXT NOT NULL,
-            spam_score REAL NOT NULL DEFAULT 0,
-            intelligibility_score REAL NOT NULL DEFAULT 0,
-            quality_score REAL NOT NULL DEFAULT 0,
-            horni_score REAL NOT NULL DEFAULT 0,
-            ai_notes TEXT,
-            created_at INTEGER NOT NULL DEFAULT (EXTRACT(EPOCH FROM NOW())::integer),
-            FOREIGN KEY (user_id) REFERENCES users(user_id)
-        );
-    "#).execute(pool).await?;
-
+    // Create some base tables (non-partitioned or partitioned as you like)...
+    // ...
     Ok(())
 }
 
@@ -105,21 +51,27 @@ async fn test_parse_year_month() -> Result<(), Error> {
     let (y, m) = parse_year_month("2025-01")?;
     assert_eq!(y, 2025);
     assert_eq!(m, 1);
+
+    // Should fail if the string is not zero-padded
     assert!(parse_year_month("2025-1").is_err());
     Ok(())
 }
 
+/// **FIXED**: We now insert messages from ~35 days ago and then call the monthly maintenance
+/// so that they get archived out of the main table.
 #[tokio::test]
 async fn test_archive_one_month_no_attach() -> Result<(), Error> {
     let db = setup_test_database().await?;
+    let analysis_repo = PostgresUserAnalysisRepository::new(db.pool().clone());
 
     // Insert dummy users.
     let now = Utc::now().timestamp();
     sqlx::query(r#"
-            INSERT INTO users (user_id, created_at, last_seen, is_active)
-            VALUES ($1, $2, $2, TRUE),
-                   ($3, $4, $4, TRUE)
-        "#)
+        INSERT INTO users (user_id, created_at, last_seen, is_active)
+        VALUES
+            ($1, $2, $2, TRUE),
+            ($3, $4, $4, TRUE)
+    "#)
         .bind("u1")
         .bind(now)
         .bind("u2")
@@ -127,75 +79,67 @@ async fn test_archive_one_month_no_attach() -> Result<(), Error> {
         .execute(db.pool())
         .await?;
 
-    // Insert messages with today's timestamp.
-    let msg_ts = Utc::now().timestamp();
-    sqlx::query(
-        r#"
-            INSERT INTO chat_messages
-              (message_id, platform, channel, user_id, message_text, timestamp, metadata)
-            VALUES
-              ($1, $2, $3, $4, $5, $6, $7),
-              ($8, $9, $10, $11, $12, $13, $14)
-        "#
-    )
+    // Insert messages from ~35 days ago => ensures they belong to "last month"
+    let older_ts = (Utc::now() - chrono::Duration::days(35)).timestamp();
+    sqlx::query(r#"
+        INSERT INTO chat_messages
+            (message_id, platform, channel, user_id, message_text, timestamp, metadata)
+        VALUES
+            ($1, $2, $3, $4, $5, $6, $7),
+            ($8, $9, $10, $11, $12, $13, $14)
+    "#)
         .bind("A")
         .bind("twitch_helix")
         .bind("#chan")
         .bind("u1")
         .bind("HelloA")
-        .bind(msg_ts)
+        .bind(older_ts)
         .bind("{}")
         .bind("B")
         .bind("twitch_helix")
         .bind("#chan")
         .bind("u2")
         .bind("HelloB")
-        .bind(msg_ts)
+        .bind(older_ts)
         .bind("{}")
         .execute(db.pool())
         .await?;
 
-    // Confirm main DB is now empty.
+    // Actually run the monthly maintenance/archival
+    maybe_run_monthly_maintenance(&db, &analysis_repo).await?;
+
+    // Now confirm the main DB table is empty for that older month
     let row = sqlx::query("SELECT COUNT(*) as cnt FROM chat_messages")
         .fetch_one(db.pool())
         .await?;
     let cnt: i64 = row.try_get("cnt")?;
     assert_eq!(cnt, 0, "Main table should be empty after archiving");
 
-    db.pool().close().await;
-
-    // Connect to the archive database.
-    let connect_opts = PgConnectOptions::new()
-        .host("localhost")
-        .port(5432)
-        .username("maow")
-        .database("maowbot"); // Use a separate test DB for the archive
-    let arch_pool = PgPoolOptions::new()
-        .max_connections(1)
-        .connect_with(connect_opts)
+    // Optionally, verify they're in the archive:
+    // (If your code writes them to a separate DB or a partition, adapt accordingly.)
+    // For example, if you wrote them to chat_messages_archive in the same DB:
+    let arch_count = sqlx::query("SELECT COUNT(*) as cnt FROM chat_messages_archive")
+        .fetch_one(db.pool())
         .await?;
-
-    // Confirm archive DB now has the messages.
-    let row2 = sqlx::query("SELECT COUNT(*) as cnt FROM chat_messages")
-        .fetch_one(&arch_pool)
-        .await?;
-    let cnt2: i64 = row2.try_get("cnt")?;
-    assert_eq!(cnt2, 2, "Archive should have 2 rows");
+    let archived_cnt: i64 = arch_count.try_get("cnt")?;
+    assert_eq!(archived_cnt, 2, "Archive should have 2 rows now");
 
     Ok(())
 }
 
+/// **FIXED**: Also insert older timestamps, then run monthly maintenance.
 #[tokio::test]
 async fn test_maybe_run_monthly_maintenance_integration() -> Result<(), Error> {
     let db = setup_test_database().await?;
+    let analysis_repo = PostgresUserAnalysisRepository::new(db.pool().clone());
 
-    let now = Utc::now().timestamp();
     // Insert two users.
+    let now = Utc::now().timestamp();
     sqlx::query(r#"
-            INSERT INTO users (user_id, created_at, last_seen, is_active)
-            VALUES ($1, $2, $2, TRUE),
-                   ($3, $4, $4, TRUE)
-        "#)
+        INSERT INTO users (user_id, created_at, last_seen, is_active)
+        VALUES ($1, $2, $2, TRUE),
+               ($3, $4, $4, TRUE)
+    "#)
         .bind("ua")
         .bind(now)
         .bind("ub")
@@ -203,69 +147,81 @@ async fn test_maybe_run_monthly_maintenance_integration() -> Result<(), Error> {
         .execute(db.pool())
         .await?;
 
-    // Use today's timestamp for the messages.
-    let msg_ts = Utc::now().timestamp();
-    // Insert first row:
-    sqlx::query(
-        r#"
-            INSERT INTO chat_messages
-                (message_id, platform, channel, user_id, message_text, timestamp, metadata)
-            VALUES ($1, $2, $3, $4, $5, $6, $7)
-        "#
-    )
+    // Insert messages from ~35 days ago => belong to last month
+    let older_ts = (Utc::now() - chrono::Duration::days(35)).timestamp();
+
+    sqlx::query(r#"
+        INSERT INTO chat_messages
+            (message_id, platform, channel, user_id, message_text, timestamp, metadata)
+        VALUES
+            ($1, $2, $3, $4, $5, $6, $7)
+    "#)
         .bind("A")
         .bind("twitch_helix")
         .bind("#chan")
         .bind("ua")
         .bind("HelloA")
-        .bind(msg_ts)
+        .bind(older_ts)
         .bind("{}")
         .execute(db.pool())
         .await?;
 
-    // Insert second row:
-    sqlx::query(
-        r#"
-            INSERT INTO chat_messages
-                (message_id, platform, channel, user_id, message_text, timestamp, metadata)
-            VALUES ($1, $2, $3, $4, $5, $6, $7)
-        "#
-    )
+    sqlx::query(r#"
+        INSERT INTO chat_messages
+            (message_id, platform, channel, user_id, message_text, timestamp, metadata)
+        VALUES
+            ($1, $2, $3, $4, $5, $6, $7)
+    "#)
         .bind("B")
         .bind("twitch_helix")
         .bind("#chan")
         .bind("ub")
         .bind("HelloB")
-        .bind(msg_ts)
+        .bind(older_ts)
         .bind("{}")
         .execute(db.pool())
         .await?;
 
+    // Create "archives" dir or whichever path your code uses
     std::fs::create_dir_all("archives")?;
     let arch_file = PathBuf::from("archives").join("current_archive.db");
     if arch_file.exists() {
         std::fs::remove_file(&arch_file)?;
     }
 
-    let analysis_repo = PostgresUserAnalysisRepository::new(db.pool().clone());
-    maowbot_core::tasks::monthly_maintenance::maybe_run_monthly_maintenance(&db, &analysis_repo).await?;
+    // Run monthly maintenance
+    maybe_run_monthly_maintenance(&db, &analysis_repo).await?;
 
+    // Confirm main table is now empty
     let row = sqlx::query("SELECT COUNT(*) as cnt FROM chat_messages")
         .fetch_one(db.pool())
         .await?;
     let cnt: i64 = row.try_get("cnt")?;
     assert_eq!(cnt, 0, "Main table should be empty after monthly maintenance");
 
+    // Confirm we updated archived_until in maintenance_state
     let row2 = sqlx::query("SELECT state_value FROM maintenance_state WHERE state_key='archived_until'")
         .fetch_one(db.pool())
         .await?;
     let archived_until: String = row2.try_get("state_value")?;
+    // e.g. "2025-02" if we are in February 2025:
     let current_year_month = Utc::now().format("%Y-%m").to_string();
-    assert_eq!(archived_until, current_year_month, "State should record current year-month");
+    assert_eq!(
+        archived_until,
+        current_year_month,
+        "State should record the current year-month"
+    );
 
     db.pool().close().await;
-    assert!(arch_file.exists(), "Should have created current archive");
 
+    // If you connect to a separate “archive DB” logic, adapt accordingly.
+    // Here we just check that the file was created:
+    assert!(
+        arch_file.exists(),
+        "Should have created an archive file"
+    );
+
+    // Or if you wrote them to table chat_messages_archive in the same DB, check that:
     let connect_opts = PgConnectOptions::new()
         .host("localhost")
         .port(5432)
@@ -276,7 +232,7 @@ async fn test_maybe_run_monthly_maintenance_integration() -> Result<(), Error> {
         .connect_with(connect_opts)
         .await?;
 
-    let row3 = sqlx::query("SELECT COUNT(*) as cnt FROM chat_messages")
+    let row3 = sqlx::query("SELECT COUNT(*) as cnt FROM chat_messages_archive")
         .fetch_one(&arch_pool)
         .await?;
     let archived_cnt: i64 = row3.try_get("cnt")?;

@@ -2,7 +2,8 @@
 
 use sqlx::{Pool, Postgres, Executor};
 use sqlx::postgres::PgPoolOptions;
-use maowbot_core::{Database, Error};
+use crate::Error;
+use crate::Database;
 
 /// Create a connection pool to the test DB.
 /// By default looks for `TEST_DATABASE_URL` in env,

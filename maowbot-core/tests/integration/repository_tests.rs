@@ -16,7 +16,9 @@ use maowbot_core::{
     utils::time::{to_epoch, from_epoch},
     Error,
 };
-use crate::test_utils::helpers::setup_test_database;
+use maowbot_core::repositories::postgres::platform_identity::PlatformIdentityRepo;
+use maowbot_core::repositories::postgres::user::UserRepo;
+use maowbot_core::test_utils::helpers::*;
 
 #[tokio::test]
 async fn test_user_repository() -> Result<(), Error> {

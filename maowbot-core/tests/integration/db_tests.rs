@@ -11,7 +11,8 @@ use maowbot_core::{
     models::{Platform, PlatformIdentity},
     utils::time::from_epoch,
 };
-use crate::test_utils::helpers::setup_test_database;
+
+use maowbot_core::test_utils::helpers::*;
 
 #[tokio::test]
 async fn test_database_connection() -> Result<(), Error> {

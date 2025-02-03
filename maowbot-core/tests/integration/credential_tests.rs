@@ -1,5 +1,4 @@
 // tests/credential_tests.rs
-
 use chrono::Utc;
 use sqlx::Executor;
 use uuid::Uuid;
@@ -11,7 +10,8 @@ use maowbot_core::{
     repositories::postgres::PostgresCredentialsRepository,
     Error,
 };
-use crate::test_utils::helpers::setup_test_database;
+
+use maowbot_core::test_utils::helpers::*;
 
 #[tokio::test]
 async fn test_credential_storage() -> Result<(), Error> {

@@ -1,4 +1,4 @@
-// tests/unit/plugin_manager_tests.rs
+// maowbot-core/tests/unit/plugin_manager_tests.rs
 
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -61,6 +61,7 @@ impl PluginConnection for MockPluginConnection {
     }
 
     async fn send(&self, response: maowbot_proto::plugs::PluginStreamResponse) -> Result<(), Error> {
+        // Format the payload using Debug so we can later assert its contents.
         let debug_str = format!("{:?}", response.payload);
         self.outbound_messages.lock().await.push(debug_str);
         Ok(())
@@ -88,7 +89,9 @@ async fn test_on_inbound_hello_success() {
     let (mut pm, _bus) = setup_manager(Some("secret".to_string())).await;
     let plugin = Arc::new(MockPluginConnection::new("unnamed"));
 
+    // Add and enable the plugin so that it will process the Hello message.
     pm.add_plugin_connection(plugin.clone()).await;
+    plugin.set_enabled(true).await;
 
     let payload = ReqPayload::Hello(Hello {
         plugin_name: "TestPlugin".into(),
@@ -107,6 +110,9 @@ async fn test_on_inbound_hello_wrong_passphrase() {
     let (mut pm, _bus) = setup_manager(Some("secret".to_string())).await;
     let plugin = Arc::new(MockPluginConnection::new("unnamed"));
 
+    // Add the plugin to the manager.
+    pm.add_plugin_connection(plugin.clone()).await;
+
     let payload = ReqPayload::Hello(Hello {
         plugin_name: "BadPlugin".into(),
         passphrase: "wrong".into(),
@@ -124,11 +130,16 @@ async fn test_on_inbound_log_message() {
     let (mut pm, _bus) = setup_manager(None).await;
     let plugin = Arc::new(MockPluginConnection::new("Logger"));
 
+    // Add and enable the plugin so that messages are processed.
+    pm.add_plugin_connection(plugin.clone()).await;
+    plugin.set_enabled(true).await;
+
     let payload = ReqPayload::LogMessage(LogMessage {
         text: "Hello from plugin logs!".to_string()
     });
 
     pm.on_inbound_message(payload, plugin.clone()).await;
+    // Log messages do not produce outbound responses.
     assert_eq!(plugin.sent_messages().await.len(), 0);
 }
 
@@ -138,6 +149,7 @@ async fn test_on_inbound_request_status() {
     let plugin = Arc::new(MockPluginConnection::new("StatusPlugin"));
 
     pm.add_plugin_connection(plugin.clone()).await;
+    plugin.set_enabled(true).await;
 
     pm.on_inbound_message(ReqPayload::RequestStatus(RequestStatus {}), plugin.clone()).await;
     let messages = plugin.sent_messages().await;
@@ -149,6 +161,9 @@ async fn test_on_inbound_request_status() {
 async fn test_on_inbound_request_caps() {
     let (mut pm, _bus) = setup_manager(None).await;
     let plugin = Arc::new(MockPluginConnection::new("Cappy"));
+
+    pm.add_plugin_connection(plugin.clone()).await;
+    plugin.set_enabled(true).await;
 
     let payload = ReqPayload::RequestCaps(RequestCaps {
         requested: vec![
@@ -162,6 +177,8 @@ async fn test_on_inbound_request_caps() {
 
     let messages = plugin.sent_messages().await;
     assert_eq!(messages.len(), 1);
+    // Check that the response contains a CapabilityResponse and that the denied vector
+    // includes the ChatModeration capability (printed by name).
     assert!(messages[0].contains("CapabilityResponse"));
     assert!(messages[0].contains("denied: [ChatModeration]"));
 }
@@ -171,6 +188,10 @@ async fn test_on_inbound_shutdown() {
     let (mut pm, bus) = setup_manager(None).await;
     let plugin = Arc::new(MockPluginConnection::new("Shutter"));
 
+    // Add and enable the plugin so that the shutdown message is processed.
+    pm.add_plugin_connection(plugin.clone()).await;
+    plugin.set_enabled(true).await;
+
     pm.on_inbound_message(ReqPayload::Shutdown(Shutdown {}), plugin.clone()).await;
     assert!(bus.is_shutdown());
 }
@@ -179,6 +200,9 @@ async fn test_on_inbound_shutdown() {
 async fn test_on_inbound_switch_scene_denied() {
     let (mut pm, _bus) = setup_manager(None).await;
     let plugin = Arc::new(MockPluginConnection::new("NoSceneCap"));
+
+    pm.add_plugin_connection(plugin.clone()).await;
+    plugin.set_enabled(true).await;
 
     let payload = ReqPayload::SwitchScene(SwitchScene {
         scene_name: "my_scene".to_string(),
@@ -195,6 +219,9 @@ async fn test_on_inbound_send_chat_denied() {
     let (mut pm, _bus) = setup_manager(None).await;
     let plugin = Arc::new(MockPluginConnection::new("NoSendCap"));
 
+    pm.add_plugin_connection(plugin.clone()).await;
+    plugin.set_enabled(true).await;
+
     let payload = ReqPayload::SendChat(SendChat {
         channel: "some_channel".to_string(),
         text: "Hello from plugin".to_string(),
@@ -210,6 +237,9 @@ async fn test_on_inbound_send_chat_denied() {
 async fn test_on_inbound_send_chat_granted() {
     let (mut pm, bus) = setup_manager(None).await;
     let plugin = Arc::new(MockPluginConnection::new("Sender"));
+    pm.add_plugin_connection(plugin.clone()).await;
+    plugin.set_enabled(true).await;
+    // Grant the SendChat capability.
     plugin.set_capabilities(vec![PluginCapability::SendChat]).await;
 
     let mut rx = bus.subscribe(None).await;
@@ -221,8 +251,10 @@ async fn test_on_inbound_send_chat_granted() {
     pm.on_inbound_message(payload, plugin.clone()).await;
 
     let messages = plugin.sent_messages().await;
+    // When successful, no direct error or response is sent to the plugin.
     assert!(messages.is_empty(), "No error or direct response on success");
 
+    // The event bus should have received a ChatMessage event.
     let evt = rx.recv().await.expect("Should get an event");
     match evt {
         BotEvent::ChatMessage { platform, channel, user, text, .. } => {
