@@ -23,7 +23,6 @@ use maowbot_core::cache::{CacheConfig, ChatCache, TrimPolicy};
 use maowbot_core::services::message_service::MessageService;
 use maowbot_core::services::user_service::UserService;
 use maowbot_core::tasks::biweekly_maintenance;
-use maowbot_core::tasks::cache_maintenance::spawn_cache_prune_task;
 use maowbot_core::tasks::biweekly_maintenance::spawn_biweekly_maintenance_task;
 
 use maowbot_core::plugins::bot_api::BotApi;
@@ -174,7 +173,6 @@ async fn run_server(args: Args) -> Result<(), Error> {
         CacheConfig { trim_policy },
     );
     let chat_cache = Arc::new(Mutex::new(chat_cache));
-    spawn_cache_prune_task(chat_cache.clone(), Duration::from_secs(60));
     let message_service = Arc::new(MessageService::new(chat_cache, event_bus.clone()));
 
     let platform_manager = maowbot_core::platforms::manager::PlatformManager::new(
