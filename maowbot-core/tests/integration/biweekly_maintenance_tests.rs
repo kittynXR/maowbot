@@ -1,3 +1,5 @@
+// File: maowbot-core/tests/integration/biweekly_maintenance_tests.rs
+
 use chrono::{DateTime, Utc, Duration, Datelike};
 use sqlx::{Row, Executor};
 use uuid::Uuid;
@@ -82,17 +84,12 @@ async fn test_biweekly_maintenance_archives_old_messages() -> Result<(), Error> 
     }
 
     // 4) We also want to test user_analysis creation/updates:
-    //    Insert an existing user_analysis or rely on the function to create it.
-    //    We'll rely on the summary logic to create or update. Let's just ensure the code
-    //    can handle an existing record.
     let analysis_repo = PostgresUserAnalysisRepository::new(db.pool().clone());
 
     // 5) Call the main function that runs partition housekeeping + archiving + user analysis
-    //    For real usage it’s called on an interval. For test, we call it directly:
     run_biweekly_maintenance(&db, &analysis_repo).await?;
 
-    // 6) Confirm that older messages are gone from `chat_messages` and are in `chat_messages_archive`.
-    //    Meanwhile, the new messages remain in `chat_messages`.
+    // 6) Confirm that older messages are gone from `chat_messages` and appear in `chat_messages_archive`
     let older_in_chat = sqlx::query(
         r#"
         SELECT message_id FROM chat_messages
@@ -114,7 +111,11 @@ async fn test_biweekly_maintenance_archives_old_messages() -> Result<(), Error> 
     )
         .fetch_all(db.pool())
         .await?;
-    assert_eq!(older_in_archive.len(), 3, "All 3 old messages should be in the archive");
+    assert_eq!(
+        older_in_archive.len(),
+        3,
+        "All 3 old messages should be in the archive"
+    );
 
     // Newer messages should still be in chat_messages
     let newer_in_chat = sqlx::query(
@@ -125,23 +126,22 @@ async fn test_biweekly_maintenance_archives_old_messages() -> Result<(), Error> 
     )
         .fetch_all(db.pool())
         .await?;
-    assert_eq!(newer_in_chat.len(), 2, "The 2 newer messages should remain in chat_messages");
+    assert_eq!(
+        newer_in_chat.len(),
+        2,
+        "The 2 newer messages should remain in chat_messages"
+    );
 
     // 7) Confirm user_analysis was created or updated
-    //    We inserted user_1 who posted messages older + newer than 30 days.
-    //    The code lumps "older than 30 days" into the archiving flow, then calls
-    //    generate_user_summaries(...). Let's see if we got a user_analysis row:
     let found_analysis = analysis_repo.get_analysis(user_id).await?;
     assert!(
         found_analysis.is_some(),
-        "UserAnalysis record should have been created or updated for user_1"
+        "UserAnalysis record should have been created/updated for user_1"
     );
 
-    // 8) Done - test passes if we reached here without panic
     Ok(())
 }
 
-/// Example test focusing on partition creation/dropping (optional).
 #[tokio::test]
 async fn test_partition_maintenance() -> Result<(), Error> {
     let db = setup_test_database().await?;
@@ -151,7 +151,6 @@ async fn test_partition_maintenance() -> Result<(), Error> {
     run_partition_maintenance(&db, 60).await?;
 
     // Optionally, check that a partition for "this month" was created:
-    // We'll parse the current year/month from the code you are testing, or replicate it:
     let now = Utc::now();
     let year = now.year();
     let month = now.month();
@@ -176,13 +175,9 @@ async fn test_partition_maintenance() -> Result<(), Error> {
         "Partition for the current month should exist"
     );
 
-    // We won't do a full test of dropping old partitions unless
-    // you manually create them for older months, etc.
-
     Ok(())
 }
 
-/// Example test focusing on archive & user analysis (optional).
 #[tokio::test]
 async fn test_run_archive_and_analysis() -> Result<(), Error> {
     let db = setup_test_database().await?;
@@ -256,7 +251,7 @@ async fn test_run_archive_and_analysis() -> Result<(), Error> {
         r#"
         SELECT message_id FROM chat_messages_archive
         WHERE message_id LIKE 'old_analysis_msg_%'
-        "#,
+        "#
     )
         .fetch_all(db.pool())
         .await?;
@@ -277,11 +272,12 @@ async fn test_run_archive_and_analysis() -> Result<(), Error> {
     let analysis = analysis_repo.get_analysis(user_id).await?;
     assert!(analysis.is_some(), "Should have a user_analysis for user");
     let an = analysis.unwrap();
-    // The default logic in run_ai_scoring + merging is naive, but let's just confirm
-    // it updated:
-    assert!(an.spam_score > 0.0, "Should have some non-default spam_score from the sample code.");
+    assert!(
+        an.spam_score > 0.0,
+        "Should have some non-default spam_score from the sample code."
+    );
 
-    // Also check user_analysis_history for a new row:
+    // Also check user_analysis_history for a new row
     let year_month = format!("{}-{:02}", Utc::now().year(), Utc::now().month());
     let hist_rows = sqlx::query(
         r#"
@@ -294,7 +290,11 @@ async fn test_run_archive_and_analysis() -> Result<(), Error> {
         .fetch_all(db.pool())
         .await?;
 
-    assert_eq!(hist_rows.len(), 1, "Should have 1 monthly summary row in user_analysis_history");
+    assert_eq!(
+        hist_rows.len(),
+        1,
+        "Should have 1 monthly summary row in user_analysis_history"
+    );
 
     Ok(())
 }

@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use tracing::{info, error};
 
 use crate::cache::{ChatCache, CachedMessage};
@@ -64,11 +64,11 @@ impl MessageService {
 
     pub async fn get_recent_messages(
         &self,
-        since: chrono::DateTime<Utc>,
+        since: DateTime<Utc>,
         token_limit: Option<usize>,
         filter_user_id: Option<&str>,
     ) -> Vec<CachedMessage> {
         let cache_lock = self.chat_cache.lock().await;
-        cache_lock.get_recent_messages(since, token_limit, filter_user_id)
+        cache_lock.get_recent_messages(since, token_limit, filter_user_id).await
     }
 }

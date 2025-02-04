@@ -157,24 +157,26 @@ impl<R: UserAnalysisRepository> ChatCache<R> {
     /// Add a message to the cache, optionally doing a quick synchronous age trim.
     /// (We do not do spam/quality checks here—do that in a separate background job.)
     pub async fn add_message(&self, msg: CachedMessage) {
-        // Insert into the ring
+        // -- 1) RING LOCK (write):
         let idx = {
             let mut guard = self.global.write().await;
             let idx = guard.push(msg.clone());
             self.total_in_buffer.store(guard.total_count, Ordering::Release);
             idx
-        };
+        }; // ring write lock is dropped here
 
-        // Insert into per-user queue
-        let mut user_q = self.user_map.entry(msg.user_id.clone()).or_default();
-        user_q.push_back(idx);
-        if let Some(max_per_user) = self.config.trim_policy.max_messages_per_user {
-            while user_q.len() > max_per_user {
-                user_q.pop_front();
+        // -- 2) DASHMAP lock:
+        {
+            let mut user_q = self.user_map.entry(msg.user_id.clone()).or_default();
+            user_q.push_back(idx);
+            if let Some(max_per_user) = self.config.trim_policy.max_messages_per_user {
+                while user_q.len() > max_per_user {
+                    user_q.pop_front();
+                }
             }
         }
 
-        // Optionally do a quick age-based trim here (no async calls)
+        // -- 3) (Optional) RING LOCK (write) to do age trimming:
         if let Some(max_age) = self.config.trim_policy.max_age_seconds {
             let cutoff = Utc::now() - Duration::seconds(max_age);
             let removed = {
@@ -182,13 +184,12 @@ impl<R: UserAnalysisRepository> ChatCache<R> {
                 let removed = guard.trim_by_time(cutoff);
                 self.total_in_buffer.store(guard.total_count, Ordering::Release);
                 removed
-            };
+            }; // ring write lock dropped
+
             if removed > 0 {
                 self.remove_stale_indices();
             }
         }
-
-        // Because we never do `.await` while holding a `RwLockGuard`, we avoid the Send error.
     }
 
     /// A separate function that you might call from a background task to remove messages from
@@ -271,24 +272,26 @@ impl<R: UserAnalysisRepository> ChatCache<R> {
 
     /// Remove from each user's queue those ring indices that have been overwritten or trimmed.
     fn remove_stale_indices(&self) {
-        let guard = self.global.try_read();
-        if let Ok(g) = guard {
-            let start_idx = g.start_idx;
-            let total_count = g.total_count;
-            let cap = g.capacity;
-            drop(g);
+        // The ring is only needed to figure out which indices are valid, so:
+        let (start_idx, total_count, cap) = {
+            if let Ok(g) = self.global.try_read() {
+                (g.start_idx, g.total_count, g.capacity)
+            } else {
+                // if try_read fails, just skip
+                return;
+            }
+        }; // ring read lock dropped
 
-            if total_count == 0 {
-            // Everything was cleared
+        if total_count == 0 {
+            // Now we want to lock the DashMap
             for mut entry in self.user_map.iter_mut() {
-            entry.clear();
+                entry.clear();
             }
             self.total_in_buffer.store(0, Ordering::Release);
             return;
         }
 
         let end_pos = (start_idx + total_count) % cap;
-
         let in_range = move |ring_idx: usize| {
             if start_idx < end_pos {
                 ring_idx >= start_idx && ring_idx < end_pos
@@ -297,15 +300,16 @@ impl<R: UserAnalysisRepository> ChatCache<R> {
             }
         };
 
+        // Now lock the DashMap:
         for mut entry in self.user_map.iter_mut() {
             entry.retain(|&idx| in_range(idx));
         }
-        // final re-check
-        let new_count = self.global.try_read().map_or(0, |gg| gg.total_count);
-        self.total_in_buffer.store(new_count, Ordering::Release);
-    }
-        }
 
+        // Optionally update total_in_buffer from a second ring read:
+        if let Ok(g2) = self.global.try_read() {
+            self.total_in_buffer.store(g2.total_count, Ordering::Release);
+        }
+    }
     // ----------------------------------------------------------------
     // Provide a get_recent_messages(...) method matching your old usage
     // signature, so message_service doesn't break:
@@ -315,33 +319,27 @@ impl<R: UserAnalysisRepository> ChatCache<R> {
     /// Equivalent to your old `get_recent_messages`, returning messages
     /// with timestamp >= `since` (ascending by timestamp), optionally
     /// filtered by user_id, and stopping if `token_limit` is exceeded.
-    pub fn get_recent_messages(
+    pub async fn get_recent_messages(
         &self,
         since: DateTime<Utc>,
         token_limit: Option<usize>,
         filter_user_id: Option<&str>,
     ) -> Vec<CachedMessage> {
-        // We'll either scan the user’s queue or do a global scan,
-        // then filter by `timestamp >= since`, and stop if we exceed token_limit.
-
         let mut results = Vec::new();
-        let global_guard = self.global.blocking_read(); // we can do blocking read here since it's a sync method
+        let global_guard = self.global.read().await; // Async lock
+
         let capacity = global_guard.capacity;
         let start_idx = global_guard.start_idx;
         let total_count = global_guard.total_count;
-
         if total_count == 0 {
             return results;
         }
 
-        // We'll iterate from oldest to newest, and pick messages that pass the filter.
         let mut tokens_used = 0usize;
 
-        // If filter_user_id is Some, we do a more direct approach scanning their queue:
         if let Some(u) = filter_user_id {
+            // Per-user mode
             if let Some(q) = self.user_map.get(u) {
-                // We'll gather all ring indices, then pick messages >= since
-                // Because they're stored in ascending insertion order, we can just iterate.
                 for &idx in q.iter() {
                     if let Some(m) = global_guard.get(idx) {
                         if m.timestamp < since {
@@ -358,7 +356,7 @@ impl<R: UserAnalysisRepository> ChatCache<R> {
                 }
             }
         } else {
-            // No specific user => we do a global pass from oldest to newest
+            // Global scan from oldest to newest
             for i in 0..total_count {
                 let ring_pos = (start_idx + i) % capacity;
                 if let Some(msg) = global_guard.messages[ring_pos].as_ref() {
@@ -374,7 +372,6 @@ impl<R: UserAnalysisRepository> ChatCache<R> {
                 }
             }
         }
-
         results
     }
 }

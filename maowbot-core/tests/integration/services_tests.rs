@@ -1,4 +1,4 @@
-// maowbot-core/tests/integration/services_tests.rs
+// File: maowbot-core/tests/integration/services_tests.rs
 
 use std::sync::Arc;
 use anyhow::anyhow;
@@ -8,7 +8,7 @@ use tokio::time::{timeout, Duration};
 use maowbot_core::{
     Error,
     auth::user_manager::DefaultUserManager,
-    cache::{ChatCache, CacheConfig, TrimPolicy},
+    cache::{ChatCache, CacheConfig, TrimPolicy, CachedMessage},
     db::Database,
     eventbus::{EventBus, BotEvent},
     repositories::postgres::{
@@ -26,7 +26,7 @@ use maowbot_core::test_utils::helpers::setup_test_database;
 
 #[tokio::test]
 async fn test_user_message_services_db() -> Result<(), Error> {
-    // Use the standard Postgres test DB instead of ":memory:"
+    // Use the standard Postgres test DB
     let db = setup_test_database().await?;
 
     // Set up repositories and the user manager
@@ -41,9 +41,9 @@ async fn test_user_message_services_db() -> Result<(), Error> {
 
     // Set up the chat cache with a trimming policy
     let trim_policy = TrimPolicy {
-        max_age_seconds: Some(86400),
+        max_age_seconds: Some(86400), // 1 day
         spam_score_cutoff: None,
-        max_total_messages: None,
+        max_total_messages: Some(500),
         max_messages_per_user: None,
         min_quality_score: None,
     };
@@ -51,10 +51,12 @@ async fn test_user_message_services_db() -> Result<(), Error> {
         PostgresUserAnalysisRepository::new(db.pool().clone()),
         CacheConfig { trim_policy },
     );
-    let chat_cache = Arc::new(Mutex::new(cache));
-    let message_service = MessageService::new(chat_cache, event_bus.clone());
 
-    // Subscribe to events (await the subscription future to get the receiver)
+    // Wrap it in a Mutex, matching your MessageService constructor
+    let chat_cache = Arc::new(Mutex::new(cache));
+    let message_service = MessageService::new(chat_cache.clone(), event_bus.clone());
+
+    // Subscribe to events
     let mut rx = event_bus.subscribe(None).await;
 
     // Create a user (via the user service)
@@ -64,8 +66,9 @@ async fn test_user_message_services_db() -> Result<(), Error> {
     assert_eq!(user.user_id.len(), 36);
 
     // Publish a chat message
+    let msg_text = "Hello chat";
     message_service
-        .process_incoming_message("twitch_helix", "channel1", &user.user_id, "Hello chat")
+        .process_incoming_message("twitch_helix", "channel1", &user.user_id, msg_text)
         .await?;
 
     // Wait up to 1 second to see if the event is published
@@ -77,16 +80,16 @@ async fn test_user_message_services_db() -> Result<(), Error> {
             assert_eq!(platform, "twitch_helix");
             assert_eq!(channel, "channel1");
             assert_eq!(msg_user, user.user_id);
-            assert_eq!(text, "Hello chat");
+            assert_eq!(text, msg_text);
         }
         other => panic!("Expected ChatMessage, got {:?}", other),
     }
 
-    // Confirm that the message was cached
+    // Confirm that the message was cached in memory
     let since = chrono::Utc::now() - chrono::Duration::hours(1);
     let cached = message_service.get_recent_messages(since, None, None).await;
     assert_eq!(cached.len(), 1);
-    assert_eq!(cached[0].text, "Hello chat");
+    assert_eq!(cached[0].text, msg_text);
 
     Ok(())
 }
