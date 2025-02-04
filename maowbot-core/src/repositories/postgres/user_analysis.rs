@@ -2,9 +2,8 @@
 
 use sqlx::{Pool, Postgres, Row};
 use async_trait::async_trait;
-use crate::utils::time::{to_epoch, from_epoch, current_epoch};
-use crate::Error;
-use crate::models::UserAnalysis;
+use chrono::{DateTime, Utc};
+use crate::{Error, models::UserAnalysis};
 
 #[async_trait]
 pub trait UserAnalysisRepository: Send + Sync {
@@ -42,7 +41,7 @@ impl UserAnalysisRepository for PostgresUserAnalysisRepository {
                 updated_at
             )
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-            "#,
+            "#
         )
             .bind(&analysis.user_analysis_id)
             .bind(&analysis.user_id)
@@ -52,8 +51,8 @@ impl UserAnalysisRepository for PostgresUserAnalysisRepository {
             .bind(analysis.horni_score)
             .bind(&analysis.ai_notes)
             .bind(&analysis.moderator_notes)
-            .bind(to_epoch(analysis.created_at))
-            .bind(to_epoch(analysis.updated_at))
+            .bind(analysis.created_at)
+            .bind(analysis.updated_at)
             .execute(&self.pool)
             .await?;
         Ok(())
@@ -62,20 +61,19 @@ impl UserAnalysisRepository for PostgresUserAnalysisRepository {
     async fn get_analysis(&self, user_id: &str) -> Result<Option<UserAnalysis>, Error> {
         let row = sqlx::query(
             r#"
-            SELECT
-                user_analysis_id,
-                user_id,
-                spam_score,
-                intelligibility_score,
-                quality_score,
-                horni_score,
-                ai_notes,
-                moderator_notes,
-                created_at,
-                updated_at
+            SELECT user_analysis_id,
+                   user_id,
+                   spam_score,
+                   intelligibility_score,
+                   quality_score,
+                   horni_score,
+                   ai_notes,
+                   moderator_notes,
+                   created_at,
+                   updated_at
             FROM user_analysis
             WHERE user_id = $1
-            "#,
+            "#
         )
             .bind(user_id)
             .fetch_optional(&self.pool)
@@ -91,8 +89,8 @@ impl UserAnalysisRepository for PostgresUserAnalysisRepository {
                 horni_score: r.try_get("horni_score")?,
                 ai_notes: r.try_get("ai_notes")?,
                 moderator_notes: r.try_get("moderator_notes")?,
-                created_at: from_epoch(r.try_get::<i64, _>("created_at")?),
-                updated_at: from_epoch(r.try_get::<i64, _>("updated_at")?),
+                created_at: r.try_get::<DateTime<Utc>, _>("created_at")?,
+                updated_at: r.try_get::<DateTime<Utc>, _>("updated_at")?,
             }))
         } else {
             Ok(None)
@@ -100,7 +98,7 @@ impl UserAnalysisRepository for PostgresUserAnalysisRepository {
     }
 
     async fn update_analysis(&self, analysis: &UserAnalysis) -> Result<(), Error> {
-        let now = current_epoch();
+        let now = Utc::now();
         sqlx::query(
             r#"
             UPDATE user_analysis
@@ -112,7 +110,7 @@ impl UserAnalysisRepository for PostgresUserAnalysisRepository {
                 moderator_notes = $6,
                 updated_at = $7
             WHERE user_analysis_id = $8
-            "#,
+            "#
         )
             .bind(analysis.spam_score)
             .bind(analysis.intelligibility_score)

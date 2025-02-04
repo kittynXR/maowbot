@@ -71,8 +71,8 @@ impl PlatformAuthenticator for DiscordAuthenticator {
                         "client_secret": self.client_secret
                     })),
                     expires_at: None,
-                    created_at: Utc::now().naive_utc(),
-                    updated_at: Utc::now().naive_utc(),
+                    created_at: Utc::now(),
+                    updated_at: Utc::now(),
                 })
             }
             _ => Err(Error::Auth("Invalid authentication response".into())),

@@ -67,8 +67,8 @@ impl PlatformAuthenticator for TwitchIrcAuthenticator {
             refresh_token: None,
             additional_data: Some(json!({ "source": "twitch-irc-token" })),
             expires_at: None,
-            created_at: Utc::now().naive_utc(),
-            updated_at: Utc::now().naive_utc(),
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
         })
     }
 

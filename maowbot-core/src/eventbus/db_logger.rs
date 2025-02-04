@@ -108,7 +108,7 @@ fn convert_to_chat_message(event: &BotEvent) -> Option<ChatMessage> {
             channel: channel.clone(),
             user_id: user.clone(),
             message_text: text.clone(),
-            timestamp: timestamp.timestamp(),
+            timestamp: timestamp.to_utc(),
             metadata: None,
         })
     } else {

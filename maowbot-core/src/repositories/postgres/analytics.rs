@@ -1,11 +1,10 @@
 // src/repositories/postgres/analytics.rs
+
 use async_trait::async_trait;
-use sqlx::{Pool, Postgres, Row};
-use uuid::Uuid;
-use chrono::{NaiveDateTime, Utc};
+use chrono::{DateTime, Utc};
+use sqlx::{Pool, Postgres, Row, FromRow};
 use serde_json::Value;
-use sqlx::FromRow;
-use crate::utils::time::{to_epoch, from_epoch};
+use uuid::Uuid;
 use crate::Error;
 
 /// Represents a single chat message row.
@@ -16,38 +15,35 @@ pub struct ChatMessage {
     pub channel: String,
     pub user_id: String,
     pub message_text: String,
-    pub timestamp: i64,
+    pub timestamp: DateTime<Utc>,
     pub metadata: Option<Value>,
 }
 
 /// Represents a chat session (user's join/leave times).
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct ChatSession {
     pub session_id: String,
     pub platform: String,
     pub channel: String,
     pub user_id: String,
-    pub joined_at: NaiveDateTime,
-    pub left_at: Option<NaiveDateTime>,
+    pub joined_at: DateTime<Utc>,
+    pub left_at: Option<DateTime<Utc>>,
     pub session_duration_seconds: Option<i64>,
 }
 
 /// Represents an arbitrary bot event (for logging or analytics).
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct BotEvent {
     pub event_id: String,
     pub event_type: String,
-    pub event_timestamp: NaiveDateTime,
+    pub event_timestamp: DateTime<Utc>,
     pub data: Option<Value>,
 }
 
 /// Defines the analytics repository trait.
 #[async_trait]
-pub trait AnalyticsRepo: Send + Sync + 'static {
-    /// Insert a new `ChatMessage`.
+pub trait AnalyticsRepo: Send + Sync {
     async fn insert_chat_message(&self, msg: &ChatMessage) -> Result<(), Error>;
-
-    /// Return up to `limit` most recent messages for a given platform/channel.
     async fn get_recent_messages(
         &self,
         platform: &str,
@@ -55,21 +51,16 @@ pub trait AnalyticsRepo: Send + Sync + 'static {
         limit: i64
     ) -> Result<Vec<ChatMessage>, Error>;
 
-    /// Create a new `ChatSession`.
     async fn insert_chat_session(&self, session: &ChatSession) -> Result<(), Error>;
-
-    /// Closes a chat session with `left_at` time and final duration.
     async fn close_chat_session(
         &self,
         session_id: &str,
-        left_at: NaiveDateTime,
+        left_at: DateTime<Utc>,
         duration_seconds: i64
     ) -> Result<(), Error>;
 
-    /// Insert a new `BotEvent`.
     async fn insert_bot_event(&self, event: &BotEvent) -> Result<(), Error>;
 
-    /// Update daily stats row, incrementing messages/visits for a given date.
     async fn update_daily_stats(
         &self,
         date_str: &str,
@@ -137,10 +128,11 @@ impl AnalyticsRepo for PostgresAnalyticsRepository {
                 timestamp,
                 metadata
             FROM chat_messages
-            WHERE platform = $1 AND channel = $2
+            WHERE platform = $1
+              AND channel = $2
             ORDER BY timestamp DESC
             LIMIT $3
-            "#,
+            "#
         )
             .bind(platform)
             .bind(channel)
@@ -148,7 +140,7 @@ impl AnalyticsRepo for PostgresAnalyticsRepository {
             .fetch_all(&self.pool)
             .await?;
 
-        let mut messages = Vec::with_capacity(rows.len());
+        let mut messages = Vec::new();
         for row in rows {
             let meta_str: Option<String> = row.try_get("metadata")?;
             let metadata = meta_str
@@ -161,7 +153,7 @@ impl AnalyticsRepo for PostgresAnalyticsRepository {
                 channel: row.try_get("channel")?,
                 user_id: row.try_get("user_id")?,
                 message_text: row.try_get("message_text")?,
-                timestamp: row.try_get("timestamp")?,
+                timestamp: row.try_get::<DateTime<Utc>, _>("timestamp")?,
                 metadata,
             });
         }
@@ -169,9 +161,6 @@ impl AnalyticsRepo for PostgresAnalyticsRepository {
     }
 
     async fn insert_chat_session(&self, session: &ChatSession) -> Result<(), Error> {
-        let joined_epoch = to_epoch(session.joined_at);
-        let left_epoch = session.left_at.map(to_epoch).unwrap_or(0);
-
         sqlx::query(
             r#"
             INSERT INTO chat_sessions (
@@ -185,8 +174,8 @@ impl AnalyticsRepo for PostgresAnalyticsRepository {
             .bind(&session.platform)
             .bind(&session.channel)
             .bind(&session.user_id)
-            .bind(joined_epoch)
-            .bind(left_epoch)
+            .bind(session.joined_at)
+            .bind(session.left_at)
             .bind(session.session_duration_seconds)
             .execute(&self.pool)
             .await?;
@@ -197,11 +186,9 @@ impl AnalyticsRepo for PostgresAnalyticsRepository {
     async fn close_chat_session(
         &self,
         session_id: &str,
-        left_at: NaiveDateTime,
+        left_at: DateTime<Utc>,
         duration_seconds: i64
     ) -> Result<(), Error> {
-        let left_epoch = to_epoch(left_at);
-
         sqlx::query(
             r#"
             UPDATE chat_sessions
@@ -210,7 +197,7 @@ impl AnalyticsRepo for PostgresAnalyticsRepository {
             WHERE session_id = $3
             "#
         )
-            .bind(left_epoch)
+            .bind(left_at)
             .bind(duration_seconds)
             .bind(session_id)
             .execute(&self.pool)
@@ -221,7 +208,6 @@ impl AnalyticsRepo for PostgresAnalyticsRepository {
 
     async fn insert_bot_event(&self, event: &BotEvent) -> Result<(), Error> {
         let data_str = event.data.as_ref().map(|d| d.to_string()).unwrap_or_default();
-        let evt_epoch = to_epoch(event.event_timestamp);
 
         sqlx::query(
             r#"
@@ -233,7 +219,7 @@ impl AnalyticsRepo for PostgresAnalyticsRepository {
         )
             .bind(&event.event_id)
             .bind(&event.event_type)
-            .bind(evt_epoch)
+            .bind(event.event_timestamp)
             .bind(data_str)
             .execute(&self.pool)
             .await?;

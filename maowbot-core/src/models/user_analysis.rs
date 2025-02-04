@@ -1,10 +1,9 @@
 // File: src/models/user_analysis.rs
 
-use chrono::NaiveDateTime;
+use chrono::{DateTime, Utc};
 use serde::{Serialize, Deserialize};
 use uuid::Uuid;
 
-/// AI or moderator-driven analysis about a user.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UserAnalysis {
     pub user_analysis_id: String,
@@ -15,13 +14,13 @@ pub struct UserAnalysis {
     pub horni_score: f32,
     pub ai_notes: Option<String>,
     pub moderator_notes: Option<String>,
-    pub created_at: NaiveDateTime,
-    pub updated_at: NaiveDateTime,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
 }
 
 impl UserAnalysis {
     pub fn new(user_id: &str) -> Self {
-        let now = chrono::Utc::now().naive_utc();
+        let now = Utc::now();
         Self {
             user_analysis_id: Uuid::new_v4().to_string(),
             user_id: user_id.to_string(),

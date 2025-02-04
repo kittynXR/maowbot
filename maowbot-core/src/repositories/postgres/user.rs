@@ -1,9 +1,9 @@
 // src/repositories/postgres/user.rs
 
 use crate::models::User;
-use crate::utils::time::{to_epoch, from_epoch, current_epoch};
 use crate::Error;
 use sqlx::{Pool, Postgres, Row};
+use chrono::{DateTime, Utc};
 
 #[async_trait::async_trait]
 pub trait UserRepo {
@@ -26,16 +26,18 @@ impl UserRepository {
 #[async_trait::async_trait]
 impl UserRepo for UserRepository {
     async fn create(&self, user: &User) -> Result<(), Error> {
-        // Insert with placeholders $1..$5
+        // Insert with TIMESTAMPTZ columns:
         sqlx::query(
             r#"
-            INSERT INTO users (user_id, created_at, last_seen, is_active, global_username)
+            INSERT INTO users (
+                user_id, created_at, last_seen, is_active, global_username
+            )
             VALUES ($1, $2, $3, $4, $5)
             "#,
         )
             .bind(&user.user_id)
-            .bind(to_epoch(user.created_at))
-            .bind(to_epoch(user.last_seen))
+            .bind(user.created_at)
+            .bind(user.last_seen)
             .bind(user.is_active)
             .bind(&user.global_username)
             .execute(&self.pool)
@@ -46,10 +48,14 @@ impl UserRepo for UserRepository {
     async fn get(&self, id: &str) -> Result<Option<User>, Error> {
         let row = sqlx::query(
             r#"
-            SELECT user_id, global_username, created_at, last_seen, is_active
+            SELECT user_id,
+                   global_username,
+                   created_at,
+                   last_seen,
+                   is_active
             FROM users
             WHERE user_id = $1
-            "#,
+            "#
         )
             .bind(id)
             .fetch_optional(&self.pool)
@@ -59,8 +65,8 @@ impl UserRepo for UserRepository {
             Ok(Some(User {
                 user_id: r.try_get("user_id")?,
                 global_username: r.try_get("global_username")?,
-                created_at: from_epoch(r.try_get::<i64, _>("created_at")?),
-                last_seen: from_epoch(r.try_get::<i64, _>("last_seen")?),
+                created_at: r.try_get::<DateTime<Utc>, _>("created_at")?,
+                last_seen: r.try_get::<DateTime<Utc>, _>("last_seen")?,
                 is_active: r.try_get("is_active")?,
             }))
         } else {
@@ -76,10 +82,10 @@ impl UserRepo for UserRepository {
                 last_seen = $2,
                 is_active = $3
             WHERE user_id = $4
-            "#,
+            "#
         )
             .bind(&user.global_username)
-            .bind(to_epoch(user.last_seen))
+            .bind(user.last_seen)
             .bind(user.is_active)
             .bind(&user.user_id)
             .execute(&self.pool)

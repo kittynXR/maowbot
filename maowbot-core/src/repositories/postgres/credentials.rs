@@ -1,10 +1,9 @@
 // src/repositories/postgres/credentials.rs
-use crate::Error;
+
+use crate::{Error, models::{Platform, PlatformCredential}};
 use crate::crypto::Encryptor;
-use crate::models::{Platform, PlatformCredential};
-use crate::utils::time::{to_epoch, from_epoch};
 use async_trait::async_trait;
-use chrono::Duration;
+use chrono::{DateTime, Utc, Duration};
 use sqlx::{Pool, Postgres, Row};
 use std::str::FromStr;
 
@@ -14,8 +13,6 @@ pub trait CredentialsRepository: Send + Sync {
     async fn get_credentials(&self, platform: &Platform, user_id: &str) -> Result<Option<PlatformCredential>, Error>;
     async fn update_credentials(&self, creds: &PlatformCredential) -> Result<(), Error>;
     async fn delete_credentials(&self, platform: &Platform, user_id: &str) -> Result<(), Error>;
-
-    /// Additional helper for fetching any credentials expiring within a certain duration.
     async fn get_expiring_credentials(&self, within: Duration) -> Result<Vec<PlatformCredential>, Error>;
 }
 
@@ -46,20 +43,27 @@ impl CredentialsRepository for PostgresCredentialsRepository {
             None => None,
         };
 
-        // Upsert approach with Postgres can be done with ON CONFLICT (platform, user_id).
-        // Here is an example using a single statement:
         sqlx::query(
             r#"
-            INSERT INTO platform_credentials
-               (credential_id, platform, credential_type, user_id, primary_token,
-                refresh_token, additional_data, expires_at, created_at, updated_at)
+            INSERT INTO platform_credentials (
+                credential_id,
+                platform,
+                credential_type,
+                user_id,
+                primary_token,
+                refresh_token,
+                additional_data,
+                expires_at,
+                created_at,
+                updated_at
+            )
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
             ON CONFLICT (platform, user_id) DO UPDATE
-               SET primary_token = EXCLUDED.primary_token,
-                   refresh_token = EXCLUDED.refresh_token,
-                   additional_data = EXCLUDED.additional_data,
-                   expires_at = EXCLUDED.expires_at,
-                   updated_at = EXCLUDED.updated_at
+               SET primary_token       = EXCLUDED.primary_token,
+                   refresh_token       = EXCLUDED.refresh_token,
+                   additional_data     = EXCLUDED.additional_data,
+                   expires_at         = EXCLUDED.expires_at,
+                   updated_at         = EXCLUDED.updated_at
             "#,
         )
             .bind(&creds.credential_id)
@@ -69,9 +73,9 @@ impl CredentialsRepository for PostgresCredentialsRepository {
             .bind(encrypted_token)
             .bind(encrypted_refresh)
             .bind(encrypted_data)
-            .bind(creds.expires_at.map(|dt| to_epoch(dt)))
-            .bind(to_epoch(creds.created_at))
-            .bind(to_epoch(creds.updated_at))
+            .bind(creds.expires_at) // TIMESTAMPTZ
+            .bind(creds.created_at)
+            .bind(creds.updated_at)
             .execute(&self.pool)
             .await?;
 
@@ -94,7 +98,8 @@ impl CredentialsRepository for PostgresCredentialsRepository {
                 created_at,
                 updated_at
             FROM platform_credentials
-            WHERE platform = $1 AND user_id = $2
+            WHERE platform = $1
+              AND user_id = $2
             "#,
         )
             .bind(&platform_str)
@@ -118,12 +123,6 @@ impl CredentialsRepository for PostgresCredentialsRepository {
                 None
             };
 
-            let expires_epoch: Option<i64> = r.try_get("expires_at")?;
-            let expires_at = expires_epoch.map(from_epoch);
-
-            let created_at = from_epoch(r.try_get::<i64, _>("created_at")?);
-            let updated_at = from_epoch(r.try_get::<i64, _>("updated_at")?);
-
             Ok(Some(PlatformCredential {
                 credential_id: r.try_get("credential_id")?,
                 platform: Platform::from_str(&r.try_get::<String, _>("platform")?)
@@ -133,9 +132,9 @@ impl CredentialsRepository for PostgresCredentialsRepository {
                 primary_token: decrypted_token,
                 refresh_token: decrypted_refresh,
                 additional_data: decrypted_data,
-                expires_at,
-                created_at,
-                updated_at,
+                expires_at: r.try_get::<Option<DateTime<Utc>>, _>("expires_at")?,
+                created_at: r.try_get::<DateTime<Utc>, _>("created_at")?,
+                updated_at: r.try_get::<DateTime<Utc>, _>("updated_at")?,
             }))
         } else {
             Ok(None)
@@ -157,19 +156,20 @@ impl CredentialsRepository for PostgresCredentialsRepository {
         sqlx::query(
             r#"
             UPDATE platform_credentials
-            SET primary_token = $1,
-                refresh_token = $2,
+            SET primary_token   = $1,
+                refresh_token   = $2,
                 additional_data = $3,
-                expires_at = $4,
-                updated_at = $5
-            WHERE platform = $6 AND user_id = $7
+                expires_at      = $4,
+                updated_at      = $5
+            WHERE platform = $6
+              AND user_id = $7
             "#,
         )
             .bind(encrypted_token)
             .bind(encrypted_refresh)
             .bind(encrypted_data)
-            .bind(creds.expires_at.map(|dt| to_epoch(dt)))
-            .bind(to_epoch(creds.updated_at))
+            .bind(creds.expires_at)
+            .bind(creds.updated_at)
             .bind(platform_str)
             .bind(&creds.user_id)
             .execute(&self.pool)
@@ -183,7 +183,8 @@ impl CredentialsRepository for PostgresCredentialsRepository {
         sqlx::query(
             r#"
             DELETE FROM platform_credentials
-            WHERE platform = $1 AND user_id = $2
+            WHERE platform = $1
+              AND user_id = $2
             "#,
         )
             .bind(&platform_str)
@@ -194,9 +195,8 @@ impl CredentialsRepository for PostgresCredentialsRepository {
     }
 
     async fn get_expiring_credentials(&self, within: Duration) -> Result<Vec<PlatformCredential>, Error> {
-        let now = chrono::Utc::now().naive_utc();
+        let now = Utc::now();
         let cutoff = now + within;
-        let cutoff_epoch = to_epoch(cutoff);
 
         let rows = sqlx::query(
             r#"
@@ -216,7 +216,7 @@ impl CredentialsRepository for PostgresCredentialsRepository {
               AND expires_at <= $1
             "#,
         )
-            .bind(cutoff_epoch)
+            .bind(cutoff)
             .fetch_all(&self.pool)
             .await?;
 
@@ -237,25 +237,18 @@ impl CredentialsRepository for PostgresCredentialsRepository {
                 None
             };
 
-            let expires_epoch: Option<i64> = r.try_get("expires_at")?;
-            let expires_at = expires_epoch.map(from_epoch);
-
-            let created_at = from_epoch(r.try_get::<i64, _>("created_at")?);
-            let updated_at = from_epoch(r.try_get::<i64, _>("updated_at")?);
-
-            let platform_str: String = r.try_get("platform")?;
             results.push(PlatformCredential {
                 credential_id: r.try_get("credential_id")?,
-                platform: Platform::from_str(&platform_str)
+                platform: Platform::from_str(&r.try_get::<String, _>("platform")?)
                     .map_err(|e| Error::Platform(e.to_string()))?,
                 credential_type: r.try_get::<String, _>("credential_type")?.parse()?,
                 user_id: r.try_get("user_id")?,
                 primary_token: decrypted_token,
                 refresh_token: decrypted_refresh,
                 additional_data: decrypted_data,
-                expires_at,
-                created_at,
-                updated_at,
+                expires_at: r.try_get::<Option<DateTime<Utc>>, _>("expires_at")?,
+                created_at: r.try_get::<DateTime<Utc>, _>("created_at")?,
+                updated_at: r.try_get::<DateTime<Utc>, _>("updated_at")?,
             });
         }
 

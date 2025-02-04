@@ -167,7 +167,7 @@ impl UserManager for DefaultUserManager {
         } else {
             // not in DB => create
             let new_user_id = Uuid::new_v4().to_string();
-            let now = Utc::now().naive_utc();
+            let now = Utc::now();
             let user = User {
                 user_id: new_user_id.clone(),
                 global_username: None,
@@ -220,7 +220,7 @@ impl UserManager for DefaultUserManager {
         new_username: Option<&str>,
     ) -> Result<(), Error> {
         if let Some(mut user) = self.user_repo.get(user_id).await? {
-            user.last_seen = Utc::now().naive_utc();
+            user.last_seen = Utc::now();
             if let Some(name) = new_username {
                 user.global_username = Some(name.to_string());
             }

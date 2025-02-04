@@ -1,18 +1,20 @@
-pub mod user_analysis;
-pub use user_analysis::UserAnalysis;
+// src/models/mod.rs
 
 use std::fmt;
 use std::str::FromStr;
-use chrono::{NaiveDateTime};
+use chrono::{DateTime, Utc};
 use serde::{Serialize, Deserialize};
 use serde_json::Value;
+
+pub mod user_analysis;
+pub use user_analysis::UserAnalysis;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct User {
     pub user_id: String,
     pub global_username: Option<String>,
-    pub created_at: NaiveDateTime,
-    pub last_seen: NaiveDateTime,
+    pub created_at: DateTime<Utc>,
+    pub last_seen: DateTime<Utc>,
     pub is_active: bool,
 }
 
@@ -49,6 +51,22 @@ impl FromStr for Platform {
     }
 }
 
+impl From<String> for Platform {
+    fn from(s: String) -> Self {
+        s.parse().unwrap_or(Platform::Twitch)
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+pub enum CredentialType {
+    OAuth2,
+    APIKey,
+    BearerToken,
+    JWT,
+    VerifiableCredential,
+    Custom(String),
+}
+
 impl fmt::Display for CredentialType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -80,12 +98,6 @@ impl FromStr for CredentialType {
     }
 }
 
-impl From<String> for Platform {
-    fn from(s: String) -> Self {
-        s.parse().unwrap_or(Platform::Twitch) // You might want different fallback behavior
-    }
-}
-
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct PlatformIdentity {
     pub platform_identity_id: String,
@@ -96,18 +108,8 @@ pub struct PlatformIdentity {
     pub platform_display_name: Option<String>,
     pub platform_roles: Vec<String>,
     pub platform_data: Value,
-    pub created_at: NaiveDateTime,
-    pub last_updated: NaiveDateTime,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
-pub enum CredentialType {
-    OAuth2,
-    APIKey,
-    BearerToken,
-    JWT,
-    VerifiableCredential,
-    Custom(String),
+    pub created_at: DateTime<Utc>,
+    pub last_updated: DateTime<Utc>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -119,7 +121,7 @@ pub struct PlatformCredential {
     pub primary_token: String,
     pub refresh_token: Option<String>,
     pub additional_data: Option<serde_json::Value>,
-    pub expires_at: Option<NaiveDateTime>,
-    pub created_at: NaiveDateTime,
-    pub updated_at: NaiveDateTime,
+    pub expires_at: Option<DateTime<Utc>>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
 }

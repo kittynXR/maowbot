@@ -1,10 +1,10 @@
 // src/repositories/postgres/link_requests.rs
+
 use crate::Error;
 use async_trait::async_trait;
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use sqlx::{Pool, Postgres, Row};
 use uuid::Uuid;
-use crate::utils::time::{to_epoch, from_epoch};
 
 #[derive(Debug, Clone)]
 pub struct LinkRequest {
@@ -14,8 +14,8 @@ pub struct LinkRequest {
     pub target_platform_user_id: Option<String>,
     pub link_code: Option<String>,
     pub status: String,
-    pub created_at: i64,
-    pub updated_at: i64,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
 }
 
 impl LinkRequest {
@@ -25,7 +25,7 @@ impl LinkRequest {
         target_platform_user_id: Option<&str>,
         link_code: Option<&str>,
     ) -> Self {
-        let now = Utc::now().naive_utc();
+        let now = Utc::now();
         Self {
             link_request_id: Uuid::new_v4().to_string(),
             requesting_user_id: requesting_user_id.to_string(),
@@ -33,8 +33,8 @@ impl LinkRequest {
             target_platform_user_id: target_platform_user_id.map(|s| s.to_string()),
             link_code: link_code.map(|s| s.to_string()),
             status: "pending".to_string(),
-            created_at: to_epoch(now),
-            updated_at: to_epoch(now),
+            created_at: now,
+            updated_at: now,
         }
     }
 }
@@ -103,7 +103,7 @@ impl LinkRequestsRepository for PostgresLinkRequestsRepository {
                 updated_at
             FROM link_requests
             WHERE link_request_id = $1
-            "#,
+            "#
         )
             .bind(link_request_id)
             .fetch_optional(&self.pool)
@@ -117,8 +117,8 @@ impl LinkRequestsRepository for PostgresLinkRequestsRepository {
                 target_platform_user_id: r.try_get("target_platform_user_id")?,
                 link_code: r.try_get("link_code")?,
                 status: r.try_get("status")?,
-                created_at: r.try_get::<i64, _>("created_at")?,
-                updated_at: r.try_get::<i64, _>("updated_at")?,
+                created_at: r.try_get::<DateTime<Utc>, _>("created_at")?,
+                updated_at: r.try_get::<DateTime<Utc>, _>("updated_at")?,
             }))
         } else {
             Ok(None)
@@ -126,16 +126,16 @@ impl LinkRequestsRepository for PostgresLinkRequestsRepository {
     }
 
     async fn update_link_request(&self, req: &LinkRequest) -> Result<(), Error> {
-        let now = to_epoch(Utc::now().naive_utc());
+        let now = Utc::now();
         sqlx::query(
             r#"
             UPDATE link_requests
-            SET requesting_user_id = $1,
-                target_platform = $2,
+            SET requesting_user_id      = $1,
+                target_platform         = $2,
                 target_platform_user_id = $3,
-                link_code = $4,
-                status = $5,
-                updated_at = $6
+                link_code               = $4,
+                status                  = $5,
+                updated_at              = $6
             WHERE link_request_id = $7
             "#,
         )

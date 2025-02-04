@@ -80,9 +80,9 @@ impl PlatformAuthenticator for VRChatAuthenticator {
                         "username": username,
                         "has_2fa": true
                     })),
-                    expires_at: Some(Utc::now().naive_utc() + chrono::Duration::days(30)),
-                    created_at: Utc::now().naive_utc(),
-                    updated_at: Utc::now().naive_utc(),
+                    expires_at: Some(Utc::now() + chrono::Duration::days(30)),
+                    created_at: Utc::now(),
+                    updated_at: Utc::now(),
                 })
             }
             _ => Err(Error::Auth("Invalid authentication response".into()))

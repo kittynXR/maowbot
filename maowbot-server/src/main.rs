@@ -22,10 +22,10 @@ use maowbot_core::crypto::Encryptor;
 use maowbot_core::cache::{CacheConfig, ChatCache, TrimPolicy};
 use maowbot_core::services::message_service::MessageService;
 use maowbot_core::services::user_service::UserService;
-use maowbot_core::tasks::monthly_maintenance;
+// Remove old monthly_maintenance import and use the new biweekly module:
+use maowbot_core::tasks::biweekly_maintenance;
 use maowbot_core::tasks::cache_maintenance::spawn_cache_prune_task;
-// NEW daily partition import:
-use maowbot_core::tasks::daily_maintenance::spawn_daily_partition_maintenance_task;
+use maowbot_core::tasks::biweekly_maintenance::spawn_biweekly_maintenance_task;
 
 use maowbot_core::plugins::bot_api::BotApi;
 
@@ -117,15 +117,19 @@ async fn run_server(args: Args) -> Result<(), Error> {
     }
 
     {
-        // monthly maintenance example
+        // Run a one‑time maintenance pass (now biweekly)
         let repo = PostgresUserAnalysisRepository::new(db.pool().clone());
-        if let Err(e) = monthly_maintenance::maybe_run_monthly_maintenance(&db, &repo).await {
-            error!("Monthly maintenance error: {:?}", e);
+        if let Err(e) = biweekly_maintenance::run_biweekly_maintenance(&db, &repo).await {
+            error!("Biweekly maintenance error: {:?}", e);
         }
     }
 
-    // NEW daily partition maintenance:
-    spawn_daily_partition_maintenance_task(db.clone(), 30); // e.g. keep 30 days of partitions
+    // Spawn the periodic biweekly maintenance background task.
+    // (Note: we now pass a proper repository rather than a cutoff number.)
+    let _maintenance_handle = spawn_biweekly_maintenance_task(
+        db.clone(),
+        PostgresUserAnalysisRepository::new(db.pool().clone()),
+    );
 
     // 4) Setup Auth, Repos, PluginManager, etc.
     let key = [0u8; 32];
@@ -140,10 +144,10 @@ async fn run_server(args: Args) -> Result<(), Error> {
     plugin_manager.subscribe_to_event_bus(event_bus.clone());
     plugin_manager.set_event_bus(event_bus.clone());
 
-    // Optionally load your in-process plugin
+    // Optionally load your in‑process plugin
     if let Some(path) = args.in_process_plugin.as_ref() {
         if let Err(e) = plugin_manager.load_in_process_plugin(path).await {
-            error!("Failed to load in-process plugin from {}: {:?}", path, e);
+            error!("Failed to load in‑process plugin from {}: {:?}", path, e);
         }
     }
     // Also load everything in /plugs
@@ -151,7 +155,7 @@ async fn run_server(args: Args) -> Result<(), Error> {
         error!("Failed to load plugins from folder: {:?}", e);
     }
 
-    // Set BotApi for in-memory plugins
+    // Set BotApi for in‑memory plugins
     {
         let api: Arc<dyn BotApi> = Arc::new(plugin_manager.clone());
         let lock = plugin_manager.plugins.lock().await;
