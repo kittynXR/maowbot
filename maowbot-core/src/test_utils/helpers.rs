@@ -78,7 +78,6 @@ pub async fn clean_database(pool: &Pool<Postgres>) -> Result<(), Error> {
             bot_events,
             command_logs,
             chat_messages,
-            chat_messages_archive,  -- <-- add this!
             plugin_events,
             maintenance_state
         RESTART IDENTITY CASCADE;
