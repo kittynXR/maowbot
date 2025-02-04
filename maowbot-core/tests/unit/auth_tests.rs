@@ -113,9 +113,9 @@ async fn test_credential_storage_and_retrieval() -> Result<(), Error> {
         primary_token: "test_token".to_string(),
         refresh_token: Some("refresh_token".to_string()),
         additional_data: None,
-        expires_at: Some(Utc::now().naive_utc()),
-        created_at: Utc::now().naive_utc(),
-        updated_at: Utc::now().naive_utc(),
+        expires_at: Some(Utc::now()),
+        created_at: Utc::now(),
+        updated_at: Utc::now(),
     };
 
     creds_repo.store_credentials(&test_cred).await?;

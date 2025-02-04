@@ -1,11 +1,9 @@
-// File: maowbot-core/tests/test_utils/mod.rs
-// (You already have `pub mod helpers;` in here. No changes needed.)
+// File: maowbot-core/src/test_utils/helpers.rs
 
-// File: maowbot-core/tests/test_utils/helpers.rs
 use sqlx::{Pool, Postgres, Executor, PgConnection, Connection};
 use sqlx::postgres::PgPoolOptions;
 use crate::Error;
-use crate::Database;
+use crate::db::Database;
 
 /// Create the test database if it does not exist yet.
 pub async fn ensure_test_database_exists() -> Result<(), Error> {

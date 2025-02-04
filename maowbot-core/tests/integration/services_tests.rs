@@ -83,7 +83,7 @@ async fn test_user_message_services_db() -> Result<(), Error> {
     }
 
     // Confirm that the message was cached
-    let since = chrono::Utc::now().naive_utc() - chrono::Duration::hours(1);
+    let since = chrono::Utc::now() - chrono::Duration::hours(1);
     let cached = message_service.get_recent_messages(since, None, None).await;
     assert_eq!(cached.len(), 1);
     assert_eq!(cached[0].text, "Hello chat");

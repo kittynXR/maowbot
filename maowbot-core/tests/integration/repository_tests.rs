@@ -1,6 +1,6 @@
-// tests/integration/repository_tests.rs
+// File: maowbot-core/tests/integration/repository_tests.rs
 
-use chrono::Utc;
+use chrono::{Utc, DateTime};
 use serde_json::json;
 use uuid::Uuid;
 use sqlx::Executor;
@@ -10,10 +10,9 @@ use maowbot_core::{
     models::{Platform, PlatformIdentity, User},
     repositories::postgres::{
         user::UserRepository,
-        platform_identity::{PlatformIdentityRepository},
+        platform_identity::PlatformIdentityRepository,
     },
     repositories::Repository,
-    utils::time::{to_epoch, from_epoch},
     Error,
 };
 use maowbot_core::repositories::postgres::platform_identity::PlatformIdentityRepo;
@@ -25,7 +24,7 @@ async fn test_user_repository() -> Result<(), Error> {
     let db = setup_test_database().await?;
     let repo = UserRepository::new(db.pool().clone());
 
-    let now = Utc::now().naive_utc();
+    let now = Utc::now();
     let user = User {
         user_id: "test_user".to_string(),
         global_username: None,
@@ -59,14 +58,14 @@ async fn test_platform_identity_repository() -> Result<(), Error> {
     let db = setup_test_database().await?;
     let repo = PlatformIdentityRepository::new(db.pool().clone());
 
-    let now = Utc::now().naive_utc();
+    let now = Utc::now();
     // Insert a test user row
     sqlx::query(
         r#"INSERT INTO users (user_id, created_at, last_seen, is_active)
            VALUES ($1, $2, $2, TRUE)"#
     )
         .bind("test_user")
-        .bind(now.timestamp())
+        .bind(now)
         .execute(db.pool())
         .await?;
 

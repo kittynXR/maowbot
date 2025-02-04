@@ -22,7 +22,6 @@ use maowbot_core::crypto::Encryptor;
 use maowbot_core::cache::{CacheConfig, ChatCache, TrimPolicy};
 use maowbot_core::services::message_service::MessageService;
 use maowbot_core::services::user_service::UserService;
-// Remove old monthly_maintenance import and use the new biweekly module:
 use maowbot_core::tasks::biweekly_maintenance;
 use maowbot_core::tasks::cache_maintenance::spawn_cache_prune_task;
 use maowbot_core::tasks::biweekly_maintenance::spawn_biweekly_maintenance_task;

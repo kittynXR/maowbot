@@ -44,7 +44,7 @@ async fn test_add_and_retrieve_messages() -> Result<(), Error> {
         }
     );
 
-    let now = Utc::now().naive_utc();
+    let now = Utc::now();
     let msg1 = CachedMessage {
         platform: "discord".to_string(),
         channel: "channel1".to_string(),
@@ -90,7 +90,7 @@ async fn test_max_age_trim() -> Result<(), Error> {
         }
     );
 
-    let now = Utc::now().naive_utc();
+    let now = Utc::now();
     let msg_old = CachedMessage {
         platform: "twitch_helix".to_string(),
         channel: "chanA".to_string(),
@@ -135,7 +135,7 @@ async fn test_token_limit() -> Result<(), Error> {
         }
     );
 
-    let now = Utc::now().naive_utc();
+    let now = Utc::now();
     let msg1 = CachedMessage {
         platform: "discord".to_string(),
         channel: "chan".to_string(),

@@ -1,4 +1,5 @@
-// tests/credential_tests.rs
+// File: maowbot-core/tests/integration/credential_tests.rs
+
 use chrono::Utc;
 use sqlx::Executor;
 use uuid::Uuid;
@@ -6,7 +7,7 @@ use uuid::Uuid;
 use maowbot_core::{
     crypto::Encryptor,
     models::{CredentialType, Platform, PlatformCredential},
-    repositories::{CredentialsRepository},
+    repositories::CredentialsRepository,
     repositories::postgres::PostgresCredentialsRepository,
     Error,
 };
@@ -23,7 +24,7 @@ async fn test_credential_storage() -> Result<(), Error> {
 
     let repo = PostgresCredentialsRepository::new(db.pool().clone(), encryptor);
 
-    let now = Utc::now().naive_utc();
+    let now = Utc::now();
 
     // Create a user row so FKs pass
     sqlx::query(
@@ -33,7 +34,7 @@ async fn test_credential_storage() -> Result<(), Error> {
         "#
     )
         .bind("test_user")
-        .bind(now.timestamp())
+        .bind(now)
         .bind(true)
         .execute(db.pool())
         .await?;

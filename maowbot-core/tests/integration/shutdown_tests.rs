@@ -1,4 +1,4 @@
-// maowbot-core/tests/integration/shutdown_tests.rs
+// File: maowbot-core/tests/integration/shutdown_tests.rs
 
 use std::sync::Arc;
 use tokio::time::Duration;
@@ -15,9 +15,8 @@ use maowbot_core::{
 };
 use maowbot_proto::plugs::{
     plugin_stream_request::Payload as ReqPayload,
-    PluginCapability,
-    PluginStreamResponse,
     plugin_stream_response::Payload as RespPayload,
+    PluginCapability,
     Shutdown,
 };
 use async_trait::async_trait;
@@ -30,7 +29,6 @@ struct ShutdownTestPlugin {
 }
 
 impl ShutdownTestPlugin {
-    // FIXED: Set is_enabled to true so that shutdown requests are processed.
     fn new(name: &str, capabilities: Vec<PluginCapability>) -> Self {
         let info = PluginConnectionInfo {
             name: name.to_string(),
@@ -64,8 +62,7 @@ impl PluginConnection for ShutdownTestPlugin {
         info.is_enabled = enabled;
     }
 
-    async fn send(&self, _response: PluginStreamResponse) -> Result<(), Error> {
-        // For this test, we do nothing with the response
+    async fn send(&self, _response: maowbot_proto::plugs::PluginStreamResponse) -> Result<(), Error> {
         Ok(())
     }
 
@@ -90,7 +87,7 @@ async fn test_graceful_shutdown_data_flush() -> Result<(), Error> {
             tx.execute(
                 sqlx::query(
                     r#"INSERT INTO users (user_id, created_at, last_seen, is_active)
-                       VALUES ($1, EXTRACT(EPOCH FROM NOW()), EXTRACT(EPOCH FROM NOW()), TRUE)"#
+                       VALUES ($1, NOW(), NOW(), TRUE)"#
                 )
                     .bind(user_id)
             )
@@ -138,7 +135,7 @@ async fn test_plugin_initiated_shutdown() -> Result<(), Error> {
         tx.execute(
             sqlx::query(
                 r#"INSERT INTO users (user_id, created_at, last_seen, is_active)
-                   VALUES ('some_user', EXTRACT(EPOCH FROM NOW()), EXTRACT(EPOCH FROM NOW()), TRUE)"#
+                   VALUES ('some_user', NOW(), NOW(), TRUE)"#
             )
         )
             .await?;

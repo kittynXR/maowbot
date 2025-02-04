@@ -1,15 +1,15 @@
-// tests/db_tests.rs
+// File: maowbot-core/tests/integration/db_tests.rs
 
-use chrono::Utc;
+use chrono::{Utc, DateTime};
 use serde_json::json;
-use sqlx::{Row};
+use sqlx::Row;
 use uuid::Uuid;
 
 use maowbot_core::{
     db::Database,
     Error,
     models::{Platform, PlatformIdentity},
-    utils::time::from_epoch,
+    // Removed old epoch-based imports
 };
 
 use maowbot_core::test_utils::helpers::*;
@@ -18,7 +18,7 @@ use maowbot_core::test_utils::helpers::*;
 async fn test_database_connection() -> Result<(), Error> {
     let db = setup_test_database().await?;
 
-    let now = Utc::now().naive_utc();
+    let now = Utc::now();
     sqlx::query(
         r#"
             INSERT INTO users (user_id, created_at, last_seen, is_active)
@@ -26,7 +26,7 @@ async fn test_database_connection() -> Result<(), Error> {
         "#
     )
         .bind("test_user")
-        .bind(now.timestamp())
+        .bind(now)
         .execute(db.pool())
         .await?;
 
@@ -41,11 +41,8 @@ async fn test_database_connection() -> Result<(), Error> {
         .fetch_one(db.pool())
         .await?;
 
-    let created_epoch: i64 = row.try_get("created_at")?;
-    let last_seen_epoch: i64 = row.try_get("last_seen")?;
-
-    let created_at = from_epoch(created_epoch);
-    let last_seen = from_epoch(last_seen_epoch);
+    let created_at: DateTime<Utc> = row.try_get("created_at")?;
+    let last_seen: DateTime<Utc> = row.try_get("last_seen")?;
 
     assert_eq!(row.try_get::<String, _>("user_id")?, "test_user");
     assert!(created_at.timestamp() > 0);
@@ -65,7 +62,7 @@ async fn test_migration() -> Result<(), Error> {
 async fn test_platform_identity() -> Result<(), Error> {
     let db = setup_test_database().await?;
 
-    let now = Utc::now().naive_utc();
+    let now = Utc::now();
     sqlx::query(
         r#"
         INSERT INTO users (user_id, created_at, last_seen, is_active)
@@ -73,8 +70,8 @@ async fn test_platform_identity() -> Result<(), Error> {
         "#
     )
         .bind("test_user")
-        .bind(now.timestamp())
-        .bind(now.timestamp())
+        .bind(now)
+        .bind(now)
         .bind(true)
         .execute(db.pool())
         .await?;
@@ -102,8 +99,8 @@ async fn test_platform_identity() -> Result<(), Error> {
         .bind("Twitch User")
         .bind(roles_json)
         .bind(data_json)
-        .bind(now.timestamp())
-        .bind(now.timestamp())
+        .bind(now)
+        .bind(now)
         .execute(db.pool())
         .await?;
 
