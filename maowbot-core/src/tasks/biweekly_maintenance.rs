@@ -56,7 +56,7 @@ pub async fn run_biweekly_maintenance(
 }
 
 /// Partition maintenance (formerly in daily_maintenance).
-async fn run_partition_maintenance(db: &Database, cutoff_days: i64) -> Result<(), Error> {
+pub async fn run_partition_maintenance(db: &Database, cutoff_days: i64) -> Result<(), Error> {
     info!("Running partition maintenance with cutoff_days = {}...", cutoff_days);
     let pool = db.pool();
 
@@ -175,7 +175,7 @@ fn extract_upper_bound_ts(expr_text: &str) -> Option<String> {
 }
 
 /// Archiving + monthly-like user analysis
-async fn run_archive_and_analysis(
+pub async fn run_archive_and_analysis(
     db: &Database,
     user_analysis_repo: &PostgresUserAnalysisRepository,
 ) -> Result<(), Error> {

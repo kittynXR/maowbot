@@ -6,3 +6,4 @@ pub mod repository_tests;
 pub mod services_tests;
 pub mod shutdown_tests;
 pub mod user_manager_tests;
+mod biweekly_maintenance_tests;
