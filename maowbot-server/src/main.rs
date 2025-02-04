@@ -4,6 +4,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::fs;
 use std::path::Path;
+use base64::decode;
 use tokio::sync::{Mutex, mpsc};
 use tracing::{error, info};
 use tracing_subscriber::{fmt, EnvFilter};
@@ -38,7 +39,8 @@ use maowbot_proto::plugs::{
 };
 use tokio_stream::wrappers::ReceiverStream;
 use futures_util::StreamExt;
-
+use keyring::Entry;
+use rand::{thread_rng, Rng};
 use rcgen::{generate_simple_self_signed, CertifiedKey};
 use tokio::time;
 
@@ -122,7 +124,8 @@ async fn run_server(args: Args) -> Result<(), Error> {
     );
 
     // 4) Setup Auth, Repos, PluginManager, etc.
-    let key = [0u8; 32];
+    let key = get_master_key()?;
+    info!("key: {:#?}", key.clone());
     let encryptor = Encryptor::new(&key)?;
     let creds_repo = PostgresCredentialsRepository::new(db.pool().clone(), encryptor);
     let _auth_manager = AuthManager::new(
@@ -356,4 +359,36 @@ fn load_or_generate_certs() -> Result<Identity, Error> {
     fs::File::create(&key_path)?.write_all(key_pem.as_bytes())?;
 
     Ok(Identity::from_pem(cert_pem, key_pem))
+}
+
+fn get_master_key() -> Result<[u8; 32], Error> {
+    let service_name = "maowbot";
+    let user_name = "master-key";
+    let entry = Entry::new(service_name, user_name)?;
+
+    match entry.get_password() {
+        Ok(base64_key) => {
+            let key_bytes = base64::decode(&base64_key)
+                .map_err(|e| format!("Failed to decode key: {:?}", e))?;
+            let key_32: [u8; 32] = key_bytes
+                .try_into()
+                .map_err(|_| "Stored key was not 32 bytes")?;
+            println!("Retrieved existing master key from keyring.");
+            Ok(key_32)
+        },
+        Err(e) => {
+            println!("No existing key found or error retrieving key: {:?}", e);
+            // Generate a new key
+            let mut new_key = [0u8; 32];
+            rand::thread_rng().fill(&mut new_key);
+            let base64_key = base64::encode(new_key);
+            // Attempt to store the key
+            if let Err(err) = entry.set_password(&base64_key) {
+                println!("Failed to set key in keyring: {:?}", err);
+            } else {
+                println!("Stored new master key in keyring.");
+            }
+            Ok(new_key)
+        }
+    }
 }

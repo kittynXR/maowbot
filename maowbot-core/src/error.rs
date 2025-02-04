@@ -65,6 +65,9 @@ pub enum Error {
 
     #[error("Library loading error: {0}")]
     LibLoading(#[from] libloading::Error),
+
+    #[error("Keyring error: {0}")]
+    Keyring(String),
 }
 
 impl From<String> for Error {
@@ -90,5 +93,11 @@ impl From<anyhow::Error> for Error {
 impl From<chrono::format::ParseError> for Error {
     fn from(err: chrono::format::ParseError) -> Self {
         Error::Parse(err.to_string())
+    }
+}
+
+impl From<keyring::Error> for Error {
+    fn from(err: keyring::Error) -> Self {
+        Error::Auth(format!("keyring error: {}", err))
     }
 }

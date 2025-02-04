@@ -43,7 +43,7 @@ pub struct EventBus {
 }
 
 /// Default size for each subscriber’s buffer. Adjust as needed.
-const DEFAULT_BUFFER_SIZE: usize = 200;
+const DEFAULT_BUFFER_SIZE: usize = 10000;
 
 impl EventBus {
     /// Create a new, empty event bus.

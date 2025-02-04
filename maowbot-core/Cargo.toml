@@ -38,7 +38,10 @@ rand = { workspace = true }
 rand_core = { workspace = true }
 serenity = { workspace = true }
 url = { workspace = true }
+
 oauth2 = { workspace = true }
+keyring = { workspace = true }
+
 clap = { workspace = true }
 
 # gRPC / protobuf:

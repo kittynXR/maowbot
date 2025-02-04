@@ -28,3 +28,7 @@ rcgen = { workspace = true }
 if-addrs = "^0.13"
 
 format = "^0.2"
+
+base64 = { workspace = true }
+rand = { workspace = true }
+keyring = { workspace = true }
