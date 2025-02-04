@@ -115,14 +115,6 @@ async fn run_server(args: Args) -> Result<(), Error> {
         info!("`--auth` argument provided; running auth-specific logic as needed.");
     }
 
-    {
-        // Run a one‑time maintenance pass (now biweekly)
-        let repo = PostgresUserAnalysisRepository::new(db.pool().clone());
-        if let Err(e) = biweekly_maintenance::run_biweekly_maintenance(&db, &repo).await {
-            error!("Biweekly maintenance error: {:?}", e);
-        }
-    }
-
     // Spawn the periodic biweekly maintenance background task.
     // (Note: we now pass a proper repository rather than a cutoff number.)
     let _maintenance_handle = spawn_biweekly_maintenance_task(

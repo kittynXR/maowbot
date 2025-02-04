@@ -42,14 +42,14 @@ pub async fn run_biweekly_maintenance(
 
     // Step 1) Partition housekeeping
     run_partition_maintenance(db, 60).await?;  // e.g., drop partitions older than 60 days
-    info!("Partition maintenance done. Sleeping 10s...");
-    sleep(Duration::from_secs(10)).await;
+    info!("Partition maintenance done. Sleeping 1s...");
+    sleep(Duration::from_secs(1)).await;
 
     // Step 2) Archiving + analysis
     // We'll just do the “past month” or “past 2 weeks” as needed.
     run_archive_and_analysis(db, user_analysis_repo).await?;
-    info!("Archive & analysis done. Sleeping 5s...");
-    sleep(Duration::from_secs(5)).await;
+    info!("Archive & analysis done. Sleeping 1s...");
+    sleep(Duration::from_secs(1)).await;
 
     info!("Biweekly maintenance is complete.");
     Ok(())
