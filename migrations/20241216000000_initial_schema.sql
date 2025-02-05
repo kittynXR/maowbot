@@ -47,6 +47,7 @@ CREATE TABLE IF NOT EXISTS platform_credentials (
     expires_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL,
     updated_at TIMESTAMPTZ NOT NULL,
+    is_bot BOOLEAN NOT NULL DEFAULT false;
     CONSTRAINT fk_userid
     FOREIGN KEY (user_id) REFERENCES users(user_id),
     UNIQUE (platform, user_id)

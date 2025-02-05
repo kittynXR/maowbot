@@ -1,7 +1,8 @@
-// src/repositories/postgres/credentials.rs
-
-use crate::{Error, models::{Platform, PlatformCredential}};
-use crate::crypto::Encryptor;
+use crate::{
+    Error,
+    models::{Platform, PlatformCredential},
+    crypto::Encryptor
+};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc, Duration};
 use sqlx::{Pool, Postgres, Row};
@@ -55,15 +56,17 @@ impl CredentialsRepository for PostgresCredentialsRepository {
                 additional_data,
                 expires_at,
                 created_at,
-                updated_at
+                updated_at,
+                is_bot
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
             ON CONFLICT (platform, user_id) DO UPDATE
-               SET primary_token       = EXCLUDED.primary_token,
-                   refresh_token       = EXCLUDED.refresh_token,
-                   additional_data     = EXCLUDED.additional_data,
-                   expires_at         = EXCLUDED.expires_at,
-                   updated_at         = EXCLUDED.updated_at
+               SET primary_token   = EXCLUDED.primary_token,
+                   refresh_token   = EXCLUDED.refresh_token,
+                   additional_data = EXCLUDED.additional_data,
+                   expires_at     = EXCLUDED.expires_at,
+                   updated_at     = EXCLUDED.updated_at,
+                   is_bot         = EXCLUDED.is_bot
             "#,
         )
             .bind(&creds.credential_id)
@@ -73,9 +76,10 @@ impl CredentialsRepository for PostgresCredentialsRepository {
             .bind(encrypted_token)
             .bind(encrypted_refresh)
             .bind(encrypted_data)
-            .bind(creds.expires_at) // TIMESTAMPTZ
+            .bind(creds.expires_at)
             .bind(creds.created_at)
             .bind(creds.updated_at)
+            .bind(creds.is_bot)
             .execute(&self.pool)
             .await?;
 
@@ -96,7 +100,8 @@ impl CredentialsRepository for PostgresCredentialsRepository {
                 additional_data,
                 expires_at,
                 created_at,
-                updated_at
+                updated_at,
+                is_bot
             FROM platform_credentials
             WHERE platform = $1
               AND user_id = $2
@@ -135,6 +140,7 @@ impl CredentialsRepository for PostgresCredentialsRepository {
                 expires_at: r.try_get::<Option<DateTime<Utc>>, _>("expires_at")?,
                 created_at: r.try_get::<DateTime<Utc>, _>("created_at")?,
                 updated_at: r.try_get::<DateTime<Utc>, _>("updated_at")?,
+                is_bot: r.try_get::<bool, _>("is_bot")?,
             }))
         } else {
             Ok(None)
@@ -160,9 +166,10 @@ impl CredentialsRepository for PostgresCredentialsRepository {
                 refresh_token   = $2,
                 additional_data = $3,
                 expires_at      = $4,
-                updated_at      = $5
-            WHERE platform = $6
-              AND user_id = $7
+                updated_at      = $5,
+                is_bot          = $6
+            WHERE platform = $7
+              AND user_id = $8
             "#,
         )
             .bind(encrypted_token)
@@ -170,6 +177,7 @@ impl CredentialsRepository for PostgresCredentialsRepository {
             .bind(encrypted_data)
             .bind(creds.expires_at)
             .bind(creds.updated_at)
+            .bind(creds.is_bot)
             .bind(platform_str)
             .bind(&creds.user_id)
             .execute(&self.pool)
@@ -210,7 +218,8 @@ impl CredentialsRepository for PostgresCredentialsRepository {
                 additional_data,
                 expires_at,
                 created_at,
-                updated_at
+                updated_at,
+                is_bot
             FROM platform_credentials
             WHERE expires_at IS NOT NULL
               AND expires_at <= $1
@@ -249,6 +258,7 @@ impl CredentialsRepository for PostgresCredentialsRepository {
                 expires_at: r.try_get::<Option<DateTime<Utc>>, _>("expires_at")?,
                 created_at: r.try_get::<DateTime<Utc>, _>("created_at")?,
                 updated_at: r.try_get::<DateTime<Utc>, _>("updated_at")?,
+                is_bot: r.try_get::<bool, _>("is_bot")?,
             });
         }
 

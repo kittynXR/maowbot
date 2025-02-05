@@ -111,6 +111,7 @@ impl PlatformAuthenticator for TwitchAuthenticator {
             }),
             created_at: Utc::now(),
             updated_at: Utc::now(),
+            is_bot: false,
         })
     }
 
@@ -146,6 +147,7 @@ impl PlatformAuthenticator for TwitchAuthenticator {
             }),
             created_at: credential.created_at,
             updated_at: Utc::now(),
+            is_bot: false,
         })
     }
 

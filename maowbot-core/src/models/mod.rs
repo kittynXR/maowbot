@@ -124,4 +124,5 @@ pub struct PlatformCredential {
     pub expires_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+    pub is_bot: bool,
 }

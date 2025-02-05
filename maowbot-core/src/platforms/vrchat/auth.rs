@@ -83,6 +83,7 @@ impl PlatformAuthenticator for VRChatAuthenticator {
                     expires_at: Some(Utc::now() + chrono::Duration::days(30)),
                     created_at: Utc::now(),
                     updated_at: Utc::now(),
+                    is_bot: false,
                 })
             }
             _ => Err(Error::Auth("Invalid authentication response".into()))

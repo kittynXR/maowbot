@@ -69,6 +69,7 @@ impl PlatformAuthenticator for TwitchIrcAuthenticator {
             expires_at: None,
             created_at: Utc::now(),
             updated_at: Utc::now(),
+            is_bot: true,
         })
     }
 
