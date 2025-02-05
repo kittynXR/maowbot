@@ -217,7 +217,7 @@ CREATE TABLE IF NOT EXISTS user_analysis_history (
 CREATE INDEX IF NOT EXISTS idx_user_analysis_history_user_month
     ON user_analysis_history (user_id, year_month);
 
-CREATE TABLE IF NOT EXISTS maitenance_state (
+CREATE TABLE IF NOT EXISTS maintenance_state (
     state_key TEXT PRIMARY KEY,
     state_value TEXT
 );
