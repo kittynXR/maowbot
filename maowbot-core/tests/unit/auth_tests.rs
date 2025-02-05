@@ -116,6 +116,7 @@ async fn test_credential_storage_and_retrieval() -> Result<(), Error> {
         expires_at: Some(Utc::now()),
         created_at: Utc::now(),
         updated_at: Utc::now(),
+        is_bot: false,
     };
 
     creds_repo.store_credentials(&test_cred).await?;

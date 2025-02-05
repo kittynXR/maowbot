@@ -50,6 +50,7 @@ async fn test_credential_storage() -> Result<(), Error> {
         expires_at: Some(now),
         created_at: now,
         updated_at: now,
+        is_bot: false,
     };
 
     repo.store_credentials(&test_cred).await?;

@@ -47,7 +47,7 @@ CREATE TABLE IF NOT EXISTS platform_credentials (
     expires_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL,
     updated_at TIMESTAMPTZ NOT NULL,
-    is_bot BOOLEAN NOT NULL DEFAULT false;
+    is_bot BOOLEAN NOT NULL DEFAULT false,
     CONSTRAINT fk_userid
     FOREIGN KEY (user_id) REFERENCES users(user_id),
     UNIQUE (platform, user_id)
@@ -55,6 +55,11 @@ CREATE TABLE IF NOT EXISTS platform_credentials (
 
 CREATE INDEX IF NOT EXISTS idx_platform_credentials_user
     ON platform_credentials (user_id, platform);
+
+CREATE TABLE IF NOT EXISTS app_config (
+    config_key TEXT PRIMARY KEY,
+    config_value TEXT
+);
 
 -- 4) Analytics-Related Tables
 CREATE TABLE IF NOT EXISTS bot_events (
@@ -212,7 +217,7 @@ CREATE TABLE IF NOT EXISTS user_analysis_history (
 CREATE INDEX IF NOT EXISTS idx_user_analysis_history_user_month
     ON user_analysis_history (user_id, year_month);
 
-CREATE TABLE IF NOT EXISTS app_config (
+CREATE TABLE IF NOT EXISTS maitenance_state (
     state_key TEXT PRIMARY KEY,
     state_value TEXT
 );
