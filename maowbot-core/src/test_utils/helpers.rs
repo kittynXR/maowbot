@@ -69,6 +69,7 @@ pub async fn clean_database(pool: &Pool<Postgres>) -> Result<(), Error> {
             users,
             platform_identities,
             platform_credentials,
+            app_config,
             user_analysis,
             user_analysis_history,
             link_requests,
