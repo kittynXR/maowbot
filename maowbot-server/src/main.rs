@@ -125,7 +125,6 @@ async fn run_server(args: Args) -> Result<(), Error> {
 
     // 4) Setup Auth, Repos, PluginManager, etc.
     let key = get_master_key()?;
-    info!("key: {:#?}", key.clone());
     let encryptor = Encryptor::new(&key)?;
     let creds_repo = PostgresCredentialsRepository::new(db.pool().clone(), encryptor);
     let _auth_manager = AuthManager::new(
