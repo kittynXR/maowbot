@@ -1,3 +1,5 @@
+// File: maowbot-core/src/auth/manager.rs
+
 use std::collections::HashMap;
 use crate::auth::{AuthenticationHandler, PlatformAuthenticator};
 use crate::Error;
@@ -31,12 +33,39 @@ impl AuthManager {
         self.authenticators.insert(platform, authenticator);
     }
 
+    /// Original method for authentication with no explicit `is_bot` flag.
+    /// For backward-compat or for platforms that don’t need `is_bot`.
     pub async fn authenticate_platform(
         &mut self,
         platform: Platform
     ) -> Result<PlatformCredential, Error> {
+        self.inner_authenticate(platform, None).await
+    }
+
+    /// New method that sets an `is_bot` flag in the final credential.
+    pub async fn authenticate_platform_for_role(
+        &mut self,
+        platform: Platform,
+        is_bot: bool,
+    ) -> Result<PlatformCredential, Error> {
+        self.inner_authenticate(platform, Some(is_bot)).await
+    }
+
+    async fn inner_authenticate(
+        &mut self,
+        platform: Platform,
+        is_bot_override: Option<bool>,
+    ) -> Result<PlatformCredential, Error> {
         let authenticator = self.authenticators.get_mut(&platform)
             .ok_or_else(|| Error::Platform(format!("No authenticator for {:?}", platform)))?;
+
+        // Provide a small hook if the authenticator wants to track is_bot
+        if let Some(b) = is_bot_override {
+            // We do a downcast if the authenticator supports a set_is_bot method
+            // or use any specialized approach. For general trait objects, you might
+            // store a flag in the authenticator itself. This example uses a new method:
+            authenticator.set_is_bot(b);
+        }
 
         authenticator.initialize().await?;
 
@@ -44,7 +73,11 @@ impl AuthManager {
         loop {
             let response = self.auth_handler.handle_prompt(prompt.clone()).await?;
             match authenticator.complete_authentication(response).await {
-                Ok(credential) => {
+                Ok(mut credential) => {
+                    // If an override was given, ensure the final credential has is_bot set
+                    if let Some(b) = is_bot_override {
+                        credential.is_bot = b;
+                    }
                     self.credentials_repo.store_credentials(&credential).await?;
                     return Ok(credential);
                 }

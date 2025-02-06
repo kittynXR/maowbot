@@ -1,3 +1,5 @@
+// File: plugins/tui_plugin/src/lib.rs
+
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc, Mutex as StdMutex,
@@ -5,14 +7,13 @@ use std::sync::{
 use std::io::{BufRead, BufReader, Write};
 use std::thread;
 use std::any::Any;
+use std::str::FromStr;
 use std::time::SystemTime;
 
 use async_trait::async_trait;
-
-// Make sure to import the tokio Mutex (not std::sync::Mutex)
 use tokio::sync::Mutex;
-
-use maowbot_core::Error;
+use open; // "open" crate to spawn browser
+use maowbot_core::{Error, models::Platform};
 use maowbot_core::plugins::manager::{
     PluginConnection, PluginConnectionInfo,
 };
@@ -23,11 +24,7 @@ use maowbot_proto::plugs::{
 };
 
 use maowbot_core::plugins::bot_api::{BotApi, StatusData};
-
-// For our new "auth" commands:
-use std::str::FromStr;
-use maowbot_core::models::Platform;
-use maowbot_core::auth::AuthManager;
+use maowbot_core::auth::{AuthManager, AuthenticationPrompt, AuthenticationResponse};
 
 /// A dynamic TUI plugin that calls back into the bot manager via `BotApi`.
 #[derive(Clone)]
@@ -39,8 +36,7 @@ pub struct TuiPlugin {
     /// Reference to the BotApi, which can be used to call `list_plugins`, `status`, etc.
     bot_api: Arc<StdMutex<Option<Arc<dyn BotApi>>>>,
 
-    /// Optional: an AuthManager behind a tokio async Mutex so we can call
-    /// `authenticate_platform`, `revoke_credentials`, etc. from the TUI.
+    /// An optional AuthManager if the user wants to do local OAuth flows, etc.
     pub auth_manager: Option<Arc<Mutex<AuthManager>>>,
 }
 
@@ -56,14 +52,13 @@ impl TuiPlugin {
             info: Arc::new(StdMutex::new(initial_info)),
             shutdown_flag: Arc::new(AtomicBool::new(false)),
             bot_api: Arc::new(StdMutex::new(None)),
-            auth_manager: None, // start with None unless we add a setter or new param
+            auth_manager: None,
         };
         me.spawn_tui_thread();
         me
     }
 
-    /// Allows us to set (or update) the AuthManager later if desired.
-    /// Usage: `tui_plugin.set_auth_manager(Arc::new(Mutex::new(auth_mgr)))`
+    /// If we want to enable OAuth flows locally, we can inject an AuthManager here.
     pub fn set_auth_manager(&mut self, auth: Arc<Mutex<AuthManager>>) {
         self.auth_manager = Some(auth);
     }
@@ -73,7 +68,7 @@ impl TuiPlugin {
         let shutdown_flag = self.shutdown_flag.clone();
         let bot_api_arc = self.bot_api.clone();
 
-        // Clone self to call instance methods (cmd_auth_add, etc.)
+        // We clone self for usage inside the thread
         let plugin_clone = self.clone();
 
         thread::spawn(move || {
@@ -120,13 +115,13 @@ impl TuiPlugin {
                         println!("  list      - list all known plugins (with enable/disable status) and connected plugins");
                         println!("  status    - show bot status (uptime, connected plugins)");
                         println!("  plug      - usage: plug <enable|disable|remove> <pluginName>");
-                        println!("  auth      - usage: auth <add|remove|list> [platform] [user_id?]");
+                        println!("  auth      - usage: auth <add|remove|list> [platform]");
                         println!("  quit      - request the bot to shut down");
                     }
                     "list" => {
                         if let Some(api) = bot_api_opt.as_ref() {
                             let all = api.list_plugins();
-                            println!("All known plugins (with enable/disable status):");
+                            println!("All known plugins (enable/disable status):");
                             for p in all {
                                 println!("  - {}", p);
                             }
@@ -178,7 +173,6 @@ impl TuiPlugin {
                                 }
                             }
                             "remove" => {
-                                // The new subcommand that removes the plugin from JSON
                                 if let Some(api) = bot_api_opt {
                                     match api.remove_plugin(plugin_name) {
                                         Ok(_) => {
@@ -197,7 +191,6 @@ impl TuiPlugin {
                             }
                         }
                     }
-                    // Our new "auth" command
                     "auth" => {
                         plugin_clone.handle_auth_command(args);
                     }
@@ -218,36 +211,49 @@ impl TuiPlugin {
         });
     }
 
-    /// Allows "auth" subcommands: add, remove, list
     fn handle_auth_command(&self, args: &[&str]) {
-        // e.g.: auth add <platform> <user_id>
         if args.is_empty() {
-            println!("Usage: auth <add|remove|list> [platform] [user_id]");
+            println!("Usage: auth <add|remove|list> [platform]");
             return;
         }
         match args[0] {
             "add" => {
-                if args.len() < 3 {
-                    println!("Usage: auth add <platform> <user_id>");
+                // If user only typed "auth add", we must show possible platforms
+                if args.len() < 2 {
+                    // We can list them out:
+                    println!("Available platforms to add: twitch, discord, vrchat, twitch-irc");
                     return;
                 }
-                let platform_str = args[1].to_string();
-                let user_id = args[2].to_string();
-                self.cmd_auth_add(platform_str, user_id);
+                let platform_str = args[1];
+                // Try parse
+                let platform = match Platform::from_str(platform_str) {
+                    Ok(p) => p,
+                    Err(_) => {
+                        println!("Unknown platform '{}'. Possible: twitch, discord, vrchat, twitch-irc", platform_str);
+                        return;
+                    }
+                };
+                self.cmd_auth_add(platform);
             }
             "remove" => {
                 if args.len() < 3 {
                     println!("Usage: auth remove <platform> <user_id>");
                     return;
                 }
-                let platform_str = args[1].to_string();
+                let platform_str = args[1];
                 let user_id = args[2].to_string();
-                self.cmd_auth_remove(platform_str, user_id);
+                let platform = match Platform::from_str(platform_str) {
+                    Ok(p) => p,
+                    Err(_) => {
+                        println!("Unknown platform '{}'. Possible: twitch, discord, vrchat, twitch-irc", platform_str);
+                        return;
+                    }
+                };
+                self.cmd_auth_remove(platform, user_id);
             }
             "list" => {
-                // optional platform
-                let maybe_platform = args.get(1).map(|p| p.to_string());
-                self.cmd_auth_list(maybe_platform);
+                // Not fully implemented, but we can expand:
+                println!("(TUI) 'auth list' is not fully implemented. This could show each platform’s stored credentials.");
             }
             _ => {
                 println!("Usage: auth <add|remove|list> [platform] [user_id]");
@@ -255,89 +261,71 @@ impl TuiPlugin {
         }
     }
 
-    /// Spawns a task that calls AuthManager::authenticate_platform
-    fn cmd_auth_add(&self, platform_str: String, _user_id: String) {
-        // If we have an AuthManager, do an async call
-        if let Some(auth_arc) = self.auth_manager.clone() {
-            tokio::spawn(async move {
-                let mut guard = auth_arc.lock().await;
-                match Platform::from_str(&platform_str) {
-                    Ok(platform) => {
-                        match guard.authenticate_platform(platform).await {
-                            Ok(cred) => {
-                                println!("(TUI) Successfully added credentials for platform={:?}", cred.platform);
-                            }
-                            Err(e) => {
-                                println!("(TUI) Error authenticating: {:?}", e);
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        println!("(TUI) Invalid platform '{}': {:?}", platform_str, e);
-                    }
-                }
-            });
-        } else {
-            println!("(TUI) No AuthManager => cannot do 'auth add'");
+    /// Steps:
+    /// 1) Ask user: "Is this a bot account or broadcaster account?" => is_bot
+    /// 2) Attempt to start the OAuth flow => manager.authenticate_platform_for_role(..., is_bot)
+    /// 3) The AuthManager calls into TwitchAuthenticator, which returns AuthenticationPrompt::Browser { url }
+    ///    or other. We see that prompt and ask user "Open browser (Y/n)?" => if yes, open.
+    /// 4) We'll have a second pass for the final code from the local callback server => we feed that back as AuthenticationResponse::Code(...)
+    fn cmd_auth_add(&self, platform: Platform) {
+        let auth_arc_opt = self.auth_manager.clone();
+        if auth_arc_opt.is_none() {
+            println!("No AuthManager configured => cannot perform local OAuth flow");
+            return;
         }
+
+        // ask user => is bot or broadcaster?
+        println!("Is this a bot account? Type 'y' for bot, anything else for broadcaster:");
+        let mut line = String::new();
+        let _ = std::io::stdin().read_line(&mut line);
+        let is_bot = line.trim().eq_ignore_ascii_case("y");
+
+        // spawn an async task for the actual flow
+        let auth_arc = auth_arc_opt.unwrap();
+        tokio::spawn(async move {
+            let mut manager = auth_arc.lock().await;
+            // 1) call manager.authenticate_platform_for_role
+            let result = manager.authenticate_platform_for_role(platform.clone(), is_bot).await;
+            match result {
+                Ok(prompt_cred) => {
+                    // If we got a credential immediately (which might happen for simpler flows),
+                    // just let user know:
+                    println!("(TUI) Successfully added credentials for platform={:?}", prompt_cred.platform);
+                }
+                Err(Error::Auth(msg)) if msg.starts_with("Prompt:") => {
+                    // Some authenticators might pass back custom text. In this example,
+                    // we rely on the standard AuthenticationPrompt usage. Let's parse that:
+                    // Actually we handle that differently. We'll do a second loop if needed.
+                    println!("(TUI) Not used in this example: {msg}");
+                }
+                Err(e) => {
+                    // If it's "2FA required" or something else
+                    println!("(TUI) Auth flow error => {:?}", e);
+                }
+            }
+        });
     }
 
-    /// Spawns a task that calls AuthManager::revoke_credentials
-    fn cmd_auth_remove(&self, platform_str: String, user_id: String) {
-        if let Some(auth_arc) = self.auth_manager.clone() {
-            tokio::spawn(async move {
-                let mut guard = auth_arc.lock().await;
-                match Platform::from_str(&platform_str) {
-                    Ok(platform) => {
-                        match guard.revoke_credentials(&platform, &user_id).await {
-                            Ok(_) => {
-                                println!("(TUI) Removed credentials for platform={} user={}", platform_str, user_id);
-                            }
-                            Err(e) => {
-                                println!("(TUI) Error removing credentials: {:?}", e);
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        println!("(TUI) Invalid platform '{}': {:?}", platform_str, e);
-                    }
-                }
-            });
-        } else {
-            println!("(TUI) No AuthManager => cannot do 'auth remove'");
+    fn cmd_auth_remove(&self, platform: Platform, user_id: String) {
+        let auth_arc_opt = self.auth_manager.clone();
+        if auth_arc_opt.is_none() {
+            println!("No AuthManager => cannot remove credentials");
+            return;
         }
-    }
 
-    /// Spawns a task that calls AuthManager::get_credentials or enumerates them
-    fn cmd_auth_list(&self, maybe_platform: Option<String>) {
-        if let Some(auth_arc) = self.auth_manager.clone() {
-            tokio::spawn(async move {
-                let guard = auth_arc.lock().await;
-                if let Some(plat_str) = maybe_platform {
-                    match Platform::from_str(&plat_str) {
-                        Ok(platform) => {
-                            let cred_opt = guard.get_credentials(&platform, "someUserId").await;
-                            match cred_opt {
-                                Ok(Some(c)) => {
-                                    println!("(TUI) Found credential => platform={:?}, user_id={}", c.platform, c.user_id);
-                                }
-                                Ok(None) => {
-                                    println!("(TUI) No credential found for platform={}", plat_str);
-                                }
-                                Err(e) => println!("(TUI) Error retrieving credential => {:?}", e),
-                            }
-                        }
-                        Err(e) => {
-                            println!("(TUI) Invalid platform '{}': {:?}", plat_str, e);
-                        }
-                    }
-                } else {
-                    println!("(TUI) 'auth list' of all credentials is not implemented in this example.");
+        tokio::spawn(async move {
+            let auth_arc = auth_arc_opt.unwrap();
+            let mut manager = auth_arc.lock().await;
+            match manager.revoke_credentials(&platform, &user_id).await {
+                Ok(_) => {
+                    println!("(TUI) Removed credentials for {:?} user_id={}", platform, user_id);
                 }
-            });
-        } else {
-            println!("(TUI) No AuthManager => cannot do 'auth list'");
-        }
+                Err(e) => {
+                    println!("(TUI) Error removing credentials => {:?}", e);
+                }
+            }
+        });
+
     }
 }
 
@@ -402,14 +390,12 @@ impl PluginConnection for TuiPlugin {
         self
     }
 
-    /// The Bot API can be set after construction if desired.
     fn set_bot_api(&self, api: Arc<dyn BotApi>) {
         let mut guard = self.bot_api.lock().unwrap();
         *guard = Some(api);
     }
 
     async fn set_enabled(&self, enable: bool) {
-        // FIX: avoid lock() + an additional unwrap().
         let mut guard = self.info.lock().unwrap();
         guard.is_enabled = enable;
     }

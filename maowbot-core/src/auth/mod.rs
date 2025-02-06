@@ -3,6 +3,7 @@ use crate::Error;
 
 pub mod manager;
 pub mod user_manager;
+pub(crate) mod callback_server;
 
 pub use manager::AuthManager;
 pub use user_manager::{UserManager, DefaultUserManager};
@@ -55,4 +56,8 @@ pub trait PlatformAuthenticator: Send {
                      -> Result<crate::models::PlatformCredential, Error>;
     async fn validate(&self, credential: &crate::models::PlatformCredential) -> Result<bool, Error>;
     async fn revoke(&mut self, credential: &crate::models::PlatformCredential) -> Result<(), Error>;
+
+    fn set_is_bot(&mut self, _val: bool) {
+        // default is no-op, so that other authenticators won't break
+    }
 }

@@ -20,3 +20,4 @@ tracing = { workspace = true }
 futures-lite = "2.6"
 futures = "0.3.31"
 
+open = "^5.3"
