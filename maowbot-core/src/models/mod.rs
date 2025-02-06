@@ -1,10 +1,11 @@
-// src/models/mod.rs
+// File: maowbot-core/src/models/mod.rs
 
 use std::fmt;
 use std::str::FromStr;
 use chrono::{DateTime, Utc};
 use serde::{Serialize, Deserialize};
 use serde_json::Value;
+use sqlx::FromRow;
 
 pub mod user_analysis;
 pub use user_analysis::UserAnalysis;
@@ -18,8 +19,10 @@ pub struct User {
     pub is_active: bool,
 }
 
-// src/models/mod.rs
-#[derive(Debug, Serialize, Deserialize, Clone, Hash, Eq, PartialEq)]
+/// Add sqlx::Type so that SQLx knows how to decode this enum.
+/// Here we tell SQLx that the enum is stored as TEXT.
+#[derive(Debug, Serialize, Deserialize, Clone, Eq, PartialEq, Hash, sqlx::Type)]
+#[sqlx(type_name = "TEXT")]
 pub enum Platform {
     Twitch,
     Discord,
@@ -57,14 +60,18 @@ impl From<String> for Platform {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+/// CredentialType now supports only the known types.
+/// We have removed the old data-bearing custom variant and replaced it
+/// with a unit variant for interactive 2FA.
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, sqlx::Type)]
+#[sqlx(type_name = "TEXT")]
 pub enum CredentialType {
     OAuth2,
     APIKey,
     BearerToken,
     JWT,
     VerifiableCredential,
-    Custom(String),
+    Interactive2FA,
 }
 
 impl fmt::Display for CredentialType {
@@ -75,7 +82,7 @@ impl fmt::Display for CredentialType {
             CredentialType::BearerToken => write!(f, "bearer"),
             CredentialType::JWT => write!(f, "jwt"),
             CredentialType::VerifiableCredential => write!(f, "vc"),
-            CredentialType::Custom(s) => write!(f, "custom:{}", s),
+            CredentialType::Interactive2FA => write!(f, "interactive2fa"),
         }
     }
 }
@@ -90,9 +97,7 @@ impl FromStr for CredentialType {
             "bearer" => Ok(CredentialType::BearerToken),
             "jwt" => Ok(CredentialType::JWT),
             "vc" => Ok(CredentialType::VerifiableCredential),
-            s if s.starts_with("custom:") => {
-                Ok(CredentialType::Custom(s[7..].to_string()))
-            }
+            "interactive2fa" | "i2fa" => Ok(CredentialType::Interactive2FA),
             _ => Err(format!("Invalid credential type: {}", s))
         }
     }
@@ -112,7 +117,8 @@ pub struct PlatformIdentity {
     pub last_updated: DateTime<Utc>,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+/// Add the FromRow derive so SQLx can convert rows to PlatformCredential.
+#[derive(Debug, Serialize, Deserialize, Clone, FromRow)]
 pub struct PlatformCredential {
     pub credential_id: String,
     pub platform: Platform,
@@ -120,7 +126,7 @@ pub struct PlatformCredential {
     pub user_id: String,
     pub primary_token: String,
     pub refresh_token: Option<String>,
-    pub additional_data: Option<serde_json::Value>,
+    pub additional_data: Option<Value>,
     pub expires_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,

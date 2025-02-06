@@ -17,7 +17,7 @@ edition = "2021"
 maowbot-proto = { path = "maowbot-proto" }
 
 twitch_api = {  version="^0.7.0-rc", features = ["client", "helix", "reqwest"] }
-sqlx = { version = "^0.8", features = ["postgres", "runtime-tokio", "tls-native-tls", "chrono"] }
+sqlx = { version = "^0.8", features = ["postgres", "runtime-tokio", "tls-native-tls", "chrono", "macros", "json", "uuid"] }
 
 tokio = { version = "^1.43", features = ["full"] }
 tokio-test = { version = "^0.4" }

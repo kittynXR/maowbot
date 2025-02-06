@@ -72,7 +72,7 @@ impl PlatformAuthenticator for VRChatAuthenticator {
                 Ok(PlatformCredential {
                     credential_id: Uuid::new_v4().to_string(),
                     platform: Platform::VRChat,
-                    credential_type: CredentialType::Custom("vrchat_auth".into()),
+                    credential_type: CredentialType::Interactive2FA,
                     user_id: username.clone(),
                     primary_token: "mock_auth_token".into(),
                     refresh_token: None,

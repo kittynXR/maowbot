@@ -15,6 +15,7 @@ pub trait CredentialsRepository: Send + Sync {
     async fn update_credentials(&self, creds: &PlatformCredential) -> Result<(), Error>;
     async fn delete_credentials(&self, platform: &Platform, user_id: &str) -> Result<(), Error>;
     async fn get_expiring_credentials(&self, within: Duration) -> Result<Vec<PlatformCredential>, Error>;
+    async fn get_all_credentials(&self) -> Result<Vec<PlatformCredential>, Error>;
 }
 
 #[derive(Clone)]
@@ -263,5 +264,15 @@ impl CredentialsRepository for PostgresCredentialsRepository {
         }
 
         Ok(results)
+    }
+
+    async fn get_all_credentials(&self) -> Result<Vec<PlatformCredential>, Error> {
+        // Example query:
+        let rows = sqlx::query_as::<_, PlatformCredential>(
+            "SELECT * FROM platform_credentials"
+        )
+            .fetch_all(&self.pool).await?;
+
+        Ok(rows)
     }
 }

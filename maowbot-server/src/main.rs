@@ -127,9 +127,8 @@ async fn run_server(args: Args) -> Result<(), Error> {
     let key = get_master_key()?;
     let encryptor = Encryptor::new(&key)?;
     let creds_repo = PostgresCredentialsRepository::new(db.pool().clone(), encryptor);
-    let _auth_manager = AuthManager::new(
-        Box::new(creds_repo.clone()),
-        Box::new(StubAuthHandler::default()),
+    let auth_manager = AuthManager::new(
+        Box::new(creds_repo),
     );
 
     let mut plugin_manager = PluginManager::new(args.plugin_passphrase.clone());

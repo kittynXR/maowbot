@@ -32,6 +32,8 @@ use maowbot_proto::plugs::{
     Tick, ChatMessage, StatusResponse, CapabilityResponse,
     ForceDisconnect, PluginCapability,
 };
+use crate::auth::AuthManager;
+use crate::models::{Platform, PlatformCredential};
 
 /// Plugin type.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -218,6 +220,7 @@ pub struct PluginManager {
     pub start_time: Instant,
     pub event_bus: Option<Arc<EventBus>>,
     pub persist_path: PathBuf,
+    pub auth_manager: Option<Arc<tokio::sync::Mutex<AuthManager>>>,
 }
 
 impl PluginManager {
@@ -229,9 +232,14 @@ impl PluginManager {
             start_time: Instant::now(),
             event_bus: None,
             persist_path: PathBuf::from("plugs/plugins_state.json"),
+            auth_manager: None,
         };
         manager.load_plugin_states();
         manager
+    }
+
+    pub fn set_auth_manager(&mut self, am: Arc<tokio::sync::Mutex<AuthManager>>) {
+        self.auth_manager = Some(am);
     }
 
     pub fn set_event_bus(&mut self, bus: Arc<EventBus>) {
@@ -846,8 +854,9 @@ impl PluginService for PluginServiceGrpc {
     }
 }
 
+#[async_trait]
 impl BotApi for PluginManager {
-    fn list_plugins(&self) -> Vec<String> {
+    async fn list_plugins(&self) -> Vec<String> {
         let records = self.get_plugin_records();
         records
             .into_iter()
@@ -858,8 +867,9 @@ impl BotApi for PluginManager {
             .collect()
     }
 
-    fn status(&self) -> StatusData {
-        let connected = futures_lite::future::block_on(self.list_connected_plugins())
+    async fn status(&self) -> StatusData {
+        let connected = self.list_connected_plugins().await; // this is async
+        let connected_names: Vec<_> = connected
             .into_iter()
             .map(|p| {
                 let suffix = if p.is_enabled { "" } else { " (disabled)" };
@@ -867,24 +877,93 @@ impl BotApi for PluginManager {
             })
             .collect();
 
-        let uptime = self.start_time.elapsed().as_secs();
+        // Now build the StatusData
         StatusData {
-            connected_plugins: connected,
-            uptime_seconds: uptime,
+            connected_plugins: connected_names,
+            uptime_seconds: self.start_time.elapsed().as_secs(),
         }
     }
 
-    fn shutdown(&self) {
+    async fn shutdown(&self) {
         if let Some(bus) = &self.event_bus {
             bus.shutdown();
         }
     }
 
-    fn toggle_plugin(&self, plugin_name: &str, enable: bool) -> Result<(), Error> {
-        futures_lite::future::block_on(self.toggle_plugin_async(plugin_name, enable))
+    async fn toggle_plugin(&self, plugin_name: &str, enable: bool) -> Result<(), Error> {
+        self.toggle_plugin_async(plugin_name, enable).await
     }
 
-    fn remove_plugin(&self, plugin_name: &str) -> Result<(), Error> {
-        futures_lite::future::block_on(self.remove_plugin(plugin_name))
+    async fn remove_plugin(&self, plugin_name: &str) -> Result<(), Error> {
+        self.remove_plugin(plugin_name).await
+    }
+
+    // -------------- NEW AUTH-FLOW METHODS --------------
+
+    async fn begin_auth_flow(
+        &self,
+        platform: Platform,
+        is_bot: bool
+    ) -> Result<String, Error> {
+        if let Some(am) = &self.auth_manager {
+            let mut lock = am.lock().await;
+            // We added two new “split” methods in AuthManager:
+            //   begin_auth_flow(...) => returns an AuthenticationPrompt
+            //   complete_auth_flow(...) => finishes
+            let prompt = lock.begin_auth_flow(platform, is_bot).await?;
+            if let crate::auth::AuthenticationPrompt::Browser { url } = prompt {
+                Ok(url)
+            } else {
+                Err(Error::Auth("Expected Browser prompt but got something else".into()))
+            }
+        } else {
+            Err(Error::Auth("No auth manager set in plugin manager".into()))
+        }
+    }
+
+    async fn complete_auth_flow(
+        &self,
+        platform: Platform,
+        code: String
+    ) -> Result<PlatformCredential, Error> {
+        if let Some(am) = &self.auth_manager {
+            let mut lock = am.lock().await;
+            lock.complete_auth_flow(platform, code).await
+        } else {
+            Err(Error::Auth("No auth manager set in plugin manager".into()))
+        }
+    }
+
+    async fn revoke_credentials(
+        &self,
+        platform: Platform,
+        user_id: &str
+    ) -> Result<(), Error> {
+        if let Some(am) = &self.auth_manager {
+            let mut lock = am.lock().await;
+            lock.revoke_credentials(&platform, user_id).await
+        } else {
+            Err(Error::Auth("No auth manager set in plugin manager".into()))
+        }
+    }
+
+    async fn list_credentials(
+        &self,
+        maybe_platform: Option<Platform>
+    ) -> Result<Vec<PlatformCredential>, Error> {
+        if let Some(am) = &self.auth_manager {
+            let lock = am.lock().await;
+            // for brevity, we filter if `maybe_platform` is Some(...), else return all
+            let all = lock.credentials_repo
+                .get_all_credentials()
+                .await?;  // you’ll need a “get_all_credentials” method on your repo
+            if let Some(p) = maybe_platform {
+                Ok(all.into_iter().filter(|c| c.platform == p).collect())
+            } else {
+                Ok(all)
+            }
+        } else {
+            Err(Error::Auth("No auth manager set in plugin manager".into()))
+        }
     }
 }

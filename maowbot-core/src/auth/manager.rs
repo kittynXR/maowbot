@@ -1,30 +1,29 @@
 // File: maowbot-core/src/auth/manager.rs
 
 use std::collections::HashMap;
-use crate::auth::{AuthenticationHandler, PlatformAuthenticator};
+use crate::auth::{PlatformAuthenticator, AuthenticationPrompt, AuthenticationResponse};
 use crate::Error;
 use crate::models::{Platform, PlatformCredential};
 use crate::repositories::CredentialsRepository;
 
+/// AuthManager is responsible for coordinating the authentication flows for different platforms
+/// and storing the resulting credentials.
 pub struct AuthManager {
-    credentials_repo: Box<dyn CredentialsRepository + Send + Sync + 'static>,
-    /// Keyed by `Platform`, e.g. Twitch -> TwitchAuthenticator
-    authenticators: HashMap<Platform, Box<dyn PlatformAuthenticator + Send + Sync + 'static>>,
-    auth_handler: Box<dyn AuthenticationHandler + Send + Sync + 'static>,
+    pub credentials_repo: Box<dyn CredentialsRepository + Send + Sync + 'static>,
+    pub authenticators: HashMap<Platform, Box<dyn PlatformAuthenticator + Send + Sync + 'static>>,
 }
 
 impl AuthManager {
     pub fn new(
-        credentials_repo: Box<dyn CredentialsRepository + Send + Sync + 'static>,
-        auth_handler: Box<dyn AuthenticationHandler + Send + Sync + 'static>,
+        credentials_repo: Box<dyn CredentialsRepository + Send + Sync + 'static>
     ) -> Self {
         Self {
             credentials_repo,
             authenticators: HashMap::new(),
-            auth_handler,
         }
     }
 
+    /// Register an authenticator for a given platform.
     pub fn register_authenticator(
         &mut self,
         platform: Platform,
@@ -33,67 +32,60 @@ impl AuthManager {
         self.authenticators.insert(platform, authenticator);
     }
 
-    /// Original method for authentication with no explicit `is_bot` flag.
-    /// For backward-compat or for platforms that don’t need `is_bot`.
+    /// A convenience method for platforms that do not require an is_bot flag.
     pub async fn authenticate_platform(
         &mut self,
         platform: Platform
     ) -> Result<PlatformCredential, Error> {
-        self.inner_authenticate(platform, None).await
+        self.authenticate_platform_for_role(platform, false).await
     }
 
-    /// New method that sets an `is_bot` flag in the final credential.
+    /// This method is kept for backward compatibility.
+    /// It calls the interactive two‑step flow and then returns an error if no code is provided.
     pub async fn authenticate_platform_for_role(
         &mut self,
         platform: Platform,
         is_bot: bool,
     ) -> Result<PlatformCredential, Error> {
-        self.inner_authenticate(platform, Some(is_bot)).await
+        let _ = self.begin_auth_flow(platform.clone(), is_bot).await?;
+        Err(Error::Auth("This function expects a code, but none was provided (use begin_auth_flow and complete_auth_flow).".into()))
     }
 
-    async fn inner_authenticate(
+    /// Step 1 of the interactive flow: initialize the authenticator and obtain an authentication prompt.
+    pub async fn begin_auth_flow(
         &mut self,
         platform: Platform,
-        is_bot_override: Option<bool>,
+        is_bot: bool,
+    ) -> Result<AuthenticationPrompt, Error> {
+        let authenticator = self.authenticators.get_mut(&platform)
+            .ok_or_else(|| Error::Platform(format!("No authenticator for {:?}", platform)))?;
+        authenticator.set_is_bot(is_bot);
+        authenticator.initialize().await?;
+        let prompt = authenticator.start_authentication().await?;
+        Ok(prompt)
+    }
+
+    /// Step 2 of the interactive flow: supply the code (e.g. from a local callback server) to complete the authentication.
+    pub async fn complete_auth_flow(
+        &mut self,
+        platform: Platform,
+        code: String,
     ) -> Result<PlatformCredential, Error> {
         let authenticator = self.authenticators.get_mut(&platform)
             .ok_or_else(|| Error::Platform(format!("No authenticator for {:?}", platform)))?;
-
-        // Provide a small hook if the authenticator wants to track is_bot
-        if let Some(b) = is_bot_override {
-            // We do a downcast if the authenticator supports a set_is_bot method
-            // or use any specialized approach. For general trait objects, you might
-            // store a flag in the authenticator itself. This example uses a new method:
-            authenticator.set_is_bot(b);
-        }
-
-        authenticator.initialize().await?;
-
-        let mut prompt = authenticator.start_authentication().await?;
-        loop {
-            let response = self.auth_handler.handle_prompt(prompt.clone()).await?;
-            match authenticator.complete_authentication(response).await {
-                Ok(mut credential) => {
-                    // If an override was given, ensure the final credential has is_bot set
-                    if let Some(b) = is_bot_override {
-                        credential.is_bot = b;
-                    }
-                    self.credentials_repo.store_credentials(&credential).await?;
-                    return Ok(credential);
-                }
-                Err(Error::Auth(msg)) if msg == "2FA required" => {
-                    prompt = authenticator.start_authentication().await?;
-                    continue;
-                }
-                Err(e) => return Err(e),
-            }
-        }
+        let cred = authenticator
+            .complete_authentication(AuthenticationResponse::Code(code))
+            .await?;
+        self.credentials_repo.store_credentials(&cred).await?;
+        Ok(cred)
     }
 
+    /// Store the given credential in the repository.
     pub async fn store_credentials(&self, cred: &PlatformCredential) -> Result<(), Error> {
         self.credentials_repo.store_credentials(cred).await
     }
 
+    /// Retrieve credentials by platform and user ID.
     pub async fn get_credentials(
         &self,
         platform: &Platform,
@@ -102,6 +94,7 @@ impl AuthManager {
         self.credentials_repo.get_credentials(platform, user_id).await
     }
 
+    /// Revoke the credentials for a given platform and user ID.
     pub async fn revoke_credentials(
         &mut self,
         platform: &Platform,
@@ -110,13 +103,13 @@ impl AuthManager {
         if let Some(cred) = self.credentials_repo.get_credentials(platform, user_id).await? {
             let authenticator = self.authenticators.get_mut(platform)
                 .ok_or_else(|| Error::Platform(format!("No authenticator for {:?}", platform)))?;
-
             authenticator.revoke(&cred).await?;
             self.credentials_repo.delete_credentials(platform, user_id).await?;
         }
         Ok(())
     }
 
+    /// Refresh credentials for a given platform and user ID.
     pub async fn refresh_platform_credentials(
         &mut self,
         platform: &Platform,
@@ -125,23 +118,20 @@ impl AuthManager {
         let cred = self.credentials_repo
             .get_credentials(platform, user_id).await?
             .ok_or_else(|| Error::Auth("No credentials found".into()))?;
-
         let authenticator = self.authenticators.get_mut(platform)
             .ok_or_else(|| Error::Platform(format!("No authenticator for {:?}", platform)))?;
-
         let refreshed = authenticator.refresh(&cred).await?;
         self.credentials_repo.store_credentials(&refreshed).await?;
-
         Ok(refreshed)
     }
 
+    /// Validate an existing credential.
     pub async fn validate_credentials(
         &mut self,
         cred: &PlatformCredential
     ) -> Result<bool, Error> {
         let authenticator = self.authenticators.get_mut(&cred.platform)
             .ok_or_else(|| Error::Platform(format!("No authenticator for {:?}", cred.platform)))?;
-
         authenticator.validate(cred).await
     }
 }
