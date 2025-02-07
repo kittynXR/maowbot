@@ -45,6 +45,7 @@ use rcgen::{generate_simple_self_signed, CertifiedKey};
 use tokio::time;
 
 use maowbot_core::Error;
+use maowbot_core::platforms::twitch_helix::TwitchAuthenticator;
 
 mod portable_postgres;
 use portable_postgres::*;
@@ -134,6 +135,7 @@ async fn run_server(args: Args) -> Result<(), Error> {
     let mut plugin_manager = PluginManager::new(args.plugin_passphrase.clone());
     plugin_manager.subscribe_to_event_bus(event_bus.clone());
     plugin_manager.set_event_bus(event_bus.clone());
+    plugin_manager.set_auth_manager(Arc::new(tokio::sync::Mutex::new(auth_manager)));
 
     // Optionally load your in‑process plugin
     if let Some(path) = args.in_process_plugin.as_ref() {

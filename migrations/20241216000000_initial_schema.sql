@@ -56,9 +56,20 @@ CREATE TABLE IF NOT EXISTS platform_credentials (
 CREATE INDEX IF NOT EXISTS idx_platform_credentials_user
     ON platform_credentials (user_id, platform);
 
-CREATE TABLE IF NOT EXISTS app_config (
+CREATE TABLE IF NOT EXISTS bot_config (
     config_key TEXT PRIMARY KEY,
     config_value TEXT
+);
+
+-- 5) NEW: auth_config table for storing client IDs / secrets
+CREATE TABLE IF NOT EXISTS auth_config (
+    auth_config_id TEXT PRIMARY KEY,
+    platform TEXT NOT NULL,
+    app_label TEXT,
+    client_id TEXT,
+    client_secret TEXT,
+    created_at TIMESTAMPTZ NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL
 );
 
 -- 4) Analytics-Related Tables

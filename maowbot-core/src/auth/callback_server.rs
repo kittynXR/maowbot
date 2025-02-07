@@ -17,7 +17,8 @@ use tower_http::trace::TraceLayer;
 use serde::Deserialize;
 use tracing::{info, error};
 
-use crate::{Error, repositories::postgres::app_config::AppConfigRepository};
+use crate::Error;
+use crate::repositories::postgres::bot_config::BotConfigRepository;
 
 /// Structure to hold the final result from the OAuth callback.
 #[derive(Debug, Clone)]
@@ -171,7 +172,7 @@ pub async fn get_or_fix_callback_port<A>(
     port_repo: &A
 ) -> Result<u16, Error>
 where
-    A: AppConfigRepository,
+    A: BotConfigRepository,
 {
     let existing = port_repo.get_callback_port().await?;
     let port = existing.unwrap_or(9876); // default fallback

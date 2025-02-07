@@ -22,10 +22,10 @@ use crate::auth::callback_server;
 use crate::Error;
 use crate::auth::{AuthenticationPrompt, AuthenticationResponse, PlatformAuthenticator};
 use crate::models::{CredentialType, Platform, PlatformCredential};
-use crate::repositories::postgres::app_config::AppConfigRepository;
+use crate::repositories::postgres::bot_config::BotConfigRepository;
 
 /// The "TwitchAuthenticator" struct now keeps pkce_challenge/pkce_verifier, plus a user-chosen `is_bot`.
-pub struct TwitchAuthenticator<A: AppConfigRepository + Send + Sync> {
+pub struct TwitchAuthenticator<A: BotConfigRepository + Send + Sync> {
     client_id: String,
     client_secret: String,
     oauth_client: OAuthClient,
@@ -49,7 +49,7 @@ type OAuthClient = Client<
 
 impl<A> TwitchAuthenticator<A>
 where
-    A: AppConfigRepository + Send + Sync + 'static,
+    A: BotConfigRepository + Send + Sync + 'static,
 {
     pub fn new(client_id: String, client_secret: String, app_config_repo: A) -> Self {
         // We do not set redirect URI yet; we will do it dynamically once we have a valid port
@@ -76,7 +76,7 @@ where
 #[async_trait]
 impl<A> PlatformAuthenticator for TwitchAuthenticator<A>
 where
-    A: AppConfigRepository + Send + Sync + 'static,
+    A: BotConfigRepository + Send + Sync + 'static,
 {
     /// Called once before `start_authentication`, good for reading config or verifying things.
     async fn initialize(&mut self) -> Result<(), Error> {
@@ -244,7 +244,7 @@ where
 
 impl<A> TwitchAuthenticator<A>
 where
-    A: AppConfigRepository + Send + Sync + 'static,
+    A: BotConfigRepository + Send + Sync + 'static,
 {
     /// So the manager can set whether we store `is_bot = true`.
     pub fn set_is_bot(&mut self, is_bot: bool) {
