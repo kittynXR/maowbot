@@ -1,5 +1,3 @@
-// File: plugins/tui_plugin/src/lib.rs
-
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc, Mutex as StdMutex,
@@ -270,54 +268,53 @@ impl TuiPlugin {
         let _ = std::io::stdin().read_line(&mut line);
         let is_bot = line.trim().eq_ignore_ascii_case("y");
 
-        // We'll do an async block_on to call the new flow:
-        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
-        rt.block_on(async move {
-            match api.begin_auth_flow(platform.clone(), is_bot).await {
-                Ok(url) => {
-                    println!("Open this URL to authenticate:\n  {}", url);
-                    println!("Open in browser now? (y/n):");
-                    let mut line = String::new();
-                    let _ = std::io::stdin().read_line(&mut line);
-                    if line.trim().eq_ignore_ascii_case("y") {
-                        if let Err(e) = open::that(&url) {
-                            println!("Could not open browser automatically: {:?}", e);
-                        }
-                    }
-                    println!("Once you complete the OAuth in your browser, the local callback server should say 'Authentication Successful'.");
-                    println!("Paste the 'code' param here (or press Enter if the code is auto-stored):");
-                    let mut code_line = String::new();
-                    let _ = std::io::stdin().read_line(&mut code_line);
-                    let code_str = code_line.trim().to_string();
-                    if code_str.is_empty() {
-                        println!("No code entered => might fail if your flow isn’t auto-detected. Attempting anyway...");
-                    }
+        // In a refined approach, you'd prompt for which app_label from the DB if there are multiple.
+        // For brevity, we just pass the standard "begin_auth_flow(platform, is_bot)" call.
 
-                    match api.complete_auth_flow(platform.clone(), code_str).await {
-                        Ok(cred) => {
-                            println!("Success: Stored credentials for platform={:?}, is_bot={}", cred.platform, cred.is_bot);
-                        }
-                        Err(e) => {
-                            println!("Error completing auth => {:?}", e);
-                        }
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        match rt.block_on(api.begin_auth_flow(platform.clone(), is_bot)) {
+            Ok(url) => {
+                println!("Open this URL to authenticate:\n  {}", url);
+                println!("Open in browser now? (y/n):");
+                let mut line = String::new();
+                let _ = std::io::stdin().read_line(&mut line);
+                if line.trim().eq_ignore_ascii_case("y") {
+                    if let Err(e) = open::that(&url) {
+                        println!("Could not open browser automatically: {:?}", e);
                     }
                 }
-                Err(e) => {
-                    println!("Error beginning auth flow => {:?}", e);
+                println!("Once you complete the OAuth in your browser, the local callback server should say 'Authentication Successful'.");
+                println!("Paste the 'code' param here (or press Enter if the code is auto-stored):");
+                let mut code_line = String::new();
+                let _ = std::io::stdin().read_line(&mut code_line);
+                let code_str = code_line.trim().to_string();
+
+                if code_str.is_empty() {
+                    println!("No code entered => might fail if your flow isn’t auto-detected. Attempting anyway...");
+                }
+
+                match rt.block_on(api.complete_auth_flow(platform.clone(), code_str)) {
+                    Ok(cred) => {
+                        println!("Success: Stored credentials for platform={:?}, is_bot={}", cred.platform, cred.is_bot);
+                    }
+                    Err(e) => {
+                        println!("Error completing auth => {:?}", e);
+                    }
                 }
             }
-        });
+            Err(e) => {
+                println!("Error beginning auth flow => {:?}", e);
+            }
+        }
     }
 
     fn cmd_auth_remove(&self, platform: Platform, user_id: &str, api_opt: Option<&Arc<dyn BotApi>>) {
         if let Some(api) = api_opt {
             let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
-            rt.block_on(async move {
-                match api.revoke_credentials(platform.clone(), user_id).await {
-                    Ok(_) => println!("Removed credentials for {:?} user_id={}", platform, user_id),
-                    Err(e) => println!("Error removing credentials => {:?}", e),
-                }
-            });
+            match rt.block_on(api.revoke_credentials(platform.clone(), user_id)) {
+                Ok(_) => println!("Removed credentials for {:?} user_id={}", platform, user_id),
+                Err(e) => println!("Error removing credentials => {:?}", e),
+            }
         }
     }
 }

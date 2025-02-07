@@ -46,6 +46,7 @@ use tokio::time;
 
 use maowbot_core::Error;
 use maowbot_core::platforms::twitch_helix::TwitchAuthenticator;
+use maowbot_core::repositories::{PostgresAuthConfigRepository, PostgresBotConfigRepository};
 
 mod portable_postgres;
 use portable_postgres::*;
@@ -127,9 +128,18 @@ async fn run_server(args: Args) -> Result<(), Error> {
     // 4) Setup Auth, Repos, PluginManager, etc.
     let key = get_master_key()?;
     let encryptor = Encryptor::new(&key)?;
+    // Create your credentials repo.
     let creds_repo = PostgresCredentialsRepository::new(db.pool().clone(), encryptor);
+    // Create your auth config repo (the table that stores client_id/secret values).
+    let auth_config_repo = Arc::new(PostgresAuthConfigRepository::new(db.pool().clone()));
+    // Create your bot config repo (the table that stores the callback_port, etc.).
+    let bot_config_repo = Arc::new(PostgresBotConfigRepository::new(db.pool().clone()));
+
+    // Now create the AuthManager with all three arguments:
     let auth_manager = AuthManager::new(
         Box::new(creds_repo),
+        auth_config_repo,
+        bot_config_repo,
     );
 
     let mut plugin_manager = PluginManager::new(args.plugin_passphrase.clone());

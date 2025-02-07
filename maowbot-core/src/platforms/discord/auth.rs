@@ -1,5 +1,3 @@
-// File: src/platforms/discord/auth.rs
-
 use async_trait::async_trait;
 use chrono::Utc;
 use serde_json::json;
@@ -10,17 +8,24 @@ use crate::auth::{AuthenticationPrompt, AuthenticationResponse, PlatformAuthenti
 use crate::models::{Platform, PlatformCredential, CredentialType};
 
 pub struct DiscordAuthenticator {
+    // We store them here after the AuthManager fetches from DB.
     client_id: Option<String>,
     client_secret: Option<String>,
     bot_token: Option<String>,
+    is_bot: bool,
 }
 
 impl DiscordAuthenticator {
-    pub fn new() -> Self {
+    /// Updated constructor: we receive optional client_id, client_secret from AuthManager
+    pub fn new(
+        client_id: Option<String>,
+        client_secret: Option<String>,
+    ) -> Self {
         Self {
-            client_id: None,
-            client_secret: None,
+            client_id,
+            client_secret,
             bot_token: None,
+            is_bot: false,
         }
     }
 }
@@ -28,19 +33,18 @@ impl DiscordAuthenticator {
 #[async_trait]
 impl PlatformAuthenticator for DiscordAuthenticator {
     async fn initialize(&mut self) -> Result<(), Error> {
+        // Possibly confirm that client_id is set if we need it, or do nothing
         Ok(())
     }
 
     async fn start_authentication(&mut self) -> Result<AuthenticationPrompt, Error> {
+        // For a typical Discord bot, you actually only need the "bot token" from dev portal.
+        // We'll mimic that with a multi-key prompt:
         Ok(AuthenticationPrompt::MultipleKeys {
             fields: vec![
-                "client_id".into(),
-                "client_secret".into(),
                 "bot_token".into()
             ],
             messages: vec![
-                "Enter your Discord Application Client ID".into(),
-                "Enter your Discord Application Client Secret".into(),
                 "Enter your Discord Bot Token".into()
             ],
         })
@@ -52,8 +56,6 @@ impl PlatformAuthenticator for DiscordAuthenticator {
     ) -> Result<PlatformCredential, Error> {
         match response {
             AuthenticationResponse::MultipleKeys(keys) => {
-                self.client_id = keys.get("client_id").cloned();
-                self.client_secret = keys.get("client_secret").cloned();
                 self.bot_token = keys.get("bot_token").cloned();
 
                 let bot_token = self.bot_token.as_ref()
@@ -63,7 +65,7 @@ impl PlatformAuthenticator for DiscordAuthenticator {
                     credential_id: Uuid::new_v4().to_string(),
                     platform: Platform::Discord,
                     credential_type: CredentialType::BearerToken,
-                    user_id: String::new(), // to be set post-validation
+                    user_id: String::new(), // set later
                     primary_token: bot_token.clone(),
                     refresh_token: None,
                     additional_data: Some(json!({
@@ -73,10 +75,10 @@ impl PlatformAuthenticator for DiscordAuthenticator {
                     expires_at: None,
                     created_at: Utc::now(),
                     updated_at: Utc::now(),
-                    is_bot: true,
+                    is_bot: self.is_bot,
                 })
             }
-            _ => Err(Error::Auth("Invalid authentication response".into())),
+            _ => Err(Error::Auth("Invalid authentication response for Discord".into())),
         }
     }
 
@@ -101,5 +103,9 @@ impl PlatformAuthenticator for DiscordAuthenticator {
     async fn revoke(&mut self, _credential: &PlatformCredential) -> Result<(), Error> {
         // Bot tokens can't be revoked programmatically; user must regenerate in the portal
         Ok(())
+    }
+
+    fn set_is_bot(&mut self, val: bool) {
+        self.is_bot = val;
     }
 }

@@ -48,6 +48,9 @@ pub trait AuthConfigRepository: Send + Sync {
 
     /// Delete by ID.
     async fn delete_auth_config(&self, auth_config_id: &str) -> Result<(), Error>;
+
+    /// **NEW**: Retrieve a single row by `platform` + `app_label`
+    async fn get_by_platform_and_label(&self, platform: &str, label: &str) -> Result<Option<AuthConfig>, Error>;
 }
 
 /// Postgres-based impl.
@@ -230,5 +233,43 @@ impl AuthConfigRepository for PostgresAuthConfigRepository {
             .execute(&self.pool)
             .await?;
         Ok(())
+    }
+
+    /// NEW method below
+    async fn get_by_platform_and_label(&self, platform: &str, label: &str) -> Result<Option<AuthConfig>, Error> {
+        let row = sqlx::query(
+            r#"
+            SELECT
+                auth_config_id,
+                platform,
+                app_label,
+                client_id,
+                client_secret,
+                created_at,
+                updated_at
+            FROM auth_config
+            WHERE platform = $1
+              AND app_label = $2
+            LIMIT 1
+            "#,
+        )
+            .bind(platform)
+            .bind(label)
+            .fetch_optional(&self.pool)
+            .await?;
+
+        if let Some(r) = row {
+            Ok(Some(AuthConfig {
+                auth_config_id: r.try_get("auth_config_id")?,
+                platform: r.try_get("platform")?,
+                app_label: r.try_get("app_label")?,
+                client_id: r.try_get("client_id")?,
+                client_secret: r.try_get("client_secret")?,
+                created_at: r.try_get("created_at")?,
+                updated_at: r.try_get("updated_at")?,
+            }))
+        } else {
+            Ok(None)
+        }
     }
 }
