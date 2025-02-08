@@ -1,3 +1,5 @@
+// File: maowbot-core/src/repositories/postgres/auth_config.rs
+
 use sqlx::{Pool, Postgres, Row};
 use async_trait::async_trait;
 use uuid::Uuid;
@@ -5,11 +7,12 @@ use chrono::{DateTime, Utc};
 use crate::Error;
 
 /// Basic struct representing a row in `auth_config`, storing
-/// client_id/secret for a particular platform or app name.
+/// client_id/secret for a particular platform (and its label).
 #[derive(Debug, Clone)]
 pub struct AuthConfig {
     pub auth_config_id: String,
     pub platform: String,
+    /// The label for this configuration (e.g. "default", "bot1", "user2", etc.)
     pub app_label: Option<String>,
     pub client_id: Option<String>,
     pub client_secret: Option<String>,
@@ -34,29 +37,38 @@ impl AuthConfig {
 
 #[async_trait]
 pub trait AuthConfigRepository: Send + Sync {
-    /// Insert a new auth config row.
-    async fn create_auth_config(&self, config: &AuthConfig) -> Result<(), Error>;
+    /// Insert a new auth_config row.
+    async fn insert_auth_config(
+        &self,
+        platform: &str,
+        label: &str,
+        client_id: String,
+        client_secret: Option<String>,
+    ) -> Result<(), Error>;
 
-    /// Retrieve a row by ID.
+    /// Retrieve a row by its ID.
     async fn get_auth_config(&self, auth_config_id: &str) -> Result<Option<AuthConfig>, Error>;
 
-    /// Retrieve all rows for a given platform (or all if platform is None).
+    /// Retrieve all rows for a given platform (or all if None is passed).
     async fn list_auth_configs(&self, maybe_platform: Option<&str>) -> Result<Vec<AuthConfig>, Error>;
 
     /// Update an existing row (by ID).
     async fn update_auth_config(&self, config: &AuthConfig) -> Result<(), Error>;
 
-    /// Delete by ID.
+    /// Delete a row by its ID.
     async fn delete_auth_config(&self, auth_config_id: &str) -> Result<(), Error>;
 
-    /// **NEW**: Retrieve a single row by `platform` + `app_label`
+    /// Retrieve a single row by the combination of platform and label.
     async fn get_by_platform_and_label(&self, platform: &str, label: &str) -> Result<Option<AuthConfig>, Error>;
+
+    /// Count how many auth_config rows exist for the given platform.
+    async fn count_for_platform(&self, platform: &str) -> Result<i64, Error>;
 }
 
-/// Postgres-based impl.
+/// Postgres-based implementation.
 #[derive(Clone)]
 pub struct PostgresAuthConfigRepository {
-    pool: Pool<Postgres>,
+    pub pool: Pool<Postgres>,
 }
 
 impl PostgresAuthConfigRepository {
@@ -67,7 +79,15 @@ impl PostgresAuthConfigRepository {
 
 #[async_trait]
 impl AuthConfigRepository for PostgresAuthConfigRepository {
-    async fn create_auth_config(&self, config: &AuthConfig) -> Result<(), Error> {
+    async fn insert_auth_config(
+        &self,
+        platform: &str,
+        label: &str,
+        client_id: String,
+        client_secret: Option<String>,
+    ) -> Result<(), Error> {
+        let now = Utc::now();
+        let auth_config_id = Uuid::new_v4().to_string();
         sqlx::query(
             r#"
             INSERT INTO auth_config (
@@ -82,16 +102,15 @@ impl AuthConfigRepository for PostgresAuthConfigRepository {
             VALUES ($1, $2, $3, $4, $5, $6, $7)
             "#
         )
-            .bind(&config.auth_config_id)
-            .bind(&config.platform)
-            .bind(&config.app_label)
-            .bind(&config.client_id)
-            .bind(&config.client_secret)
-            .bind(config.created_at)
-            .bind(config.updated_at)
+            .bind(&auth_config_id)
+            .bind(platform)
+            .bind(label)
+            .bind(&client_id)
+            .bind(&client_secret)
+            .bind(now)
+            .bind(now)
             .execute(&self.pool)
             .await?;
-
         Ok(())
     }
 
@@ -108,7 +127,7 @@ impl AuthConfigRepository for PostgresAuthConfigRepository {
                 updated_at
             FROM auth_config
             WHERE auth_config_id = $1
-            "#,
+            "#
         )
             .bind(auth_config_id)
             .fetch_optional(&self.pool)
@@ -130,8 +149,8 @@ impl AuthConfigRepository for PostgresAuthConfigRepository {
     }
 
     async fn list_auth_configs(&self, maybe_platform: Option<&str>) -> Result<Vec<AuthConfig>, Error> {
-        if let Some(p) = maybe_platform {
-            let rows = sqlx::query(
+        let rows = if let Some(p) = maybe_platform {
+            sqlx::query(
                 r#"
                 SELECT
                     auth_config_id,
@@ -148,23 +167,9 @@ impl AuthConfigRepository for PostgresAuthConfigRepository {
             )
                 .bind(p)
                 .fetch_all(&self.pool)
-                .await?;
-
-            let mut results = Vec::new();
-            for row in rows {
-                results.push(AuthConfig {
-                    auth_config_id: row.try_get("auth_config_id")?,
-                    platform: row.try_get("platform")?,
-                    app_label: row.try_get("app_label")?,
-                    client_id: row.try_get("client_id")?,
-                    client_secret: row.try_get("client_secret")?,
-                    created_at: row.try_get("created_at")?,
-                    updated_at: row.try_get("updated_at")?,
-                });
-            }
-            Ok(results)
+                .await?
         } else {
-            let rows = sqlx::query(
+            sqlx::query(
                 r#"
                 SELECT
                     auth_config_id,
@@ -179,22 +184,22 @@ impl AuthConfigRepository for PostgresAuthConfigRepository {
                 "#
             )
                 .fetch_all(&self.pool)
-                .await?;
+                .await?
+        };
 
-            let mut results = Vec::new();
-            for row in rows {
-                results.push(AuthConfig {
-                    auth_config_id: row.try_get("auth_config_id")?,
-                    platform: row.try_get("platform")?,
-                    app_label: row.try_get("app_label")?,
-                    client_id: row.try_get("client_id")?,
-                    client_secret: row.try_get("client_secret")?,
-                    created_at: row.try_get("created_at")?,
-                    updated_at: row.try_get("updated_at")?,
-                });
-            }
-            Ok(results)
+        let mut results = Vec::new();
+        for row in rows {
+            results.push(AuthConfig {
+                auth_config_id: row.try_get("auth_config_id")?,
+                platform: row.try_get("platform")?,
+                app_label: row.try_get("app_label")?,
+                client_id: row.try_get("client_id")?,
+                client_secret: row.try_get("client_secret")?,
+                created_at: row.try_get("created_at")?,
+                updated_at: row.try_get("updated_at")?,
+            });
         }
+        Ok(results)
     }
 
     async fn update_auth_config(&self, config: &AuthConfig) -> Result<(), Error> {
@@ -208,7 +213,7 @@ impl AuthConfigRepository for PostgresAuthConfigRepository {
                 client_secret = $4,
                 updated_at = $5
             WHERE auth_config_id = $6
-            "#,
+            "#
         )
             .bind(&config.platform)
             .bind(&config.app_label)
@@ -218,7 +223,6 @@ impl AuthConfigRepository for PostgresAuthConfigRepository {
             .bind(&config.auth_config_id)
             .execute(&self.pool)
             .await?;
-
         Ok(())
     }
 
@@ -227,7 +231,7 @@ impl AuthConfigRepository for PostgresAuthConfigRepository {
             r#"
             DELETE FROM auth_config
             WHERE auth_config_id = $1
-            "#,
+            "#
         )
             .bind(auth_config_id)
             .execute(&self.pool)
@@ -235,7 +239,6 @@ impl AuthConfigRepository for PostgresAuthConfigRepository {
         Ok(())
     }
 
-    /// NEW method below
     async fn get_by_platform_and_label(&self, platform: &str, label: &str) -> Result<Option<AuthConfig>, Error> {
         let row = sqlx::query(
             r#"
@@ -251,7 +254,7 @@ impl AuthConfigRepository for PostgresAuthConfigRepository {
             WHERE platform = $1
               AND app_label = $2
             LIMIT 1
-            "#,
+            "#
         )
             .bind(platform)
             .bind(label)
@@ -271,5 +274,20 @@ impl AuthConfigRepository for PostgresAuthConfigRepository {
         } else {
             Ok(None)
         }
+    }
+
+    async fn count_for_platform(&self, platform: &str) -> Result<i64, Error> {
+        let row = sqlx::query(
+            r#"
+            SELECT COUNT(*) AS count
+            FROM auth_config
+            WHERE platform = $1
+            "#
+        )
+            .bind(platform)
+            .fetch_one(&self.pool)
+            .await?;
+        let count: i64 = row.try_get("count")?;
+        Ok(count)
     }
 }

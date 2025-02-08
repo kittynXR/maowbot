@@ -1,4 +1,4 @@
-// src/plugins/manager.rs
+// File: maowbot-core/src/plugins/manager.rs
 
 use std::any::Any;
 use std::collections::{HashMap, HashSet};
@@ -868,7 +868,7 @@ impl BotApi for PluginManager {
     }
 
     async fn status(&self) -> StatusData {
-        let connected = self.list_connected_plugins().await; // this is async
+        let connected = self.list_connected_plugins().await;
         let connected_names: Vec<_> = connected
             .into_iter()
             .map(|p| {
@@ -877,7 +877,6 @@ impl BotApi for PluginManager {
             })
             .collect();
 
-        // Now build the StatusData
         StatusData {
             connected_plugins: connected_names,
             uptime_seconds: self.start_time.elapsed().as_secs(),
@@ -898,24 +897,26 @@ impl BotApi for PluginManager {
         self.remove_plugin(plugin_name).await
     }
 
-    // -------------- NEW AUTH-FLOW METHODS --------------
+    // ---------- NEW AUTH-FLOW METHODS ----------
 
     async fn begin_auth_flow(
         &self,
         platform: Platform,
         is_bot: bool
     ) -> Result<String, Error> {
+        // Delegate to the "with_label" version using "default"
+        self.begin_auth_flow_with_label(platform, is_bot, "default").await
+    }
+
+    async fn begin_auth_flow_with_label(
+        &self,
+        platform: Platform,
+        is_bot: bool,
+        label: &str
+    ) -> Result<String, Error> {
         if let Some(am) = &self.auth_manager {
             let mut lock = am.lock().await;
-            // We added two new “split” methods in AuthManager:
-            //   begin_auth_flow(...) => returns an AuthenticationPrompt
-            //   complete_auth_flow(...) => finishes
-            let prompt = lock.begin_auth_flow(platform, is_bot).await?;
-            if let crate::auth::AuthenticationPrompt::Browser { url } = prompt {
-                Ok(url)
-            } else {
-                Err(Error::Auth("Expected Browser prompt but got something else".into()))
-            }
+            lock.begin_auth_flow_with_label(platform, is_bot, label).await
         } else {
             Err(Error::Auth("No auth manager set in plugin manager".into()))
         }
@@ -953,15 +954,42 @@ impl BotApi for PluginManager {
     ) -> Result<Vec<PlatformCredential>, Error> {
         if let Some(am) = &self.auth_manager {
             let lock = am.lock().await;
-            // for brevity, we filter if `maybe_platform` is Some(...), else return all
             let all = lock.credentials_repo
                 .get_all_credentials()
-                .await?;  // you’ll need a “get_all_credentials” method on your repo
+                .await?;
             if let Some(p) = maybe_platform {
                 Ok(all.into_iter().filter(|c| c.platform == p).collect())
             } else {
                 Ok(all)
             }
+        } else {
+            Err(Error::Auth("No auth manager set in plugin manager".into()))
+        }
+    }
+
+    async fn create_auth_config(
+        &self,
+        platform: Platform,
+        label: &str,
+        client_id: String,
+        client_secret: Option<String>
+    ) -> Result<(), Error> {
+        if let Some(am) = &self.auth_manager {
+            let mut lock = am.lock().await;
+            let platform_str = format!("{}", platform);
+            lock.create_auth_config(platform_str.as_str(), label, client_id, client_secret).await
+        } else {
+            Err(Error::Auth("No auth manager set in plugin manager".into()))
+        }
+    }
+
+    async fn count_auth_configs_for_platform(
+        &self,
+        platform_str: String
+    ) -> Result<usize, Error> {
+        if let Some(am) = &self.auth_manager {
+            let lock = am.lock().await;
+            lock.count_auth_configs_for_platform(platform_str.as_str()).await
         } else {
             Err(Error::Auth("No auth manager set in plugin manager".into()))
         }

@@ -19,17 +19,22 @@ pub trait BotApi: Send + Sync {
 
     // -------------- NEW AUTH-FLOW METHODS ------------------
 
-    /// Step 1 of the flow: returns a `Browser { url }` prompt (or whatever the authenticator yields)
-    /// after calling the underlying `Authenticator::start_authentication()`
-    /// (plus any initialization, is_bot flag, etc.).
+    /// Begin auth flow using the default label.
     async fn begin_auth_flow(
         &self,
         platform: Platform,
         is_bot: bool
     ) -> Result<String, Error>;
 
-    /// Step 2 of the flow: once we have the `code` from the callback server,
-    /// we finalize the OAuth token exchange and store the resulting credential.
+    /// Begin auth flow with a specified label.
+    async fn begin_auth_flow_with_label(
+        &self,
+        platform: Platform,
+        is_bot: bool,
+        label: &str
+    ) -> Result<String, Error>;
+
+    /// Complete the auth flow with the provided code.
     async fn complete_auth_flow(
         &self,
         platform: Platform,
@@ -43,9 +48,24 @@ pub trait BotApi: Send + Sync {
         user_id: &str
     ) -> Result<(), Error>;
 
-    /// Potentially also list credentials. For brevity we return them all or filter by platform.
+    /// List stored credentials, optionally filtered by platform.
     async fn list_credentials(
         &self,
         maybe_platform: Option<Platform>
     ) -> Result<Vec<PlatformCredential>, Error>;
+
+    /// Create a new auth configuration (in the auth_config table).
+    async fn create_auth_config(
+        &self,
+        platform: Platform,
+        label: &str,
+        client_id: String,
+        client_secret: Option<String>
+    ) -> Result<(), Error>;
+
+    /// Count how many auth_config rows exist for the given platform.
+    async fn count_auth_configs_for_platform(
+        &self,
+        platform_str: String
+    ) -> Result<usize, Error>;
 }
