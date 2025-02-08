@@ -5,8 +5,8 @@ members = [
     "maowbot-core",
     "maowbot-proto",
     "maowbot-server",
-    "plugins/plugin_hello",
-    "plugins/tui_plugin"
+    "maowbot-tui",
+    "plugins/plugin_hello"
 ]
 
 [workspace.package]

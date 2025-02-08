@@ -51,6 +51,9 @@ use maowbot_core::repositories::{PostgresAuthConfigRepository, PostgresBotConfig
 mod portable_postgres;
 use portable_postgres::*;
 
+// ---------------- NEW: import our TUI module crate ---------------
+use maowbot_tui::TuiModule;
+
 #[derive(Parser, Debug, Clone)]
 #[command(name = "maowbot")]
 #[command(author, version, about = "MaowBot - multi‑platform streaming bot with plugin system")]
@@ -71,9 +74,13 @@ struct Args {
     #[arg(long)]
     plugin_passphrase: Option<String>,
 
-    /// Path to an in‑process plugin .so/.dll (optional)
+    /// Path to an in‑process plugin .so/.dll (optional, for other dynamic modules)
     #[arg(long)]
     in_process_plugin: Option<String>,
+
+    /// If you want to run the TUI interface in the console
+    #[arg(long, short = 't', default_value = "false")]
+    tui: bool,
 
     /// If you want to run in headless mode
     #[arg(long, default_value = "false")]
@@ -91,7 +98,32 @@ fn init_tracing() {
         .expect("Failed to set global subscriber");
 }
 
-/// The server logic.
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    init_tracing();
+    let args = Args::parse();
+    info!("MaowBot starting. mode={}, headless={}, tui={}, auth={}",
+          args.mode, args.headless, args.tui, args.auth);
+
+    match args.mode.as_str() {
+        "server" => {
+            if let Err(e) = run_server(args).await {
+                error!("Server error: {:?}", e);
+            }
+        }
+        "client" => {
+            if let Err(e) = run_client(args).await {
+                error!("Client error: {:?}", e);
+            }
+        }
+        other => {
+            error!("Invalid mode '{}'. Use --mode=server or --mode=client.", other);
+        }
+    }
+    info!("Main finished. Goodbye!");
+    Ok(())
+}
+
 async fn run_server(args: Args) -> Result<(), Error> {
     // 1) Start local Postgres if we want to run it ourselves.
     let pg_bin_dir = "./postgres/bin";
@@ -115,11 +147,10 @@ async fn run_server(args: Args) -> Result<(), Error> {
     // 3) Initialize event bus & run tasks
     let event_bus = Arc::new(EventBus::new());
     if args.auth {
-        info!("`--auth` argument provided; running auth-specific logic as needed.");
+        info!("`--auth` argument provided; can do auth-specific logic if needed.");
     }
 
-    // Spawn the periodic biweekly maintenance background task.
-    // (Note: we now pass a proper repository rather than a cutoff number.)
+    // Spawn the periodic maintenance background task
     let _maintenance_handle = spawn_biweekly_maintenance_task(
         db.clone(),
         PostgresUserAnalysisRepository::new(db.pool().clone()),
@@ -128,14 +159,11 @@ async fn run_server(args: Args) -> Result<(), Error> {
     // 4) Setup Auth, Repos, PluginManager, etc.
     let key = get_master_key()?;
     let encryptor = Encryptor::new(&key)?;
-    // Create your credentials repo.
     let creds_repo = PostgresCredentialsRepository::new(db.pool().clone(), encryptor);
-    // Create your auth config repo (the table that stores client_id/secret values).
+
     let auth_config_repo = Arc::new(PostgresAuthConfigRepository::new(db.pool().clone()));
-    // Create your bot config repo (the table that stores the callback_port, etc.).
     let bot_config_repo = Arc::new(PostgresBotConfigRepository::new(db.pool().clone()));
 
-    // Now create the AuthManager with all three arguments:
     let auth_manager = AuthManager::new(
         Box::new(creds_repo),
         auth_config_repo,
@@ -147,7 +175,7 @@ async fn run_server(args: Args) -> Result<(), Error> {
     plugin_manager.set_event_bus(event_bus.clone());
     plugin_manager.set_auth_manager(Arc::new(tokio::sync::Mutex::new(auth_manager)));
 
-    // Optionally load your in‑process plugin
+    // Optionally load an in-process plugin (NOT the TUI anymore)
     if let Some(path) = args.in_process_plugin.as_ref() {
         if let Err(e) = plugin_manager.load_in_process_plugin(path).await {
             error!("Failed to load in‑process plugin from {}: {:?}", path, e);
@@ -158,12 +186,20 @@ async fn run_server(args: Args) -> Result<(), Error> {
         error!("Failed to load plugins from folder: {:?}", e);
     }
 
-    // Set BotApi for in‑memory plugins
+    // Expose BotApi for any code that needs it
+    let bot_api: Arc<dyn BotApi> = Arc::new(plugin_manager.clone());
+
+    // If --tui was given, spawn the TUI in the background:
+    if args.tui {
+        let tui_module = TuiModule::new(bot_api.clone());
+        tui_module.spawn_tui_thread();
+    }
+
+    // Meanwhile, set BotApi for in-memory plugins too
     {
-        let api: Arc<dyn BotApi> = Arc::new(plugin_manager.clone());
         let lock = plugin_manager.plugins.lock().await;
         for plugin in lock.iter() {
-            plugin.set_bot_api(api.clone());
+            plugin.set_bot_api(bot_api.clone());
         }
     }
 
@@ -177,7 +213,7 @@ async fn run_server(args: Args) -> Result<(), Error> {
     let trim_policy = TrimPolicy {
         max_age_seconds: Some(24 * 3600),
         spam_score_cutoff: Some(5.0),
-        max_total_messages: Some(10000),
+        max_total_messages: Some(10_000),
         max_messages_per_user: Some(200),
         min_quality_score: Some(0.2),
     };
@@ -248,7 +284,6 @@ async fn run_server(args: Args) -> Result<(), Error> {
     Ok(())
 }
 
-/// The client logic: ...
 async fn run_client(args: Args) -> Result<(), Error> {
     info!("Running in CLIENT mode. Connecting to server...");
 
@@ -263,8 +298,8 @@ async fn run_client(args: Args) -> Result<(), Error> {
         .await?;
 
     let mut client = PluginServiceClient::new(channel);
-    let (tx, rx) = mpsc::channel::<PluginStreamRequest>(20);
-    let in_stream = ReceiverStream::new(rx);
+    let (tx, mut rx2) = mpsc::channel::<PluginStreamRequest>(20);
+    let in_stream = ReceiverStream::new(rx2);
     let mut outbound = client.start_session(in_stream).await?.into_inner();
 
     tokio::spawn(async move {
@@ -285,7 +320,7 @@ async fn run_client(args: Args) -> Result<(), Error> {
                               msg.platform, msg.channel, msg.user, msg.text);
                     }
                     RespPayload::StatusResponse(s) => {
-                        info!("Status => connected={:?}, uptime={}", s.connected_plugins, s.server_uptime);
+                        info!("Status => connected_plugins={:?}, uptime={}", s.connected_plugins, s.server_uptime);
                     }
                     RespPayload::CapabilityResponse(c) => {
                         info!("Capabilities => granted={:?}, denied={:?}", c.granted, c.denied);
@@ -312,7 +347,7 @@ async fn run_client(args: Args) -> Result<(), Error> {
         tokio::time::sleep(Duration::from_secs(10)).await;
         if tx.send(PluginStreamRequest {
             payload: Some(ReqPayload::LogMessage(LogMessage {
-                text: "RemoteClient is alive with self‑signed cert!".to_string(),
+                text: "RemoteClient is alive!".to_string(),
             })),
         }).await.is_err() {
             error!("Failed to send to server (maybe disconnected).");
@@ -321,24 +356,6 @@ async fn run_client(args: Args) -> Result<(), Error> {
     }
 
     Ok(())
-}
-
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    init_tracing();
-    let args = Args::parse();
-    info!("MaowBot starting. mode={}, headless={}, auth={}", args.mode, args.headless, args.auth);
-
-    let rt = tokio::runtime::Runtime::new()?;
-    let result = match args.mode.as_str() {
-        "server" => rt.block_on(run_server(args)),
-        "client" => rt.block_on(run_client(args)),
-        other => {
-            error!("Invalid mode '{}'. Use --mode=server or --mode=client", other);
-            Ok(())
-        }
-    };
-    info!("Main finished. Goodbye!");
-    result.map_err(|e| e.into())
 }
 
 /// Utility function to load or generate self‑signed certificates.
