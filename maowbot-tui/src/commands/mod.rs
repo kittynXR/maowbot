@@ -10,9 +10,7 @@ pub fn dispatch(
     line: &str,
     bot_api: &Arc<dyn BotApi>,
 ) -> (bool, Option<String>) {
-    // Return (quit_requested, output_string)
 
-    // Split by whitespace
     let parts: Vec<&str> = line.split_whitespace().collect();
     let cmd = parts[0].to_lowercase();
     let args = &parts[1..];
@@ -66,9 +64,17 @@ Commands:
             (false, Some(message))
         }
         "quit" => {
-            // user wants to shut down
+            // Build a small runtime and block_on the async shutdown function
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("Failed to build mini runtime");
+            // Actually run the future:
+            rt.block_on(bot_api.shutdown());
+
+            // Now your event_bus.shutdown() is truly called
             (true, Some("(TUI) shutting down...".to_string()))
-        }
+        },
         _ => {
             let msg = format!("Unknown command '{}'. Type 'help' for usage.", cmd);
             (false, Some(msg))

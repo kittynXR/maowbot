@@ -150,10 +150,10 @@ async fn run_server(args: Args) -> Result<(), Error> {
         info!("`--auth` argument provided; can do auth-specific logic if needed.");
     }
 
-    // Spawn the periodic maintenance background task
     let _maintenance_handle = spawn_biweekly_maintenance_task(
         db.clone(),
         PostgresUserAnalysisRepository::new(db.pool().clone()),
+        event_bus.clone(),
     );
 
     // 4) Setup Auth, Repos, PluginManager, etc.

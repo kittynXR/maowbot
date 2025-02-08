@@ -1,5 +1,6 @@
 // File: maowbot-core/src/tasks/biweekly_maintenance.rs
 
+use std::sync::Arc;
 use chrono::{DateTime, Utc, NaiveDate, Datelike};
 use sqlx::{Pool, Postgres, Row};
 use tracing::{info, error};
@@ -13,20 +14,35 @@ use crate::repositories::postgres::user_analysis::{PostgresUserAnalysisRepositor
 use crate::repositories::postgres::analytics::ChatMessage;
 use crate::models::UserAnalysis;
 use crate::Error;
+use crate::eventbus::EventBus;
 
-/// Spawns a background task that runs every two weeks, performing partition creation and user analysis.
 pub fn spawn_biweekly_maintenance_task(
     db: Database,
     user_analysis_repo: PostgresUserAnalysisRepository,
+    event_bus: Arc<EventBus>,  // <--- pass in
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(Duration::from_secs(14 * 24 * 3600));
+        // Clone the watch channel so we can break out when shutdown is signaled
+        let mut shutdown_rx = event_bus.shutdown_rx.clone();
+
         loop {
-            interval.tick().await;
-            if let Err(e) = run_biweekly_maintenance(&db, &user_analysis_repo).await {
-                error!("Biweekly maintenance failed: {:?}", e);
+            tokio::select! {
+                _ = interval.tick() => {
+                    if let Err(e) = run_biweekly_maintenance(&db, &user_analysis_repo).await {
+                        error!("Biweekly maintenance failed: {:?}", e);
+                    }
+                },
+                Ok(_) = shutdown_rx.changed() => {
+                    if *shutdown_rx.borrow() {
+                        info!("Biweekly maintenance: shutting down cleanly.");
+                        break;
+                    }
+                }
             }
         }
+
+        info!("Biweekly maintenance task exited.");
     })
 }
 
