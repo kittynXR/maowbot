@@ -5,10 +5,9 @@ edition.workspace = true
 
 [dependencies]
 tokio = { workspace = true }
-# Add any other crates you need, e.g. for reading lines or opening browsers
+
 open = "5.3"
 
-# We also depend on maowbot-core for the BotApi trait, etc.
 maowbot-core = { path = "../maowbot-core" }
 
 [lib]
