@@ -891,24 +891,14 @@ impl BotApi for PluginManager {
     }
 
     // ---------- Auth Flow from the snippet ----------
-
     async fn begin_auth_flow(
         &self,
         platform: Platform,
         is_bot: bool
     ) -> Result<String, Error> {
-        self.begin_auth_flow_with_label(platform, is_bot, "default").await
-    }
-
-    async fn begin_auth_flow_with_label(
-        &self,
-        platform: Platform,
-        is_bot: bool,
-        label: &str
-    ) -> Result<String, Error> {
         if let Some(am) = &self.auth_manager {
             let mut lock = am.lock().await;
-            lock.begin_auth_flow_with_label(platform, is_bot, label).await
+            lock.begin_auth_flow(platform, is_bot).await
         } else {
             Err(Error::Auth("No auth manager set in plugin manager".into()))
         }
@@ -962,14 +952,13 @@ impl BotApi for PluginManager {
     async fn create_platform_config(
         &self,
         platform: Platform,
-        label: &str,
         client_id: String,
         client_secret: Option<String>
     ) -> Result<(), Error> {
         if let Some(am) = &self.auth_manager {
             let mut lock = am.lock().await;
             let platform_str = format!("{}", platform);
-            lock.create_platform_config(platform_str.as_str(), label, client_id, client_secret).await
+            lock.create_platform_config(&platform_str, client_id, client_secret).await
         } else {
             Err(Error::Auth("No auth manager set in plugin manager".into()))
         }
@@ -981,30 +970,25 @@ impl BotApi for PluginManager {
     ) -> Result<usize, Error> {
         if let Some(am) = &self.auth_manager {
             let lock = am.lock().await;
-            lock.count_platform_configs_for(platform_str.as_str()).await
+            lock.count_platform_configs_for(&platform_str).await
         } else {
             Err(Error::Auth("No auth manager set in plugin manager".into()))
         }
     }
 
-    // ---------- NEW METHODS: list_platform_configs / remove_platform_config ----------
-
     async fn list_platform_configs(
         &self,
         maybe_platform: Option<&str>
     ) -> Result<Vec<PlatformConfigData>, Error> {
-        // Must access the `platform_config_repo` from AuthManager
         if let Some(am) = &self.auth_manager {
             let lock = am.lock().await;
-            let pc_repo = &lock.platform_config_repo; // a dyn PlatformConfigRepository
+            let pc_repo = &lock.platform_config_repo;
             let rows = pc_repo.list_platform_configs(maybe_platform).await?;
 
-            // Convert from DB model to your TUI struct
             let result: Vec<PlatformConfigData> = rows.into_iter().map(|r| {
                 PlatformConfigData {
                     platform_config_id: r.platform_config_id,
                     platform: r.platform,
-                    platform_label: r.platform_label,
                     client_id: r.client_id,
                     client_secret: r.client_secret,
                 }
@@ -1016,7 +1000,6 @@ impl BotApi for PluginManager {
     }
 
     async fn remove_platform_config(&self, platform_config_id: &str) -> Result<(), Error> {
-        // Must access `platform_config_repo` again
         if let Some(am) = &self.auth_manager {
             let lock = am.lock().await;
             let pc_repo = &lock.platform_config_repo;

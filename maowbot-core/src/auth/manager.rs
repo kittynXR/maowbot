@@ -1,6 +1,6 @@
 // =============================================================================
 // maowbot-core/src/auth/manager.rs
-//  - Changed references from auth_config_repo to platform_config_repo
+//   - Removed “label” usage. We now store only one config row per platform.
 // =============================================================================
 
 use std::collections::HashMap;
@@ -47,12 +47,9 @@ impl AuthManager {
         self.authenticators.insert(platform, authenticator);
     }
 
-    /// This older convenience method is left for any backward usage: label="default".
-    pub async fn authenticate_platform(
-        &mut self,
-        platform: Platform
-    ) -> Result<PlatformCredential, Error> {
-        self.authenticate_platform_for_role_label(platform, false, "default").await
+    /// This older convenience method is left for any backward usage.
+    pub async fn authenticate_platform(&mut self, platform: Platform) -> Result<PlatformCredential, Error> {
+        self.authenticate_platform_for_role(platform, false).await
     }
 
     pub async fn authenticate_platform_for_role(
@@ -60,25 +57,17 @@ impl AuthManager {
         platform: Platform,
         is_bot: bool,
     ) -> Result<PlatformCredential, Error> {
-        self.authenticate_platform_for_role_label(platform, is_bot, "default").await
+        let _ = self.begin_auth_flow(platform.clone(), is_bot).await?;
+        Err(Error::Auth(
+            "This function expects a code, but none was provided (use the 2-step flow)".into(),
+        ))
     }
 
-    pub async fn authenticate_platform_for_role_label(
+    /// Start an auth flow for the given platform. Returns the “redirect” or user prompt URL.
+    pub async fn begin_auth_flow(
         &mut self,
         platform: Platform,
         is_bot: bool,
-        label: &str,
-    ) -> Result<PlatformCredential, Error> {
-        let _ = self.begin_auth_flow_with_label(platform.clone(), is_bot, label).await?;
-        Err(Error::Auth("This function expects a code, but none was provided (use the 2-step flow)".into()))
-    }
-
-    /// Start an auth flow for the given platform & label. Returns the “redirect” or user prompt URL.
-    pub async fn begin_auth_flow_with_label(
-        &mut self,
-        platform: Platform,
-        is_bot: bool,
-        label: &str
     ) -> Result<String, Error> {
         let platform_str = match &platform {
             Platform::Twitch => "twitch",
@@ -87,18 +76,16 @@ impl AuthManager {
             Platform::TwitchIRC => "twitch-irc",
         };
 
-        let maybe_row = self.platform_config_repo
-            .get_by_platform_and_label(platform_str, label)
-            .await?;
-
-        let (client_id, client_secret) = if let Some(conf_row) = maybe_row {
+        // Single config row for this platform:
+        let maybe_conf = self.platform_config_repo.get_by_platform(platform_str).await?;
+        let (client_id, client_secret) = if let Some(conf_row) = maybe_conf {
             let cid = conf_row.client_id.unwrap_or_default();
             let csec = conf_row.client_secret;
             (cid, csec)
         } else {
             return Err(Error::Auth(format!(
-                "No platform_config row found for platform={} label={}",
-                platform_str, label
+                "No platform_config found for platform={}",
+                platform_str
             )));
         };
 
@@ -152,7 +139,10 @@ impl AuthManager {
                 }
             }
         }
-        Err(Error::Platform(format!("Could not begin auth flow for label='{}'", label)))
+        Err(Error::Platform(format!(
+            "Could not begin auth flow for platform={:?}",
+            platform
+        )))
     }
 
     pub async fn complete_auth_flow(
@@ -160,7 +150,8 @@ impl AuthManager {
         platform: Platform,
         code: String,
     ) -> Result<PlatformCredential, Error> {
-        let authenticator = self.authenticators
+        let authenticator = self
+            .authenticators
             .get_mut(&platform)
             .ok_or_else(|| Error::Platform(format!("No authenticator for {platform:?}")))?;
 
@@ -178,7 +169,7 @@ impl AuthManager {
     pub async fn get_credentials(
         &self,
         platform: &Platform,
-        user_id: &str
+        user_id: &str,
     ) -> Result<Option<PlatformCredential>, Error> {
         self.credentials_repo.get_credentials(platform, user_id).await
     }
@@ -186,7 +177,7 @@ impl AuthManager {
     pub async fn revoke_credentials(
         &mut self,
         platform: &Platform,
-        user_id: &str
+        user_id: &str,
     ) -> Result<(), Error> {
         if let Some(cred) = self.credentials_repo.get_credentials(platform, user_id).await? {
             let authenticator = self.authenticators.get_mut(platform)
@@ -200,7 +191,7 @@ impl AuthManager {
     pub async fn refresh_platform_credentials(
         &mut self,
         platform: &Platform,
-        user_id: &str
+        user_id: &str,
     ) -> Result<PlatformCredential, Error> {
         let cred = self.credentials_repo
             .get_credentials(platform, user_id).await?
@@ -221,15 +212,15 @@ impl AuthManager {
         authenticator.validate(cred).await
     }
 
+    /// Replaces the old 'insert_platform_config' that needed a label. We just upsert by platform.
     pub async fn create_platform_config(
         &self,
         platform_str: &str,
-        label: &str,
         client_id: String,
         client_secret: Option<String>,
     ) -> Result<(), Error> {
         self.platform_config_repo
-            .insert_platform_config(platform_str, label, client_id, client_secret)
+            .upsert_platform_config(platform_str, Some(client_id), client_secret)
             .await?;
         Ok(())
     }

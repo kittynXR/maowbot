@@ -1,4 +1,7 @@
 // maowbot-tui/src/commands/account.rs
+//
+// No label prompts anymore. We simply do "begin_auth_flow(platform, is_bot)"
+// and "complete_auth_flow" once we get the code from the callback.
 
 use std::sync::Arc;
 use std::io::{Write, stdin, stdout};
@@ -37,7 +40,7 @@ pub fn handle_account_command(args: &[&str], bot_api: &Arc<dyn BotApi>) -> Strin
             }
         }
         "list" => {
-            // optional: if user typed `account list twitch` then we filter
+            // optional filter
             let maybe_platform = if args.len() > 1 {
                 Platform::from_str(args[1]).ok()
             } else {
@@ -67,7 +70,7 @@ pub fn handle_account_command(args: &[&str], bot_api: &Arc<dyn BotApi>) -> Strin
     }
 }
 
-/// The actual 2-step OAuth or token flow for adding credentials.
+/// The 2-step OAuth (or other token) flow for adding credentials.
 fn account_add_flow(platform: Platform, username: &str, bot_api: &Arc<dyn BotApi>) -> String {
     // 1) Ask if it's a bot account
     println!("Is this a bot account? (y/n):");
@@ -77,30 +80,7 @@ fn account_add_flow(platform: Platform, username: &str, bot_api: &Arc<dyn BotApi
     let _ = stdin().read_line(&mut line);
     let is_bot = line.trim().eq_ignore_ascii_case("y");
 
-    // 2) We want to do the OAuth flow with some label that can be the "username" or something else
-    //    For simplicity, let's just re-use `username` as the label, or the user can confirm:
-    println!("Use '{}' as the label? (y/n)", username);
-    print!("> ");
-    let _ = stdout().flush();
-    let mut label_line = String::new();
-    let _ = stdin().read_line(&mut label_line);
-    let final_label = if label_line.trim().eq_ignore_ascii_case("y") {
-        username.to_string()
-    } else {
-        // prompt for custom label:
-        println!("Enter custom label:");
-        print!("> ");
-        let _ = stdout().flush();
-        let mut line2 = String::new();
-        let _ = stdin().read_line(&mut line2);
-        line2.trim().to_string()
-    };
-
-    if final_label.is_empty() {
-        return "Aborted (no label).".to_string();
-    }
-
-    // 3) Start local callback server on port=9876
+    // 2) Start local callback server on port=9876
     let rt = tokio::runtime::Builder::new_multi_thread().worker_threads(2).enable_all().build().unwrap();
     let fixed_port: u16 = 9876;
     let (done_rx, shutdown_tx) = match rt.block_on(start_callback_server(fixed_port)) {
@@ -108,8 +88,8 @@ fn account_add_flow(platform: Platform, username: &str, bot_api: &Arc<dyn BotApi
         Err(e) => return format!("Error starting callback server => {:?}", e),
     };
 
-    // 4) Begin auth flow
-    let url_res = rt.block_on(bot_api.begin_auth_flow_with_label(platform.clone(), is_bot, &final_label));
+    // 3) Begin auth flow
+    let url_res = rt.block_on(bot_api.begin_auth_flow(platform.clone(), is_bot));
     let url = match url_res {
         Ok(u) => u,
         Err(e) => {
@@ -129,7 +109,7 @@ fn account_add_flow(platform: Platform, username: &str, bot_api: &Arc<dyn BotApi
     }
     println!("Waiting for the OAuth callback on port {}...", fixed_port);
 
-    // 5) Wait for callback
+    // 4) Wait for callback
     let callback_result = match done_rx.blocking_recv() {
         Ok(res) => res,
         Err(e) => {
@@ -139,17 +119,15 @@ fn account_add_flow(platform: Platform, username: &str, bot_api: &Arc<dyn BotApi
     };
     shutdown_tx.send(()).ok();
 
-    // 6) Complete
+    // 5) Complete
     match rt.block_on(bot_api.complete_auth_flow(platform.clone(), callback_result.code)) {
         Ok(cred) => {
             format!(
-                "Success! Stored credentials for platform={:?}, user_id='{}', is_bot={}, label='{}'",
-                cred.platform, cred.user_id, cred.is_bot, final_label
+                "Success! Stored credentials for platform={:?}, user_id='{}', is_bot={}, (username='{}')",
+                cred.platform, cred.user_id, cred.is_bot, username
             )
         }
-        Err(e) => {
-            format!("Error completing auth => {:?}", e)
-        }
+        Err(e) => format!("Error completing auth => {:?}", e),
     }
 }
 
