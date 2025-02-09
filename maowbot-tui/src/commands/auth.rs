@@ -11,15 +11,25 @@ use maowbot_core::auth::callback_server;
 use maowbot_core::auth::callback_server::start_callback_server;
 
 enum PlatformAuthRequirements {
-    OnlyClientId { dev_console_url: &'static str, label_hint: &'static str },
-    ClientIdAndSecret { dev_console_url: &'static str, label_hint: &'static str },
+    OnlyClientId {
+        dev_console_url: &'static str,
+        label_hint: &'static str,
+    },
+    ClientIdAndSecret {
+        dev_console_url: &'static str,
+        label_hint: &'static str,
+    },
     NoAppCredentials,
 }
 
+/// Decide what the TUI should prompt for when creating an auth_config row
+/// for each platform.
 fn get_auth_requirements(platform: &Platform) -> PlatformAuthRequirements {
     match platform {
+        // Updated: Twitch now needs both client_id + client_secret
+        // because we have to register as a private app for EventSub.
         Platform::Twitch => {
-            PlatformAuthRequirements::OnlyClientId {
+            PlatformAuthRequirements::ClientIdAndSecret {
                 dev_console_url: "https://dev.twitch.tv/console/apps",
                 label_hint: "user",
             }
@@ -108,6 +118,7 @@ pub fn handle_auth_command(args: &[&str], bot_api: &Arc<dyn BotApi>) -> String {
     }
 }
 
+/// Handles `auth add <platform>`
 fn auth_add_flow(platform: Platform, bot_api: &Arc<dyn BotApi>) -> String {
     println!("Is this a bot account? (y/n):");
     let mut line = String::new();
@@ -126,7 +137,7 @@ fn auth_add_flow(platform: Platform, bot_api: &Arc<dyn BotApi>) -> String {
     // Only the TUI code spawns the local server on port=9876
     // ----------------------------------------------------------------
     let fixed_port: u16 = 9876;
-    let (done_rx, shutdown_tx) = match rt.block_on(start_callback_server(9876)) {
+    let (done_rx, shutdown_tx) = match rt.block_on(start_callback_server(fixed_port)) {
         Ok(pair) => pair,
         Err(e) => return format!("Error starting callback server => {:?}", e),
     };
@@ -134,10 +145,13 @@ fn auth_add_flow(platform: Platform, bot_api: &Arc<dyn BotApi>) -> String {
     // ----------------------------------------------------------------
     // Attempt to begin the OAuth flow
     // ----------------------------------------------------------------
-    let url_result = rt.block_on(bot_api.begin_auth_flow_with_label(platform.clone(), is_bot, &label));
+    let url_result = rt.block_on(
+        bot_api.begin_auth_flow_with_label(platform.clone(), is_bot, &label)
+    );
     let url = match url_result {
         Ok(u) => u,
         Err(CoreError::Auth(msg)) if msg.contains("No auth_config row found") => {
+            // If we have no auth_config, we prompt user to create one interactively
             println!(
                 "No auth_config found for (platform={:?}, label='{}'). Let's create a new row.",
                 platform, label
@@ -146,6 +160,7 @@ fn auth_add_flow(platform: Platform, bot_api: &Arc<dyn BotApi>) -> String {
                 shutdown_tx.send(()).ok();
                 return format!("Error creating auth_config => {}", e);
             }
+            // Now try again
             match rt.block_on(bot_api.begin_auth_flow_with_label(platform.clone(), is_bot, &label)) {
                 Ok(u) => u,
                 Err(e) => {
@@ -201,6 +216,7 @@ fn auth_add_flow(platform: Platform, bot_api: &Arc<dyn BotApi>) -> String {
     }
 }
 
+/// Handles `auth restart <platform> <user_id>`
 fn auth_restart_flow(platform: Platform, user_id: &str, bot_api: &Arc<dyn BotApi>) -> String {
     let rt = match tokio::runtime::Builder::new_current_thread().enable_all().build() {
         Ok(rt) => rt,
@@ -217,10 +233,11 @@ fn auth_restart_flow(platform: Platform, user_id: &str, bot_api: &Arc<dyn BotApi
         }
     }
 
-    // re-run same flow
+    // Then re-run the standard `auth add`
     auth_add_flow(platform, bot_api)
 }
 
+/// Handles `auth remove <platform> <user_id>`
 fn auth_remove(platform: Platform, user_id: &str, bot_api: &Arc<dyn BotApi>) -> String {
     let rt = match tokio::runtime::Builder::new_current_thread().enable_all().build() {
         Ok(rt) => rt,
@@ -237,6 +254,7 @@ fn auth_remove(platform: Platform, user_id: &str, bot_api: &Arc<dyn BotApi>) -> 
     }
 }
 
+/// Interactively create a new `auth_config` row for this (platform, label).
 fn create_new_auth_config_interactive(
     platform: &Platform,
     label: &str,
@@ -246,7 +264,7 @@ fn create_new_auth_config_interactive(
 
     match requirements {
         PlatformAuthRequirements::NoAppCredentials => {
-            println!("This platform does not require a client_id or secret. Creating an empty row...");
+            println!("This platform does not require a client_id or client_secret. Creating an empty row...");
             let rt = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()
@@ -260,6 +278,7 @@ fn create_new_auth_config_interactive(
             Ok(())
         }
         PlatformAuthRequirements::OnlyClientId { dev_console_url, .. } => {
+            // (If any platform still wants only client_id, we'd do it here.)
             println!("Go to your dev console => {}", dev_console_url);
             println!("Open in browser? (y/n): ");
             let _ = std::io::stdout().flush();
@@ -319,6 +338,7 @@ fn create_new_auth_config_interactive(
     }
 }
 
+/// Prompt for a suggested `label`, typically something like "bot1" or "user1".
 fn prompt_for_label(platform: &Platform, is_bot: bool, bot_api: &Arc<dyn BotApi>) -> String {
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -345,6 +365,7 @@ fn prompt_for_label(platform: &Platform, is_bot: bool, bot_api: &Arc<dyn BotApi>
     }
 }
 
+/// Simple console prompt helper
 fn prompt(msg: &str) -> String {
     use std::io::Write;
     println!("{}", msg);

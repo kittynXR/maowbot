@@ -33,8 +33,8 @@ type OAuthClient = Client<
     EndpointSet
 >;
 
-/// Simplified TwitchAuthenticator: we no longer fetch a port from the DB.
-/// We just default to http://localhost:9876/callback or let the TUI handle it.
+/// Simplified TwitchAuthenticator: now we do require the client_secret
+/// so we can handle eventsub flows and manage subscriptions.
 pub struct TwitchAuthenticator {
     pub client_id: String,
     pub client_secret: Option<String>,
@@ -45,7 +45,6 @@ pub struct TwitchAuthenticator {
 }
 
 impl TwitchAuthenticator {
-    /// Removed `bot_config_repo`. This no longer checks for port collisions.
     pub fn new(
         client_id: String,
         client_secret: Option<String>,
@@ -86,12 +85,14 @@ impl PlatformAuthenticator for TwitchAuthenticator {
         let (pkce_challenge, pkce_verifier) = PkceCodeChallenge::new_random_sha256();
         self.pkce_verifier = Some(pkce_verifier);
 
+        // We add extra scopes so we can subscribe to and manage EventSub, as well as chat.
         let (auth_url, _csrf_state) = self
             .oauth_client
             .authorize_url(|| oauth2::CsrfToken::new_random())
             .set_pkce_challenge(pkce_challenge)
             .add_scope(Scope::new("chat:read".into()))
             .add_scope(Scope::new("chat:edit".into()))
+            .add_scope(Scope::new("channel:read:subscriptions".into()))
             .url();
 
         info!("[TwitchAuthenticator] Created auth URL => {}", auth_url);
