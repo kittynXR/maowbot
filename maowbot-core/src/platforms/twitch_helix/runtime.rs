@@ -1,32 +1,109 @@
 // File: src/platforms/twitch_helix/runtime.rs
 
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::Arc;
 use async_trait::async_trait;
-use twitch_api::{HelixClient};
+use http::{Request, Response};
+use twitch_api::{HelixClient, HttpClient};
 use reqwest::Client as ReqwestClient;
 
 use crate::Error;
 use crate::models::PlatformCredential;
 use crate::platforms::{ConnectionStatus, PlatformAuth, PlatformIntegration};
+use twitch_api::client::Bytes as TwitchBytes;
 
-/// The primary Twitch platform struct. Note that we store:
-/// - `Arc<ReqwestClient>` inside `HelixClient` to satisfy `HttpClient` + `'static` lifetime.
+#[derive(Debug)]
+pub struct MyErrorWrapper(Box<dyn std::error::Error + Send + Sync + 'static>);
+
+impl std::fmt::Display for MyErrorWrapper {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+impl std::error::Error for MyErrorWrapper {}
+
+impl From<Box<dyn std::error::Error + Send + Sync + 'static>> for MyErrorWrapper {
+    fn from(e: Box<dyn std::error::Error + Send + Sync + 'static>) -> Self {
+        MyErrorWrapper(e)
+    }
+}
+
+/// A wrapper around Arc<reqwest::Client> that implements twitch_api::HttpClient.
+/// This makes it possible to use reqwest as the HTTP client for Helix calls.
+#[derive(Clone)]
+pub struct MyReqwestHTTPClient {
+    pub inner: Arc<ReqwestClient>,
+}
+
+impl HttpClient for MyReqwestHTTPClient {
+    // Use our newtype as the error type.
+    type Error = MyErrorWrapper;
+
+    fn req<'a>(
+        &'a self,
+        request: Request<TwitchBytes>,
+    ) -> Pin<Box<dyn Future<Output = Result<Response<TwitchBytes>, Self::Error>> + Send + 'a>> {
+        Box::pin(async move {
+            // Split request into parts.
+            let (parts, body) = request.into_parts();
+            // Convert the body (which is TwitchBytes) to standard bytes.
+            let body_bytes = bytes::Bytes::copy_from_slice(body.as_ref());
+
+            // Build the reqwest request from the http::Request parts.
+            let mut reqwest_builder = self.inner.request(parts.method, parts.uri.to_string());
+            // Copy all headers.
+            for (name, value) in parts.headers {
+                if let Some(name_key) = name {
+                    reqwest_builder = reqwest_builder.header(name_key, value);
+                }
+            }
+            reqwest_builder = reqwest_builder.body(body_bytes);
+
+            // Send the request using reqwest.
+            let reqwest_response = reqwest_builder.send().await.map_err(|err| {
+                Box::new(err) as Box<dyn std::error::Error + Send + Sync + 'static>
+            })?;
+
+            // Build an http::Response.
+            let status = reqwest_response.status();
+            let mut builder = Response::builder().status(status);
+            for (k, v) in reqwest_response.headers().iter() {
+                builder = builder.header(k, v);
+            }
+            let resp_bytes = reqwest_response.bytes().await.map_err(|err| {
+                Box::new(err) as Box<dyn std::error::Error + Send + Sync + 'static>
+            })?;
+            let resp_body = TwitchBytes::copy_from_slice(&resp_bytes);
+            let response = builder.body(resp_body).map_err(|http_err| {
+                // Convert the http::Error to our boxed error.
+                Box::<dyn std::error::Error + Send + Sync + 'static>::from(http_err.to_string())
+            })?;
+
+            Ok(response)
+        })
+    }
+}
+
+/// The primary Twitch platform struct.
+/// - We store an Option<HelixClient<'static, Arc<ReqwestClient>>> so we can make Helix calls.
+/// - This requires "http_impl_reqwest" feature in twitch_api = "0.7"
 pub struct TwitchPlatform {
     pub credentials: Option<PlatformCredential>,
     pub connection_status: ConnectionStatus,
 
-    /// Owned Helix client, requiring `'static` for the lifetime,
-    /// and an `Arc<reqwest::Client>` to satisfy the `HttpClient` trait.
+    /// Owned Helix client, `'static` lifetime,
+    /// Arc<ReqwestClient> so we only have one underlying client.
     pub client: Option<HelixClient<'static, Arc<ReqwestClient>>>,
 }
 
 impl TwitchPlatform {
-    /// Example constructor that creates a new reqwest::Client, wraps it in Arc,
-    /// and calls `HelixClient::with_client(...)`.
+    /// Example constructor that builds a reqwest Client + HelixClient
     pub fn new() -> Self {
-        // Build a reqwest client, wrap in Arc
+        // 1) Build a reqwest client, wrap it in Arc
         let arc_client = Arc::new(ReqwestClient::new());
-        // Then build a HelixClient from that Arc
+        // 2) Build a HelixClient from that Arc
         let helix_client = HelixClient::with_client(arc_client);
 
         Self {
@@ -37,7 +114,7 @@ impl TwitchPlatform {
     }
 }
 
-/// A simple struct representing a chat message event or something similar from Twitch.
+/// Example chat message event
 pub struct TwitchMessageEvent {
     pub channel: String,
     pub user_id: String,
@@ -48,12 +125,12 @@ pub struct TwitchMessageEvent {
 #[async_trait]
 impl PlatformAuth for TwitchPlatform {
     async fn authenticate(&mut self) -> Result<(), Error> {
-        // E.g. do OAuth or store your credential
+        // E.g. store OAuth creds
         Ok(())
     }
 
     async fn refresh_auth(&mut self) -> Result<(), Error> {
-        // Possibly refresh token using Helix or OAuth
+        // Refresh the token if needed
         Ok(())
     }
 
@@ -66,7 +143,7 @@ impl PlatformAuth for TwitchPlatform {
     }
 
     async fn is_authenticated(&self) -> Result<bool, Error> {
-        // If we have credentials, we consider ourselves authenticated
+        // If we have a credentials object, consider ourselves authenticated
         Ok(self.credentials.is_some())
     }
 }
@@ -75,18 +152,18 @@ impl PlatformAuth for TwitchPlatform {
 impl PlatformIntegration for TwitchPlatform {
     async fn connect(&mut self) -> Result<(), Error> {
         self.connection_status = ConnectionStatus::Connected;
-        // Real logic might create an IRC connection or something else
+        // Real logic might connect to Twitch IRC or EventSub
         Ok(())
     }
 
     async fn disconnect(&mut self) -> Result<(), Error> {
         self.connection_status = ConnectionStatus::Disconnected;
-        // Maybe drop IRC connection
+        // Cleanly shut down
         Ok(())
     }
 
     async fn send_message(&self, _channel: &str, _message: &str) -> Result<(), Error> {
-        // Real code might use Twitch IRC or Chat API
+        // e.g. Helix or IRC call
         Ok(())
     }
 
@@ -96,8 +173,7 @@ impl PlatformIntegration for TwitchPlatform {
 }
 
 impl TwitchPlatform {
-    /// Stub method returning the next “message event,” if any.
-    /// Real code might poll IRC events, EventSub, etc.
+    /// Stub that might poll your IRC or event queue
     pub async fn next_message_event(&mut self) -> Option<TwitchMessageEvent> {
         None
     }

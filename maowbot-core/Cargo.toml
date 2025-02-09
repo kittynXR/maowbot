@@ -31,15 +31,19 @@ dotenv = { workspace = true }
 uuid = { workspace = true }
 async-trait = { workspace = true }
 mockall = { workspace = true }
-reqwest = { workspace = true }
+reqwest = { workspace = true, features = ["json"] }
 aes-gcm = { workspace = true }
 base64 = { workspace = true }
 rand = { workspace = true }
 rand_core = { workspace = true }
 serenity = { workspace = true }
 url = { workspace = true }
+http = { workspace = true }
 
-oauth2 = { workspace = true }
+twitch_oauth2 = { workspace = true }
+urlencoding = { workspace = true }
+
+#oauth2 = { workspace = true }
 keyring = { workspace = true }
 
 clap = { workspace = true }
@@ -55,13 +59,13 @@ futures-lite = { workspace = true }
 tempfile = { workspace = true }
 futures-util = { workspace = true }
 futures-core = { workspace = true }
-
 libloading = { workspace = true }
 
 axum = { version = "^0.8" }
 axum-server = "^0.7"
 tower = "^0.5"
 tower-http = {  version = "^0.6", features = ["trace"] }
+bytes = "1.9.0"
 
 [dev-dependencies]
 tokio-test = { workspace = true }

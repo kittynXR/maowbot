@@ -1,5 +1,3 @@
-// src/error.rs
-use oauth2::http;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -38,15 +36,16 @@ pub enum Error {
     #[error("Decryption error: {0}")]
     Decryption(String),
 
+    // New variant for InvalidUri errors:
+    #[error("Invalid URI: {0}")]
+    InvalidUri(String),
+
     // New variants for errors coming from various parts of main:
     #[error("Address parse error: {0}")]
     AddrParse(#[from] std::net::AddrParseError),
 
     #[error("Tonic transport error: {0}")]
     Tonic(#[from] tonic::transport::Error),
-
-    #[error("Invalid URI error: {0}")]
-    InvalidUri(#[from] http::uri::InvalidUri),
 
     #[error("MPSC send error: {0}")]
     MpscSend(#[from] tokio::sync::mpsc::error::SendError<maowbot_proto::plugs::PluginStreamRequest>),
@@ -99,5 +98,12 @@ impl From<chrono::format::ParseError> for Error {
 impl From<keyring::Error> for Error {
     fn from(err: keyring::Error) -> Self {
         Error::Auth(format!("keyring error: {}", err))
+    }
+}
+
+// New conversion for http::uri::InvalidUri:
+impl From<http::uri::InvalidUri> for Error {
+    fn from(err: http::uri::InvalidUri) -> Self {
+        Error::InvalidUri(err.to_string())
     }
 }

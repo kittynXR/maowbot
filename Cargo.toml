@@ -15,8 +15,12 @@ edition = "2021"
 
 [workspace.dependencies]
 maowbot-proto = { path = "maowbot-proto" }
+http = { version = "^1.2", features = ["default"] }
 
-twitch_api = {  version="^0.7.0-rc", features = ["client", "helix", "reqwest"] }
+twitch_api = {  version="^0.7", features = ["all", "reqwest"] }
+twitch_oauth2 = { version = "^0.15", features = ["all", "client", "reqwest", "default"]}
+urlencoding = { version = "^2.1" }
+
 sqlx = { version = "^0.8", features = ["postgres", "runtime-tokio", "tls-native-tls", "chrono", "macros", "json", "uuid"] }
 
 tokio = { version = "^1.43", features = ["full"] }
@@ -40,13 +44,14 @@ uuid = { version = "^1.12", features = ["v4"] }
 rand = { version ="^0.9", features = ["os_rng"] }
 rand_core = "^0.9"
 
-oauth2 = { version = "5.0.0", features = ["reqwest"] }
+#oauth2 = { version = "5.0.0", features = ["reqwest", "pkce-plain", "reqwest-blocking"] }
+prelude = { version = "^0.2" }
 aes-gcm = "^0.11.0-pre"
 keyring = { version = "^3.6", features = ["windows-native"] }
 
 async-trait = "^0.1"
 mockall = "0.13.1"
-reqwest = "^0.12"
+reqwest = { version = "^0.12", features = ["json"] }
 
 serenity = "^0.12"
 url = "^2.5"
