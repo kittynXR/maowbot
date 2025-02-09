@@ -51,7 +51,7 @@ pub async fn start_callback_server(
 
     let app = Router::new()
         .route("/callback", get(handle_callback))
-        .with_state(state.clone())
+        .with_state(state)
         .layer(ServiceBuilder::new().layer(TraceLayer::new_for_http()));
 
     let (shutdown_send, shutdown_recv) = oneshot::channel::<()>();
@@ -97,7 +97,19 @@ async fn handle_callback(
                 state: query.state.clone(),
             });
         }
-        let success = "<h2>Authentication Successful</h2><p>You can close this window now.</p>";
+
+        // A snippet that tries to auto-close the browser tab:
+        let success = r#"
+<h2>Authentication Successful</h2>
+<p>We've got your code. You can close this window now.</p>
+<script>
+  // Attempt to close the tab automatically
+  window.onload = function() {
+      window.open('about:blank', '_self');
+      window.close();
+  };
+</script>
+"#;
         return (StatusCode::OK, Html(success.to_string()));
     }
 
@@ -106,8 +118,9 @@ async fn handle_callback(
 }
 
 pub async fn test_port_available(port: u16) -> Result<(), Error> {
+    use tokio::net::TcpListener;
     let addr = SocketAddr::from(([127, 0, 0, 1], port));
-    match tokio::net::TcpListener::bind(addr).await {
+    match TcpListener::bind(addr).await {
         Ok(listener) => {
             drop(listener);
             Ok(())
@@ -138,7 +151,7 @@ pub fn try_netstat_display(port: u16) {
     }
 }
 
-/// **Now** takes a reference to a `dyn BotConfigRepository`, no generics.
+/// If you'd like to read or fix the callback port in the database. Not used by Twitch anymore.
 pub async fn get_or_fix_callback_port(
     port_repo: &(dyn BotConfigRepository + Send + Sync)
 ) -> Result<u16, Error> {

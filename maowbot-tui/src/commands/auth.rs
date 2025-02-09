@@ -6,52 +6,39 @@ use maowbot_core::models::Platform;
 use maowbot_core::plugins::bot_api::BotApi;
 use maowbot_core::error::Error as CoreError;
 
-/// Helper to describe what credentials a given platform typically needs.
+// We still import callback_server so TUI can spawn the local server.
+use maowbot_core::auth::callback_server;
+use maowbot_core::auth::callback_server::start_callback_server;
+
 enum PlatformAuthRequirements {
-    /// e.g., Twitch (public or implicit flow) only needs a client_id
-    OnlyClientId {
-        dev_console_url: &'static str,
-        label_hint: &'static str,
-    },
-    /// e.g., Discord often needs a client_id + client_secret
-    ClientIdAndSecret {
-        dev_console_url: &'static str,
-        label_hint: &'static str,
-    },
-    /// If some other platform doesn’t require anything at all
+    OnlyClientId { dev_console_url: &'static str, label_hint: &'static str },
+    ClientIdAndSecret { dev_console_url: &'static str, label_hint: &'static str },
     NoAppCredentials,
 }
 
 fn get_auth_requirements(platform: &Platform) -> PlatformAuthRequirements {
     match platform {
-        // Example: Twitch Helix (public flow)
         Platform::Twitch => {
             PlatformAuthRequirements::OnlyClientId {
                 dev_console_url: "https://dev.twitch.tv/console/apps",
                 label_hint: "user",
             }
         }
-        // Example: Discord typically has both client_id + client_secret
         Platform::Discord => {
             PlatformAuthRequirements::ClientIdAndSecret {
                 dev_console_url: "https://discord.com/developers/applications",
                 label_hint: "bot",
             }
         }
-        // Example: VRChat might need username/password or other approach
-        // but for the “auth_config” table we might still store client_id/secret.
-        // Tweak as you like:
         Platform::VRChat => {
             PlatformAuthRequirements::NoAppCredentials
         }
-        // Example: TwitchIRC might not need an ID/secret in `auth_config` (since the user obtains chat tokens).
         Platform::TwitchIRC => {
             PlatformAuthRequirements::NoAppCredentials
         }
     }
 }
 
-/// Main dispatch for the 'auth' subcommands
 pub fn handle_auth_command(args: &[&str], bot_api: &Arc<dyn BotApi>) -> String {
     if args.is_empty() {
         return "Usage: auth <add|remove|list|restart> [options]".to_string();
@@ -67,7 +54,6 @@ pub fn handle_auth_command(args: &[&str], bot_api: &Arc<dyn BotApi>) -> String {
                 Err(_) => format!("Unknown platform '{}'", args[1]),
             }
         }
-
         "remove" => {
             if args.len() < 3 {
                 return "Usage: auth remove <platform> <user_id>".to_string();
@@ -77,7 +63,6 @@ pub fn handle_auth_command(args: &[&str], bot_api: &Arc<dyn BotApi>) -> String {
                 Err(_) => format!("Unknown platform '{}'", args[1]),
             }
         }
-
         "list" => {
             let maybe_platform = if args.len() > 1 {
                 Platform::from_str(args[1]).ok()
@@ -108,7 +93,6 @@ pub fn handle_auth_command(args: &[&str], bot_api: &Arc<dyn BotApi>) -> String {
                 Err(e) => format!("Error listing credentials => {:?}", e),
             }
         }
-
         "restart" => {
             if args.len() < 3 {
                 return "Usage: auth restart <platform> <user_id>".to_string();
@@ -118,57 +102,64 @@ pub fn handle_auth_command(args: &[&str], bot_api: &Arc<dyn BotApi>) -> String {
                 Err(_) => format!("Unknown platform '{}'", args[1]),
             }
         }
-
         _ => {
             "Usage: auth <add|remove|list|restart> [platform] [user_id]".to_string()
         }
     }
 }
 
-/// Interactive ‘auth add’ flow for a new credential.
 fn auth_add_flow(platform: Platform, bot_api: &Arc<dyn BotApi>) -> String {
     println!("Is this a bot account? (y/n):");
     let mut line = String::new();
     let _ = std::io::stdin().read_line(&mut line);
     let is_bot = line.trim().eq_ignore_ascii_case("y");
 
-    // Prompt user to pick or confirm a label
     let label = prompt_for_label(&platform, is_bot, bot_api);
 
-    let rt = match tokio::runtime::Builder::new_current_thread().enable_all().build() {
-        Ok(rt) => rt,
-        Err(e) => return format!("Error creating tokio runtime: {:?}", e),
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()
+        .unwrap();
+
+    // ----------------------------------------------------------------
+    // Only the TUI code spawns the local server on port=9876
+    // ----------------------------------------------------------------
+    let fixed_port: u16 = 9876;
+    let (done_rx, shutdown_tx) = match rt.block_on(start_callback_server(9876)) {
+        Ok(pair) => pair,
+        Err(e) => return format!("Error starting callback server => {:?}", e),
     };
 
-    // Step 1) Attempt to begin auth flow
+    // ----------------------------------------------------------------
+    // Attempt to begin the OAuth flow
+    // ----------------------------------------------------------------
     let url_result = rt.block_on(bot_api.begin_auth_flow_with_label(platform.clone(), is_bot, &label));
-
     let url = match url_result {
-        Ok(u) => {
-            // We already have a valid auth flow URL or instructions.
-            u
-        }
+        Ok(u) => u,
         Err(CoreError::Auth(msg)) if msg.contains("No auth_config row found") => {
             println!(
-                "No config found for (platform={:?}, label='{}').",
+                "No auth_config found for (platform={:?}, label='{}'). Let's create a new row.",
                 platform, label
             );
-            // Instead of using `?`, explicitly handle the result:
             if let Err(e) = create_new_auth_config_interactive(&platform, &label, bot_api) {
-                return format!("Error creating new auth_config => {}", e);
+                shutdown_tx.send(()).ok();
+                return format!("Error creating auth_config => {}", e);
             }
-            // Now that a row exists, try again:
             match rt.block_on(bot_api.begin_auth_flow_with_label(platform.clone(), is_bot, &label)) {
                 Ok(u) => u,
-                Err(e) => return format!("Error beginning auth flow after creation => {:?}", e),
+                Err(e) => {
+                    shutdown_tx.send(()).ok();
+                    return format!("Error after creating auth_config => {:?}", e);
+                }
             }
         }
         Err(e) => {
+            shutdown_tx.send(()).ok();
             return format!("Error beginning auth flow => {:?}", e);
         }
     };
 
-    // If the authenticator gave us a URL, let's prompt user to open it:
     println!("Open this URL to authenticate:\n  {}", url);
     println!("Open in browser now? (y/n):");
     let mut line2 = String::new();
@@ -178,20 +169,26 @@ fn auth_add_flow(platform: Platform, bot_api: &Arc<dyn BotApi>) -> String {
             println!("Could not open browser automatically: {:?}", err);
         }
     }
+    println!("Waiting for the OAuth callback on port {}...", fixed_port);
 
-    // Ask the user for the code param if relevant
-    println!("If you were given a 'code=' param in the callback (or it auto-redirected), enter it here.\n(Press enter if you want to cancel): ");
-    let mut code_line = String::new();
-    let _ = std::io::stdin().read_line(&mut code_line);
-    let code_str = code_line.trim().to_string();
+    // ----------------------------------------------------------------
+    // Wait on the oneshot for the code
+    // ----------------------------------------------------------------
+    let callback_result = match done_rx.blocking_recv() {
+        Ok(res) => res,
+        Err(e) => {
+            shutdown_tx.send(()).ok();
+            return format!("Error receiving OAuth code => {:?}", e);
+        }
+    };
 
-    if code_str.is_empty() {
-        // The user pressed enter => treat as a cancellation
-        return "Auth flow canceled. No credentials stored.".to_string();
-    }
+    // We can shut down the server now
+    shutdown_tx.send(()).ok();
 
-    // Step 2: complete the flow
-    match rt.block_on(bot_api.complete_auth_flow(platform.clone(), code_str)) {
+    // ----------------------------------------------------------------
+    // Complete the auth
+    // ----------------------------------------------------------------
+    match rt.block_on(bot_api.complete_auth_flow(platform.clone(), callback_result.code)) {
         Ok(cred) => {
             format!(
                 "Success! Stored credentials for platform={:?}, user_id='{}', is_bot={}, label='{}'",
@@ -204,34 +201,26 @@ fn auth_add_flow(platform: Platform, bot_api: &Arc<dyn BotApi>) -> String {
     }
 }
 
-/// Revoke credentials for <platform, user_id>, then re-run the same interactive flow.
 fn auth_restart_flow(platform: Platform, user_id: &str, bot_api: &Arc<dyn BotApi>) -> String {
-    // 1) Revoke existing credentials (if any)
     let rt = match tokio::runtime::Builder::new_current_thread().enable_all().build() {
         Ok(rt) => rt,
         Err(e) => return format!("Error creating tokio runtime: {:?}", e),
     };
 
+    // Revoke existing
     match rt.block_on(bot_api.revoke_credentials(platform.clone(), user_id)) {
         Ok(_) => {
-            println!(
-                "Removed (revoked) old credentials for platform={:?}, user_id={}",
-                platform, user_id
-            );
+            println!("Removed old credentials for platform={:?}, user_id={}", platform, user_id);
         }
         Err(e) => {
-            println!(
-                "Warning: could not revoke old credentials for platform={:?}, user_id={}: {:?}",
-                platform, user_id, e
-            );
+            println!("Warning: could not revoke old credentials => {:?}", e);
         }
     }
 
-    // 2) Now run auth_add_flow again
+    // re-run same flow
     auth_add_flow(platform, bot_api)
 }
 
-/// Revoke (remove) an existing credential
 fn auth_remove(platform: Platform, user_id: &str, bot_api: &Arc<dyn BotApi>) -> String {
     let rt = match tokio::runtime::Builder::new_current_thread().enable_all().build() {
         Ok(rt) => rt,
@@ -248,10 +237,6 @@ fn auth_remove(platform: Platform, user_id: &str, bot_api: &Arc<dyn BotApi>) -> 
     }
 }
 
-/// If no auth_config row is found, we prompt user for the needed fields (client_id, optionally secret),
-/// then create the row by calling `bot_api.create_auth_config(...)`.
-///
-/// Returns Ok(()) or an Err(...) if user cancels.
 fn create_new_auth_config_interactive(
     platform: &Platform,
     label: &str,
@@ -261,13 +246,12 @@ fn create_new_auth_config_interactive(
 
     match requirements {
         PlatformAuthRequirements::NoAppCredentials => {
-            println!("This platform does not require a client_id or secret. We'll create a blank config row...");
+            println!("This platform does not require a client_id or secret. Creating an empty row...");
             let rt = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()
                 .map_err(|e| format!("Error creating tokio runtime: {:?}", e))?;
 
-            // Insert a row with empty strings for client_id, client_secret
             if let Err(e) = rt.block_on(
                 bot_api.create_auth_config(platform.clone(), label, "".to_string(), None)
             ) {
@@ -275,81 +259,50 @@ fn create_new_auth_config_interactive(
             }
             Ok(())
         }
-
-        PlatformAuthRequirements::OnlyClientId {
-            dev_console_url,
-            ..
-        } => {
-            println!(
-                "We can open the dev console now to create/find your client ID:\n  {}",
-                dev_console_url
-            );
-            print!("Open in browser? (y/n): ");
+        PlatformAuthRequirements::OnlyClientId { dev_console_url, .. } => {
+            println!("Go to your dev console => {}", dev_console_url);
+            println!("Open in browser? (y/n): ");
             let _ = std::io::stdout().flush();
             let mut line = String::new();
             let _ = std::io::stdin().read_line(&mut line);
             if line.trim().eq_ignore_ascii_case("y") {
-                if let Err(err) = open::that(dev_console_url) {
-                    println!("(warn) Could not open automatically: {:?}", err);
-                }
+                let _ = open::that(dev_console_url);
             }
-
-            // Now ask for the client_id
             let client_id = prompt("Enter client_id:");
             if client_id.trim().is_empty() {
                 return Err("No client_id entered => cannot proceed.".to_string());
             }
 
-            // Create row with no secret
             let rt = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()
                 .map_err(|e| format!("Error creating tokio runtime: {:?}", e))?;
             if let Err(e) = rt.block_on(
-                bot_api.create_auth_config(
-                    platform.clone(),
-                    label,
-                    client_id,
-                    None,
-                )
+                bot_api.create_auth_config(platform.clone(), label, client_id, None)
             ) {
                 return Err(format!("Error creating new auth_config => {:?}", e));
             }
             Ok(())
         }
-
-        PlatformAuthRequirements::ClientIdAndSecret {
-            dev_console_url,
-            ..
-        } => {
-            println!(
-                "We can open the dev console now to create/find your client credentials:\n  {}",
-                dev_console_url
-            );
-            print!("Open in browser? (y/n): ");
+        PlatformAuthRequirements::ClientIdAndSecret { dev_console_url, .. } => {
+            println!("Go to your dev console => {}", dev_console_url);
+            println!("Open in browser? (y/n): ");
             let _ = std::io::stdout().flush();
             let mut line = String::new();
             let _ = std::io::stdin().read_line(&mut line);
             if line.trim().eq_ignore_ascii_case("y") {
-                if let Err(err) = open::that(dev_console_url) {
-                    println!("(warn) Could not open automatically: {:?}", err);
-                }
+                let _ = open::that(dev_console_url);
             }
-
-            // Ask for client_id
             let client_id = prompt("Enter client_id:");
             if client_id.trim().is_empty() {
                 return Err("No client_id entered => cannot proceed.".to_string());
             }
-
-            // Ask for client_secret
             let client_secret = prompt("Enter client_secret (if any):");
-            // Possibly required, possibly not — depends on your usage
 
             let rt = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()
-                .map_err(|e| format!("Error creating tokio runtime: {:?}", e))?;
+                .map_err(|e| format!("Error => {:?}", e))?;
             let secret_for_storage = if client_secret.trim().is_empty() {
                 None
             } else {
@@ -357,22 +310,15 @@ fn create_new_auth_config_interactive(
             };
 
             if let Err(e) = rt.block_on(
-                bot_api.create_auth_config(
-                    platform.clone(),
-                    label,
-                    client_id,
-                    secret_for_storage,
-                )
+                bot_api.create_auth_config(platform.clone(), label, client_id, secret_for_storage)
             ) {
                 return Err(format!("Error creating new auth_config => {:?}", e));
             }
-
             Ok(())
         }
     }
 }
 
-/// Prompt user for a label to store in `auth_config`, e.g. 'bot1' or 'user2'.
 fn prompt_for_label(platform: &Platform, is_bot: bool, bot_api: &Arc<dyn BotApi>) -> String {
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -380,13 +326,9 @@ fn prompt_for_label(platform: &Platform, is_bot: bool, bot_api: &Arc<dyn BotApi>
         .unwrap();
 
     let platform_str = format!("{}", platform);
-    let count_res = rt.block_on(bot_api.count_auth_configs_for_platform(platform_str.clone()));
-    let current_count = match count_res {
-        Ok(n) => n,
-        Err(_) => 0,
-    };
+    let count_res = rt.block_on(bot_api.count_auth_configs_for_platform(platform_str));
+    let current_count = count_res.unwrap_or_else(|_| 0);
 
-    // Construct a default label from is_bot + count, e.g. "bot1" or "user1"
     let proposed = if is_bot {
         format!("bot{}", current_count + 1)
     } else {
@@ -403,7 +345,6 @@ fn prompt_for_label(platform: &Platform, is_bot: bool, bot_api: &Arc<dyn BotApi>
     }
 }
 
-/// Simple helper to prompt user for a single line of input
 fn prompt(msg: &str) -> String {
     use std::io::Write;
     println!("{}", msg);

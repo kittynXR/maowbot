@@ -1,9 +1,7 @@
 // maowbot-core/src/auth/manager.rs
 //
 // This updated file changes the old `begin_auth_flow` to accept a label,
-// and adds a new helper `create_auth_config` so the TUI can insert a row
-// if none exists. It also adds a `count_auth_configs_for_platform` method
-// so the TUI can propose labels based on how many are already there.
+// and returns the auth URL, etc.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -19,7 +17,7 @@ use crate::platforms::twitch_helix::auth::TwitchAuthenticator;
 use crate::platforms::vrchat::auth::VRChatAuthenticator;
 use crate::platforms::twitch_irc::auth::TwitchIrcAuthenticator;
 
-/// AuthManager: now with two Arc references (one for auth_config, one for bot_config).
+/// AuthManager: manages platform authenticators, reading config from the DB.
 pub struct AuthManager {
     pub credentials_repo: Box<dyn CredentialsRepository + Send + Sync>,
     pub auth_config_repo: Arc<dyn AuthConfigRepository + Send + Sync>,
@@ -50,7 +48,7 @@ impl AuthManager {
         self.authenticators.insert(platform, authenticator);
     }
 
-    /// This older convenience method is left for backward-compat, but it always uses label="default".
+    /// This older convenience method is left for backward-compat. label="default".
     pub async fn authenticate_platform(
         &mut self,
         platform: Platform
@@ -58,7 +56,6 @@ impl AuthManager {
         self.authenticate_platform_for_role_label(platform, false, "default").await
     }
 
-    /// Another older method with is_bot but fixed label="default".
     pub async fn authenticate_platform_for_role(
         &mut self,
         platform: Platform,
@@ -67,9 +64,6 @@ impl AuthManager {
         self.authenticate_platform_for_role_label(platform, is_bot, "default").await
     }
 
-    /// New: same as above, but we accept a label param.
-    /// This does a begin_auth_flow_with_label + then expects a code (which we won't have).
-    /// We return an error because we want the TUI to handle the 2-step flow.
     pub async fn authenticate_platform_for_role_label(
         &mut self,
         platform: Platform,
@@ -80,9 +74,7 @@ impl AuthManager {
         Err(Error::Auth("This function expects a code, but none was provided (use the 2-step flow)".into()))
     }
 
-    /// New version: we pass in the label, so multiple client_id sets are possible.
-    /// If no row is found, we return an Error::Auth(...) that says "No auth_config row found..."
-    /// The TUI can catch that and create a row, then re-call this method.
+    /// Start an auth flow for the given platform & label. Returns the “redirect” or user prompt URL.
     pub async fn begin_auth_flow_with_label(
         &mut self,
         platform: Platform,
@@ -120,10 +112,10 @@ impl AuthManager {
                 ))
             }
             Platform::Twitch => {
+                // Now we do NOT pass the bot_config_repo just to set port
                 Box::new(TwitchAuthenticator::new(
                     client_id,
                     client_secret,
-                    Arc::clone(&self.bot_config_repo),
                 ))
             }
             Platform::VRChat => {
@@ -140,26 +132,24 @@ impl AuthManager {
             auth.set_is_bot(is_bot);
             auth.initialize().await?;
             if let Ok(prompt) = auth.start_authentication().await {
-                // If it’s a Browser{ url }, we return that
                 match prompt {
                     AuthenticationPrompt::Browser { url } => {
                         return Ok(url);
                     }
                     AuthenticationPrompt::Code { message } => {
-                        return Err(Error::Auth(message)); // or return the message as a “url”
+                        return Err(Error::Auth(message));
                     }
                     AuthenticationPrompt::ApiKey { message } => {
-                        return Ok(format!("(API key prompt) {}", message));
+                        return Ok(format!("(API key) {}", message));
                     }
                     AuthenticationPrompt::MultipleKeys { .. } => {
-                        // We could handle that in TUI, but for simplicity we treat it as an error message
-                        return Ok("(Multiple keys required) please handle in TUI".into());
+                        return Ok("(Multiple keys required) handle in TUI".into());
                     }
                     AuthenticationPrompt::TwoFactor { message } => {
                         return Ok(format!("(2FA) {}", message));
                     }
                     AuthenticationPrompt::None => {
-                        return Ok("(No user prompt required)".into());
+                        return Ok("(No prompt needed)".into());
                     }
                 }
             }
@@ -167,7 +157,6 @@ impl AuthManager {
         Err(Error::Platform(format!("Could not begin auth flow for label='{}'", label)))
     }
 
-    /// Step 2: supply the code to finish OAuth.
     pub async fn complete_auth_flow(
         &mut self,
         platform: Platform,
@@ -184,7 +173,6 @@ impl AuthManager {
         Ok(cred)
     }
 
-    /// Store the given credential in the repository.
     pub async fn store_credentials(&self, cred: &PlatformCredential) -> Result<(), Error> {
         self.credentials_repo.store_credentials(cred).await
     }
@@ -235,8 +223,6 @@ impl AuthManager {
         authenticator.validate(cred).await
     }
 
-    /// NEW: create_auth_config => store a row in `auth_config` so the user doesn’t have to
-    /// manually do it. TUI can call this after prompting for client_id/secret.
     pub async fn create_auth_config(
         &self,
         platform_str: &str,
@@ -244,13 +230,10 @@ impl AuthManager {
         client_id: String,
         client_secret: Option<String>,
     ) -> Result<(), Error> {
-        // We'll just call the repository's insert method.
-        // (Assuming `insert_auth_config` signature: insert_auth_config(platform, label, client_id, client_secret) -> Result<_, _>
         self.auth_config_repo.insert_auth_config(platform_str, label, client_id, client_secret).await?;
         Ok(())
     }
 
-    /// NEW: returns how many auth_config rows exist for the given platform
     pub async fn count_auth_configs_for_platform(&self, platform_str: &str) -> Result<usize, Error> {
         let n = self.auth_config_repo.count_for_platform(platform_str).await?;
         Ok(n as usize)

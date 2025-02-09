@@ -16,25 +16,9 @@ use serde_json::json;
 use uuid::Uuid;
 use tracing::{info, error};
 
-use crate::auth::callback_server;
 use crate::Error;
 use crate::auth::{AuthenticationPrompt, AuthenticationResponse, PlatformAuthenticator};
 use crate::models::{CredentialType, Platform, PlatformCredential};
-use crate::repositories::postgres::bot_config::BotConfigRepository;
-
-pub struct TwitchAuthenticator {
-    pub client_id: String,
-    pub client_secret: Option<String>,
-
-    /// The OAuth2 Client
-    pub oauth_client: OAuthClient,
-
-    /// Reference to whichever repo can fetch/set `callback_port`.
-    pub bot_config_repo: Arc<dyn BotConfigRepository + Send + Sync>,
-
-    pub pkce_verifier: Option<PkceCodeVerifier>,
-    pub is_bot: bool,
-}
 
 type OAuthClient = Client<
     BasicErrorResponse,
@@ -49,11 +33,22 @@ type OAuthClient = Client<
     EndpointSet
 >;
 
+/// Simplified TwitchAuthenticator: we no longer fetch a port from the DB.
+/// We just default to http://localhost:9876/callback or let the TUI handle it.
+pub struct TwitchAuthenticator {
+    pub client_id: String,
+    pub client_secret: Option<String>,
+
+    pub oauth_client: OAuthClient,
+    pub pkce_verifier: Option<PkceCodeVerifier>,
+    pub is_bot: bool,
+}
+
 impl TwitchAuthenticator {
+    /// Removed `bot_config_repo`. This no longer checks for port collisions.
     pub fn new(
         client_id: String,
         client_secret: Option<String>,
-        bot_config_repo: Arc<dyn BotConfigRepository + Send + Sync>,
     ) -> Self {
         let mut oauth_client = Client::new(ClientId::new(client_id.clone()))
             .set_auth_uri(AuthUrl::new("https://id.twitch.tv/oauth2/authorize".to_string()).unwrap())
@@ -67,7 +62,6 @@ impl TwitchAuthenticator {
             client_id,
             client_secret,
             oauth_client,
-            bot_config_repo,
             pkce_verifier: None,
             is_bot: false,
         }
@@ -81,15 +75,14 @@ impl PlatformAuthenticator for TwitchAuthenticator {
     }
 
     async fn start_authentication(&mut self) -> Result<AuthenticationPrompt, Error> {
-        // Now we can fetch the callback port from self.bot_config_repo
-        let port = callback_server::get_or_fix_callback_port(&*self.bot_config_repo).await?;
-        let redirect_uri = format!("http://localhost:{}/callback", port);
+        // Hard-code or default to http://localhost:9876
+        let redirect_uri = "http://localhost:9876/callback".to_string();
         self.oauth_client = self.oauth_client.clone().set_redirect_uri(
             oauth2::RedirectUrl::new(redirect_uri)
                 .map_err(|e| Error::Auth(e.to_string()))?
         );
 
-        // Generate PKCE
+        // PKCE
         let (pkce_challenge, pkce_verifier) = PkceCodeChallenge::new_random_sha256();
         self.pkce_verifier = Some(pkce_verifier);
 
@@ -136,7 +129,9 @@ impl PlatformAuthenticator for TwitchAuthenticator {
             primary_token: token_res.access_token().secret().to_owned(),
             refresh_token: token_res.refresh_token().map(|x| x.secret().to_owned()),
             additional_data: Some(json!({
-                "scope": token_res.scopes().map(|sc| sc.iter().map(|s| s.to_string()).collect::<Vec<_>>()).unwrap_or_default()
+                "scope": token_res.scopes()
+                    .map(|sc| sc.iter().map(|s| s.to_string()).collect::<Vec<_>>())
+                    .unwrap_or_default()
             })),
             expires_at: token_res.expires_in().map(|d| Utc::now() + chrono::Duration::from_std(d).unwrap()),
             created_at: Utc::now(),
@@ -147,7 +142,6 @@ impl PlatformAuthenticator for TwitchAuthenticator {
     }
 
     async fn refresh(&mut self, credential: &PlatformCredential) -> Result<PlatformCredential, Error> {
-        // if we have a refresh_token
         let refresh_token = credential
             .refresh_token
             .as_ref()

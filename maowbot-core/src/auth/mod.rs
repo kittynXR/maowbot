@@ -3,7 +3,7 @@ use crate::Error;
 
 pub mod manager;
 pub mod user_manager;
-pub(crate) mod callback_server;
+pub mod callback_server;
 
 pub use manager::AuthManager;
 pub use user_manager::{UserManager, DefaultUserManager};
