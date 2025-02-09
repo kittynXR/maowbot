@@ -1,3 +1,10 @@
+// =============================================================================
+// maowbot-server/src/main.rs
+//   (Major change: if no users exist in `users` table, prompt for an owner username.
+//    Then store it and set 'owner_user_id' in bot_config. Also references our
+//    new BotApi calls for platform_config usage.)
+// =============================================================================
+
 use clap::Parser;
 use std::time::Duration;
 use std::net::SocketAddr;
@@ -17,6 +24,8 @@ use maowbot_core::repositories::postgres::{
     PostgresCredentialsRepository,
     PostgresUserAnalysisRepository,
     UserRepository,
+    PostgresPlatformConfigRepository,
+    PostgresBotConfigRepository,
 };
 use maowbot_core::auth::{AuthManager, DefaultUserManager, StubAuthHandler};
 use maowbot_core::crypto::Encryptor;
@@ -26,7 +35,7 @@ use maowbot_core::services::user_service::UserService;
 use maowbot_core::tasks::biweekly_maintenance;
 use maowbot_core::tasks::biweekly_maintenance::spawn_biweekly_maintenance_task;
 
-use maowbot_core::plugins::bot_api::BotApi;
+use maowbot_core::plugins::bot_api::{BotApi, StatusData};
 
 use tonic::transport::{Server, Identity, Certificate, ServerTlsConfig, Channel, ClientTlsConfig};
 use maowbot_proto::plugs::plugin_service_server::PluginServiceServer;
@@ -42,16 +51,15 @@ use futures_util::StreamExt;
 use keyring::Entry;
 use rand::{thread_rng, Rng};
 use rcgen::{generate_simple_self_signed, CertifiedKey};
+use sqlx::types::uuid;
 use tokio::time;
 
 use maowbot_core::Error;
 use maowbot_core::platforms::twitch_helix::TwitchAuthenticator;
-use maowbot_core::repositories::{PostgresAuthConfigRepository, PostgresBotConfigRepository};
 
 mod portable_postgres;
 use portable_postgres::*;
 
-// ---------------- NEW: import our TUI module crate ---------------
 use maowbot_tui::TuiModule;
 
 #[derive(Parser, Debug, Clone)]
@@ -74,7 +82,7 @@ struct Args {
     #[arg(long)]
     plugin_passphrase: Option<String>,
 
-    /// Path to an in‑process plugin .so/.dll (optional, for other dynamic modules)
+    /// Path to an in‑process plugin .so/.dll (optional)
     #[arg(long)]
     in_process_plugin: Option<String>,
 
@@ -125,7 +133,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 async fn run_server(args: Args) -> Result<(), Error> {
-    // 1) Start local Postgres if we want to run it ourselves.
+    // 1) Start local Postgres if desired
     let pg_bin_dir = "./postgres/bin";
     let pg_data_dir = "./postgres/data";
     let port = 5432;
@@ -134,40 +142,38 @@ async fn run_server(args: Args) -> Result<(), Error> {
         .map_err(|e| Error::Io(e))?;
     start_postgres(pg_bin_dir, pg_data_dir, port)
         .map_err(|e| Error::Io(e))?;
-
     create_database(pg_bin_dir, port, "maowbot")
         .map_err(|e| Error::Io(e))?;
 
-    // 2) Connect to Postgres
+    // 2) Connect
     let db_url = args.db_path.clone();
     info!("Using Postgres DB URL: {}", db_url);
     let db = Database::new(&db_url).await?;
     db.migrate().await?;
 
-    // 3) Initialize event bus & run tasks
-    let event_bus = Arc::new(EventBus::new());
-    if args.auth {
-        info!("`--auth` argument provided; can do auth-specific logic if needed.");
-    }
+    // 2b) If no users in the `users` table, prompt once for an owner username:
+    maybe_create_owner_user(&db).await?;
 
+    // 3) Event bus, tasks
+    let event_bus = Arc::new(EventBus::new());
     let _maintenance_handle = spawn_biweekly_maintenance_task(
         db.clone(),
         PostgresUserAnalysisRepository::new(db.pool().clone()),
         event_bus.clone(),
     );
 
-    // 4) Setup Auth, Repos, PluginManager, etc.
+    // 4) Auth, Repos, PluginManager
     let key = get_master_key()?;
     let encryptor = Encryptor::new(&key)?;
     let creds_repo = PostgresCredentialsRepository::new(db.pool().clone(), encryptor);
 
-    let auth_config_repo = Arc::new(PostgresAuthConfigRepository::new(db.pool().clone()));
+    let platform_config_repo = Arc::new(PostgresPlatformConfigRepository::new(db.pool().clone()));
     let bot_config_repo = Arc::new(PostgresBotConfigRepository::new(db.pool().clone()));
 
     let auth_manager = AuthManager::new(
         Box::new(creds_repo),
-        auth_config_repo,
-        bot_config_repo,
+        platform_config_repo,
+        bot_config_repo.clone(),
     );
 
     let mut plugin_manager = PluginManager::new(args.plugin_passphrase.clone());
@@ -175,34 +181,35 @@ async fn run_server(args: Args) -> Result<(), Error> {
     plugin_manager.set_event_bus(event_bus.clone());
     plugin_manager.set_auth_manager(Arc::new(tokio::sync::Mutex::new(auth_manager)));
 
-    // Optionally load an in-process plugin (NOT the TUI anymore)
+    // Load an in-process plugin if requested
     if let Some(path) = args.in_process_plugin.as_ref() {
         if let Err(e) = plugin_manager.load_in_process_plugin(path).await {
             error!("Failed to load in‑process plugin from {}: {:?}", path, e);
         }
     }
-    // Also load everything in /plugs
+    // Also auto-load from /plugs
     if let Err(e) = plugin_manager.load_plugins_from_folder("plugs").await {
         error!("Failed to load plugins from folder: {:?}", e);
     }
 
-    // Expose BotApi for any code that needs it
+    // Expose BotApi
     let bot_api: Arc<dyn BotApi> = Arc::new(plugin_manager.clone());
 
-    // If --tui was given, spawn the TUI in the background:
+    // If TUI was requested:
     if args.tui {
         let tui_module = TuiModule::new(bot_api.clone());
         tui_module.spawn_tui_thread();
     }
 
-    // Meanwhile, set BotApi for in-memory plugins too
+    // Now set BotApi on any loaded plugins:
     {
         let lock = plugin_manager.plugins.lock().await;
-        for plugin in lock.iter() {
-            plugin.set_bot_api(bot_api.clone());
+        for p in lock.iter() {
+            p.set_bot_api(bot_api.clone());
         }
     }
 
+    // build user manager
     let user_repo = UserRepository::new(db.pool().clone());
     let identity_repo = PlatformIdentityRepository::new(db.pool().clone());
     let analysis_repo = PostgresUserAnalysisRepository::new(db.pool().clone());
@@ -210,6 +217,7 @@ async fn run_server(args: Args) -> Result<(), Error> {
     let user_manager = Arc::new(default_user_mgr);
     let user_service = Arc::new(UserService::new(user_manager.clone()));
 
+    // message service
     let trim_policy = TrimPolicy {
         max_age_seconds: Some(24 * 3600),
         spam_score_cutoff: Some(5.0),
@@ -224,6 +232,7 @@ async fn run_server(args: Args) -> Result<(), Error> {
     let chat_cache = Arc::new(Mutex::new(chat_cache));
     let message_service = Arc::new(MessageService::new(chat_cache, event_bus.clone()));
 
+    // platform manager
     let platform_manager = maowbot_core::platforms::manager::PlatformManager::new(
         message_service.clone(),
         user_service.clone(),
@@ -231,7 +240,7 @@ async fn run_server(args: Args) -> Result<(), Error> {
     );
     platform_manager.start_all_platforms().await?;
 
-    // 5) Build & launch the gRPC server
+    // 5) gRPC server
     let identity = load_or_generate_certs()?;
     let tls_config = ServerTlsConfig::new().identity(identity);
     let addr: SocketAddr = args.server_addr.parse()?;
@@ -249,7 +258,7 @@ async fn run_server(args: Args) -> Result<(), Error> {
         }
     });
 
-    // 6) Handle Ctrl‑C to signal shutdown
+    // 6) Handle Ctrl-C
     let _ctrlc_handle = tokio::spawn(async move {
         if let Err(e) = tokio::signal::ctrl_c().await {
             error!("Failed to listen for Ctrl‑C: {:?}", e);
@@ -274,13 +283,64 @@ async fn run_server(args: Args) -> Result<(), Error> {
         }
     }
 
-    // 8) Stop the gRPC server
+    // 8) Stop gRPC
     info!("Stopping gRPC server...");
     srv_handle.abort();
 
     // 9) Stop Postgres
     stop_postgres(pg_bin_dir, pg_data_dir).map_err(|e| Error::Io(e))?;
 
+    Ok(())
+}
+
+/// Helper that checks if `users` table is empty; if so, prompt for an "owner" username.
+async fn maybe_create_owner_user(db: &Database) -> Result<(), Error> {
+    let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM users")
+        .fetch_one(db.pool())
+        .await?;
+    if count.0 == 0 {
+        println!("No users found in DB. Let's create the owner account now.");
+        println!("Enter the desired owner username:");
+        let mut line = String::new();
+        if std::io::stdin().read_line(&mut line).is_err() {
+            return Err(Error::Io(std::io::Error::new(std::io::ErrorKind::Other, "Failed to read line")));
+        }
+        let owner_username = line.trim().to_string();
+        if owner_username.is_empty() {
+            return Err(Error::Auth("Owner username cannot be empty.".into()));
+        }
+
+        let user_id = uuid::Uuid::new_v4().to_string();
+        let now = chrono::Utc::now();
+        // Insert into users
+        sqlx::query(
+            r#"
+            INSERT INTO users (user_id, global_username, created_at, last_seen, is_active)
+            VALUES ($1, $2, $3, $4, true)
+            "#
+        )
+            .bind(&user_id)
+            .bind(&owner_username)
+            .bind(now)
+            .bind(now)
+            .execute(db.pool())
+            .await?;
+
+        // Mark in bot_config => config_key='owner_user_id'
+        sqlx::query(
+            r#"
+            INSERT INTO bot_config (config_key, config_value)
+            VALUES ('owner_user_id', $1)
+            ON CONFLICT (config_key) DO UPDATE
+                SET config_value = EXCLUDED.config_value
+            "#
+        )
+            .bind(&user_id)
+            .execute(db.pool())
+            .await?;
+
+        println!("Owner user '{}' created (user_id={}).", owner_username, user_id);
+    }
     Ok(())
 }
 
@@ -358,7 +418,6 @@ async fn run_client(args: Args) -> Result<(), Error> {
     Ok(())
 }
 
-/// Utility function to load or generate self‑signed certificates.
 fn load_or_generate_certs() -> Result<Identity, Error> {
     use std::io::Write;
     let cert_folder = "certs";
@@ -405,11 +464,9 @@ fn get_master_key() -> Result<[u8; 32], Error> {
         },
         Err(e) => {
             println!("No existing key found or error retrieving key: {:?}", e);
-            // Generate a new key
             let mut new_key = [0u8; 32];
             rand::thread_rng().fill(&mut new_key);
             let base64_key = base64::encode(new_key);
-            // Attempt to store the key
             if let Err(err) = entry.set_password(&base64_key) {
                 println!("Failed to set key in keyring: {:?}", err);
             } else {

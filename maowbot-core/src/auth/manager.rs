@@ -1,7 +1,7 @@
+// =============================================================================
 // maowbot-core/src/auth/manager.rs
-//
-// This updated file changes the old `begin_auth_flow` to accept a label,
-// and returns the auth URL, etc.
+//  - Changed references from auth_config_repo to platform_config_repo
+// =============================================================================
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -10,7 +10,7 @@ use crate::auth::{PlatformAuthenticator, AuthenticationPrompt, AuthenticationRes
 use crate::Error;
 use crate::models::{Platform, PlatformCredential};
 use crate::repositories::{BotConfigRepository, CredentialsRepository};
-use crate::repositories::postgres::auth_config::AuthConfigRepository;
+use crate::repositories::postgres::platform_config::PlatformConfigRepository;
 
 use crate::platforms::discord::auth::DiscordAuthenticator;
 use crate::platforms::twitch_helix::auth::TwitchAuthenticator;
@@ -20,21 +20,20 @@ use crate::platforms::twitch_irc::auth::TwitchIrcAuthenticator;
 /// AuthManager: manages platform authenticators, reading config from the DB.
 pub struct AuthManager {
     pub credentials_repo: Box<dyn CredentialsRepository + Send + Sync>,
-    pub auth_config_repo: Arc<dyn AuthConfigRepository + Send + Sync>,
+    pub platform_config_repo: Arc<dyn PlatformConfigRepository + Send + Sync>,
     pub bot_config_repo: Arc<dyn BotConfigRepository + Send + Sync>,
-
     pub authenticators: HashMap<Platform, Box<dyn PlatformAuthenticator + Send + Sync>>,
 }
 
 impl AuthManager {
     pub fn new(
         credentials_repo: Box<dyn CredentialsRepository + Send + Sync>,
-        auth_config_repo: Arc<dyn AuthConfigRepository + Send + Sync>,
+        platform_config_repo: Arc<dyn PlatformConfigRepository + Send + Sync>,
         bot_config_repo: Arc<dyn BotConfigRepository + Send + Sync>,
     ) -> Self {
         Self {
             credentials_repo,
-            auth_config_repo,
+            platform_config_repo,
             bot_config_repo,
             authenticators: HashMap::new(),
         }
@@ -48,7 +47,7 @@ impl AuthManager {
         self.authenticators.insert(platform, authenticator);
     }
 
-    /// This older convenience method is left for backward-compat. label="default".
+    /// This older convenience method is left for any backward usage: label="default".
     pub async fn authenticate_platform(
         &mut self,
         platform: Platform
@@ -88,7 +87,7 @@ impl AuthManager {
             Platform::TwitchIRC => "twitch-irc",
         };
 
-        let maybe_row = self.auth_config_repo
+        let maybe_row = self.platform_config_repo
             .get_by_platform_and_label(platform_str, label)
             .await?;
 
@@ -98,7 +97,7 @@ impl AuthManager {
             (cid, csec)
         } else {
             return Err(Error::Auth(format!(
-                "No auth_config row found for platform={} label={}",
+                "No platform_config row found for platform={} label={}",
                 platform_str, label
             )));
         };
@@ -112,7 +111,6 @@ impl AuthManager {
                 ))
             }
             Platform::Twitch => {
-                // Now we do NOT pass the bot_config_repo just to set port
                 Box::new(TwitchAuthenticator::new(
                     client_id,
                     client_secret,
@@ -223,19 +221,21 @@ impl AuthManager {
         authenticator.validate(cred).await
     }
 
-    pub async fn create_auth_config(
+    pub async fn create_platform_config(
         &self,
         platform_str: &str,
         label: &str,
         client_id: String,
         client_secret: Option<String>,
     ) -> Result<(), Error> {
-        self.auth_config_repo.insert_auth_config(platform_str, label, client_id, client_secret).await?;
+        self.platform_config_repo
+            .insert_platform_config(platform_str, label, client_id, client_secret)
+            .await?;
         Ok(())
     }
 
-    pub async fn count_auth_configs_for_platform(&self, platform_str: &str) -> Result<usize, Error> {
-        let n = self.auth_config_repo.count_for_platform(platform_str).await?;
+    pub async fn count_platform_configs_for(&self, platform_str: &str) -> Result<usize, Error> {
+        let n = self.platform_config_repo.count_for_platform(platform_str).await?;
         Ok(n as usize)
     }
 }

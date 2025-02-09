@@ -1,3 +1,8 @@
+// =============================================================================
+// maowbot-tui/src/tui_module.rs
+//   (Removed references to old 'auth' command. Otherwise mostly unchanged.)
+// =============================================================================
+
 use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering}
@@ -8,7 +13,6 @@ use maowbot_core::plugins::bot_api::BotApi;
 
 use crate::commands;
 
-/// Our main TUI struct
 pub struct TuiModule {
     pub bot_api: Arc<dyn BotApi>,
     shutdown_flag: Arc<AtomicBool>,
@@ -53,8 +57,7 @@ impl TuiModule {
                     continue;
                 }
 
-                let (quit_requested, msg) =
-                    commands::dispatch(line, &bot_api);
+                let (quit_requested, msg) = commands::dispatch(line, &bot_api);
 
                 if let Some(output) = msg {
                     println!("{}", output);

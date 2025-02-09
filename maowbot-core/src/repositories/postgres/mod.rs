@@ -10,7 +10,7 @@ pub mod link_requests;
 pub mod user_audit_log;
 pub mod user_analysis;
 pub mod bot_config;
-pub mod auth_config;
+pub mod platform_config;
 
 pub use user::UserRepository;
 pub use platform_identity::PlatformIdentityRepository;
@@ -20,4 +20,4 @@ pub use link_requests::{PostgresLinkRequestsRepository, LinkRequestsRepository};
 pub use user_audit_log::{PostgresUserAuditLogRepository, UserAuditLogRepository};
 pub use user_analysis::{PostgresUserAnalysisRepository, UserAnalysisRepository};
 pub use bot_config::{PostgresBotConfigRepository, BotConfigRepository};
-pub use auth_config::{PostgresAuthConfigRepository, AuthConfigRepository};
+pub use platform_config::{PostgresPlatformConfigRepository, PlatformConfigRepository};

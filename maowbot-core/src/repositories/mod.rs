@@ -27,6 +27,6 @@ pub use postgres::credentials::{
 };
 
 pub use postgres::bot_config::{BotConfigRepository, PostgresBotConfigRepository};
-pub use postgres::auth_config::{AuthConfigRepository, PostgresAuthConfigRepository};
+pub use postgres::platform_config::{PlatformConfigRepository, PostgresPlatformConfigRepository};
 
 pub mod postgres;

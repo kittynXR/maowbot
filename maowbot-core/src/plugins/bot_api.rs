@@ -8,16 +8,22 @@ pub struct StatusData {
     pub uptime_seconds: u64,
 }
 
+#[derive(Debug, Clone)]
+pub struct PlatformConfigData {
+    pub platform_config_id: String,
+    pub platform: String,
+    pub platform_label: Option<String>,
+    pub client_id: Option<String>,
+    pub client_secret: Option<String>,
+}
+
 #[async_trait]
 pub trait BotApi: Send + Sync {
     async fn list_plugins(&self) -> Vec<String>;
     async fn status(&self) -> StatusData;
     async fn shutdown(&self);
-
     async fn toggle_plugin(&self, plugin_name: &str, enable: bool) -> Result<(), Error>;
     async fn remove_plugin(&self, plugin_name: &str) -> Result<(), Error>;
-
-    // -------------- NEW AUTH-FLOW METHODS ------------------
 
     /// Begin auth flow using the default label.
     async fn begin_auth_flow(
@@ -54,8 +60,8 @@ pub trait BotApi: Send + Sync {
         maybe_platform: Option<Platform>
     ) -> Result<Vec<PlatformCredential>, Error>;
 
-    /// Create a new auth configuration (in the auth_config table).
-    async fn create_auth_config(
+    /// Create a new platform configuration (in the platform_config table).
+    async fn create_platform_config(
         &self,
         platform: Platform,
         label: &str,
@@ -63,9 +69,19 @@ pub trait BotApi: Send + Sync {
         client_secret: Option<String>
     ) -> Result<(), Error>;
 
-    /// Count how many auth_config rows exist for the given platform.
-    async fn count_auth_configs_for_platform(
+    async fn count_platform_configs_for_platform(
         &self,
         platform_str: String
     ) -> Result<usize, Error>;
+
+    async fn list_platform_configs(
+        &self,
+        maybe_platform: Option<&str>
+    ) -> Result<Vec<PlatformConfigData>, Error>;
+
+    /// Removes a single `platform_config` row by ID (the TUI calls this).
+    async fn remove_platform_config(
+        &self,
+        platform_config_id: &str
+    ) -> Result<(), Error>;
 }

@@ -61,11 +61,10 @@ CREATE TABLE IF NOT EXISTS bot_config (
     config_value TEXT
 );
 
--- 5) NEW: auth_config table for storing client IDs / secrets
-CREATE TABLE IF NOT EXISTS auth_config (
-    auth_config_id TEXT PRIMARY KEY,
+CREATE TABLE IF NOT EXISTS platform_config (
+    platform_config_id TEXT PRIMARY KEY,
     platform TEXT NOT NULL,
-    app_label TEXT,
+    platform_label TEXT,
     client_id TEXT,
     client_secret TEXT,
     created_at TIMESTAMPTZ NOT NULL,

@@ -1,10 +1,16 @@
+// =============================================================================
 // maowbot-tui/src/commands/mod.rs
+//   (Removed old auth.rs references. Now we have platform.rs, account.rs, user.rs.)
+// =============================================================================
 
 use std::sync::Arc;
 use maowbot_core::plugins::bot_api::BotApi;
 
-mod auth;
 mod plugin;
+mod platform;
+mod account;
+mod user;
+// newly added
 
 pub fn dispatch(
     line: &str,
@@ -12,7 +18,7 @@ pub fn dispatch(
 ) -> (bool, Option<String>) {
 
     let parts: Vec<&str> = line.split_whitespace().collect();
-    let cmd = parts[0].to_lowercase();
+    let cmd = parts.get(0).unwrap_or(&"").to_lowercase();
     let args = &parts[1..];
 
     match cmd.as_str() {
@@ -22,8 +28,10 @@ Commands:
   help
   list
   status
-  plug <enable|disable|remove> <name>
-  auth <add|remove|list> [...]
+  plug   <enable|disable|remove> <name>
+  platform <add|remove|list> ...
+  account  <add|remove|list> [platform] [username]
+  user     <add|remove|edit|info|search> ...
   quit
 ";
             (false, Some(help.to_string()))
@@ -59,25 +67,33 @@ Commands:
             let message = plugin::handle_plugin_command(args, bot_api);
             (false, Some(message))
         }
-        "auth" => {
-            let message = auth::handle_auth_command(args, bot_api);
+        "platform" => {
+            let message = platform::handle_platform_command(args, bot_api);
+            (false, Some(message))
+        }
+        "account" => {
+            let message = account::handle_account_command(args, bot_api);
+            (false, Some(message))
+        }
+        "user" => {
+            let message = user::handle_user_command(args, bot_api);
             (false, Some(message))
         }
         "quit" => {
-            // Build a small runtime and block_on the async shutdown function
             let rt = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()
                 .expect("Failed to build mini runtime");
-            // Actually run the future:
             rt.block_on(bot_api.shutdown());
-
-            // Now your event_bus.shutdown() is truly called
             (true, Some("(TUI) shutting down...".to_string()))
         },
         _ => {
-            let msg = format!("Unknown command '{}'. Type 'help' for usage.", cmd);
-            (false, Some(msg))
+            if cmd.is_empty() {
+                (false, None) // ignore blank
+            } else {
+                let msg = format!("Unknown command '{}'. Type 'help' for usage.", cmd);
+                (false, Some(msg))
+            }
         }
     }
 }

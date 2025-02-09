@@ -1,4 +1,4 @@
-// File: maowbot-core/src/plugins/manager.rs
+// maowbot-core/src/plugins/manager.rs
 
 use std::any::Any;
 use std::collections::{HashMap, HashSet};
@@ -20,8 +20,11 @@ use tracing::{error, info};
 
 use crate::Error;
 use crate::eventbus::{BotEvent, EventBus};
-use crate::plugins::bot_api::{BotApi, StatusData};
-
+use crate::plugins::bot_api::{
+    BotApi,
+    StatusData,
+    PlatformConfigData,
+};
 use maowbot_proto::plugs::{
     plugin_service_server::{PluginService, PluginServiceServer},
     plugin_stream_request::{Payload as ReqPayload},
@@ -85,7 +88,7 @@ pub struct PluginGrpcConnection {
 }
 
 impl PluginGrpcConnection {
-    /// Note: by default starts with `is_enabled = false`.
+    /// Note: starts with `is_enabled=false`.
     pub fn new(sender: UnboundedSender<PluginStreamResponse>, initially_enabled: bool) -> Self {
         let info = PluginConnectionInfo {
             name: "<uninitialized-grpc-plugin>".to_string(),
@@ -188,7 +191,8 @@ impl PluginConnection for InProcessPluginConnection {
     async fn send(&self, response: PluginStreamResponse) -> Result<(), Error> {
         let guard = self.info.lock().await;
         if !guard.is_enabled {
-            return Ok(()); // If disabled, skip sending.
+            // If plugin is disabled, ignore sends
+            return Ok(());
         }
         self.plugin.send(response).await
     }
@@ -211,7 +215,7 @@ impl PluginConnection for InProcessPluginConnection {
     }
 }
 
-/// The PluginManager holds active plugin connections and persistent records.
+/// The PluginManager holds active plugin connections + plugin_records (JSON).
 #[derive(Clone)]
 pub struct PluginManager {
     pub plugins: Arc<AsyncMutex<Vec<Arc<dyn PluginConnection>>>>,
@@ -307,7 +311,9 @@ impl PluginManager {
 
     fn upsert_plugin_record(&self, record: PluginRecord) {
         let mut lock = self.plugin_records.lock().unwrap();
-        if let Some(existing) = lock.iter_mut().find(|r| r.name == record.name && r.plugin_type == record.plugin_type) {
+        if let Some(existing) = lock.iter_mut()
+            .find(|r| r.name == record.name && r.plugin_type == record.plugin_type)
+        {
             existing.enabled = record.enabled;
         } else {
             lock.push(record);
@@ -324,7 +330,7 @@ impl PluginManager {
             .unwrap_or(false)
     }
 
-    /// This helper method discovers a plugin record from its library path.
+    /// Discovers a plugin record from its library path.
     pub fn discover_dynamic_plugin(&self, path_str: &str) -> PluginRecord {
         let file_stem = Path::new(path_str)
             .file_stem()
@@ -351,24 +357,20 @@ impl PluginManager {
         info!("Removed plugin connection '{}'", info.name);
     }
 
+    /// Enable/disable plugin by name.
     pub async fn toggle_plugin_async(&self, plugin_name: &str, enable: bool) -> Result<(), Error> {
-        // 1) Find the plugin record by name
         let maybe_rec = {
             let lock = self.plugin_records.lock().unwrap();
             lock.iter().find(|r| r.name == plugin_name).cloned()
         };
-
         let rec = match maybe_rec {
             Some(r) => r,
             None => return Err(Error::Platform(format!("No known plugin named '{}'", plugin_name))),
         };
 
-        // If it’s already in the desired state, no-op
         if rec.enabled == enable {
             return Ok(());
         }
-
-        // 2) Make a new record with updated 'enabled' and store it
         let updated = PluginRecord {
             name: rec.name.clone(),
             plugin_type: rec.plugin_type.clone(),
@@ -381,9 +383,7 @@ impl PluginManager {
             if enable { "ENABLED" } else { "DISABLED" },
         );
 
-        // 3) Depending on plugin type, enable/disable the actual plugin connection
         match updated.plugin_type {
-            // For gRPC plugins, just find its connection and call set_enabled(...)
             PluginType::Grpc => {
                 let lock = self.plugins.lock().await;
                 for p in lock.iter() {
@@ -395,8 +395,6 @@ impl PluginManager {
                     }
                 }
             }
-
-            // For DynamicLib, if enabling we may need to load the plugin first:
             PluginType::DynamicLib { .. } => {
                 if enable {
                     let mut lock = self.plugins.lock().await;
@@ -407,12 +405,10 @@ impl PluginManager {
                     drop(lock);
 
                     if !already_loaded {
-                        // If not loaded, actually load the .dll/.so
                         if let Err(e) = self.load_in_process_plugin_by_record(&updated).await {
                             error!("Failed to load '{}': {:?}", updated.name, e);
                         }
                     } else {
-                        // If it’s already loaded, just set_enabled(true)
                         let mut lock = self.plugins.lock().await;
                         for p in lock.iter() {
                             let pi = p.info().await;
@@ -424,7 +420,6 @@ impl PluginManager {
                         }
                     }
                 } else {
-                    // Disabling => stop & remove from our in-memory list
                     let mut lock = self.plugins.lock().await;
                     if let Some(i) = lock.iter().position(|p| {
                         let pi = futures_lite::future::block_on(p.info());
@@ -463,7 +458,7 @@ impl PluginManager {
         Ok(())
     }
 
-    /// Loads a single in‑process plugin from the given library path.
+    /// Load a single in-process plugin from a .dll/.so path.
     pub async fn load_in_process_plugin(&self, path: &str) -> Result<(), Error> {
         let rec = self.discover_dynamic_plugin(path);
         self.upsert_plugin_record(rec.clone());
@@ -473,7 +468,7 @@ impl PluginManager {
         Ok(())
     }
 
-    /// Scans a folder for dynamic library plugins and loads those marked enabled.
+    /// Load all .dll/.so in `folder` that match this OS's extension, if they are "enabled".
     pub async fn load_plugins_from_folder(&self, folder: &str) -> Result<(), Error> {
         if !Path::new(folder).exists() {
             info!("Plugin folder '{}' does not exist; skipping.", folder);
@@ -519,7 +514,7 @@ impl PluginManager {
                             }
                         } else {
                             info!(
-                                "Found plugin at {}, but it’s disabled => skipping load",
+                                "Found plugin at {}, but it's disabled => skipping load",
                                 path_str
                             );
                         }
@@ -536,7 +531,7 @@ impl PluginManager {
         mut inbound: tonic::Streaming<PluginStreamRequest>,
         sender: UnboundedSender<PluginStreamResponse>,
     ) {
-        // Start off as disabled = false. We'll override based on plugin-state after 'Hello'.
+        // Start off as disabled=false; we might enable it after reading the plugin name.
         let conn = Arc::new(PluginGrpcConnection::new(sender, false));
         self.add_plugin_connection(conn.clone()).await;
 
@@ -553,7 +548,7 @@ impl PluginManager {
         });
     }
 
-    /// Routes inbound plugin messages.
+    /// Routes inbound plugin messages (Hello, LogMessage, etc.).
     pub async fn on_inbound_message(&self, payload: ReqPayload, plugin: Arc<dyn PluginConnection>) {
         match payload {
             ReqPayload::Hello(Hello { plugin_name, passphrase }) => {
@@ -580,9 +575,7 @@ impl PluginManager {
                 };
                 self.upsert_plugin_record(rec);
 
-                // Set plugin name so it shows up properly in manager info.
                 plugin.set_name(plugin_name.clone()).await;
-                // Also set the runtime "enabled" field:
                 plugin.set_enabled(is_enabled).await;
 
                 let welcome = PluginStreamResponse {
@@ -783,10 +776,9 @@ impl PluginManager {
     }
 
     // ---------------------------------------------------
-    // NEW: remove_plugin (disables, unloads, and removes from JSON)
+    // remove_plugin => remove plugin from JSON + memory
     // ---------------------------------------------------
     pub async fn remove_plugin(&self, plugin_name: &str) -> Result<(), Error> {
-        // 1) Find the plugin record by name
         let maybe_record = {
             let lock = self.plugin_records.lock().unwrap();
             lock.iter().find(|r| r.name == plugin_name).cloned()
@@ -799,7 +791,7 @@ impl PluginManager {
             }
         };
 
-        // 2) If plugin is loaded in memory, stop it and remove it from the active connections
+        // If plugin is loaded in memory, stop it & remove
         {
             let mut lock = self.plugins.lock().await;
             if let Some(pos) = lock.iter().position(|p| {
@@ -812,13 +804,11 @@ impl PluginManager {
             }
         }
 
-        // 3) Remove from plugin_records
+        // Remove from plugin_records
         {
             let mut lock = self.plugin_records.lock().unwrap();
             lock.retain(|r| r.name != record.name);
         }
-
-        // 4) Save plugin states
         self.save_plugin_states();
         info!("Plugin '{}' removed from JSON records.", plugin_name);
 
@@ -854,6 +844,9 @@ impl PluginService for PluginServiceGrpc {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Implementation of BotApi for PluginManager
+// ---------------------------------------------------------------------------
 #[async_trait]
 impl BotApi for PluginManager {
     async fn list_plugins(&self) -> Vec<String> {
@@ -897,14 +890,13 @@ impl BotApi for PluginManager {
         self.remove_plugin(plugin_name).await
     }
 
-    // ---------- NEW AUTH-FLOW METHODS ----------
+    // ---------- Auth Flow from the snippet ----------
 
     async fn begin_auth_flow(
         &self,
         platform: Platform,
         is_bot: bool
     ) -> Result<String, Error> {
-        // Delegate to the "with_label" version using "default"
         self.begin_auth_flow_with_label(platform, is_bot, "default").await
     }
 
@@ -967,7 +959,7 @@ impl BotApi for PluginManager {
         }
     }
 
-    async fn create_auth_config(
+    async fn create_platform_config(
         &self,
         platform: Platform,
         label: &str,
@@ -977,19 +969,59 @@ impl BotApi for PluginManager {
         if let Some(am) = &self.auth_manager {
             let mut lock = am.lock().await;
             let platform_str = format!("{}", platform);
-            lock.create_auth_config(platform_str.as_str(), label, client_id, client_secret).await
+            lock.create_platform_config(platform_str.as_str(), label, client_id, client_secret).await
         } else {
             Err(Error::Auth("No auth manager set in plugin manager".into()))
         }
     }
 
-    async fn count_auth_configs_for_platform(
+    async fn count_platform_configs_for_platform(
         &self,
         platform_str: String
     ) -> Result<usize, Error> {
         if let Some(am) = &self.auth_manager {
             let lock = am.lock().await;
-            lock.count_auth_configs_for_platform(platform_str.as_str()).await
+            lock.count_platform_configs_for(platform_str.as_str()).await
+        } else {
+            Err(Error::Auth("No auth manager set in plugin manager".into()))
+        }
+    }
+
+    // ---------- NEW METHODS: list_platform_configs / remove_platform_config ----------
+
+    async fn list_platform_configs(
+        &self,
+        maybe_platform: Option<&str>
+    ) -> Result<Vec<PlatformConfigData>, Error> {
+        // Must access the `platform_config_repo` from AuthManager
+        if let Some(am) = &self.auth_manager {
+            let lock = am.lock().await;
+            let pc_repo = &lock.platform_config_repo; // a dyn PlatformConfigRepository
+            let rows = pc_repo.list_platform_configs(maybe_platform).await?;
+
+            // Convert from DB model to your TUI struct
+            let result: Vec<PlatformConfigData> = rows.into_iter().map(|r| {
+                PlatformConfigData {
+                    platform_config_id: r.platform_config_id,
+                    platform: r.platform,
+                    platform_label: r.platform_label,
+                    client_id: r.client_id,
+                    client_secret: r.client_secret,
+                }
+            }).collect();
+            Ok(result)
+        } else {
+            Err(Error::Auth("No auth manager set in plugin manager".into()))
+        }
+    }
+
+    async fn remove_platform_config(&self, platform_config_id: &str) -> Result<(), Error> {
+        // Must access `platform_config_repo` again
+        if let Some(am) = &self.auth_manager {
+            let lock = am.lock().await;
+            let pc_repo = &lock.platform_config_repo;
+            pc_repo.delete_platform_config(platform_config_id).await?;
+            Ok(())
         } else {
             Err(Error::Auth("No auth manager set in plugin manager".into()))
         }

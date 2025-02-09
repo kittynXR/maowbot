@@ -1,3 +1,8 @@
+// =============================================================================
+// maowbot-core/src/auth/mod.rs
+//   (Adjusted references: renamed "auth_config_repo" usage to "platform_config_repo" in docstrings.)
+// =============================================================================
+
 use async_trait::async_trait;
 use crate::Error;
 
@@ -38,7 +43,7 @@ pub struct StubAuthHandler;
 #[async_trait]
 impl AuthenticationHandler for StubAuthHandler {
     async fn handle_prompt(&self, _prompt: AuthenticationPrompt) -> Result<AuthenticationResponse, Error> {
-        // Always just return "None" or something minimal
+        // Always just return "None"
         Ok(AuthenticationResponse::None)
     }
 }
@@ -57,7 +62,5 @@ pub trait PlatformAuthenticator: Send {
     async fn validate(&self, credential: &crate::models::PlatformCredential) -> Result<bool, Error>;
     async fn revoke(&mut self, credential: &crate::models::PlatformCredential) -> Result<(), Error>;
 
-    fn set_is_bot(&mut self, _val: bool) {
-        // default is no-op, so that other authenticators won't break
-    }
+    fn set_is_bot(&mut self, _val: bool) {}
 }
