@@ -11,6 +11,7 @@ pub trait UserRepo {
     async fn get(&self, id: &str) -> Result<Option<User>, Error>;
     async fn update(&self, user: &User) -> Result<(), Error>;
     async fn delete(&self, id: &str) -> Result<(), Error>;
+    async fn list_all(&self) -> Result<Vec<User>, Error>;
 }
 
 pub struct UserRepository {
@@ -99,5 +100,26 @@ impl UserRepo for UserRepository {
             .execute(&self.pool)
             .await?;
         Ok(())
+    }
+
+    async fn list_all(&self) -> Result<Vec<User>, Error> {
+        // Because `User` is `#[derive(sqlx::FromRow)]` in your models,
+        // we can use `query_as::<_, User>` directly:
+        let rows = sqlx::query_as::<_, User>(
+            r#"
+            SELECT
+                user_id,
+                global_username,
+                created_at,
+                last_seen,
+                is_active
+            FROM users
+            ORDER BY created_at ASC
+            "#,
+        )
+            .fetch_all(&self.pool)
+            .await?;
+
+        Ok(rows)
     }
 }

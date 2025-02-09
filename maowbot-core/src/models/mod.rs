@@ -10,7 +10,7 @@ use sqlx::FromRow;
 pub mod user_analysis;
 pub use user_analysis::UserAnalysis;
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, FromRow)]
 pub struct User {
     pub user_id: String,
     pub global_username: Option<String>,

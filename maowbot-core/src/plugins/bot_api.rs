@@ -1,5 +1,5 @@
 // maowbot-core/src/plugins/bot_api.rs
-use crate::{Error, models::Platform, models::PlatformCredential};
+use crate::{Error, models::Platform, models::PlatformCredential, models::User};
 use async_trait::async_trait;
 
 #[derive(Debug)]
@@ -23,8 +23,21 @@ pub trait BotApi: Send + Sync {
     async fn shutdown(&self);
     async fn toggle_plugin(&self, plugin_name: &str, enable: bool) -> Result<(), Error>;
     async fn remove_plugin(&self, plugin_name: &str) -> Result<(), Error>;
+    // Create a user in the DB with user_id = `new_user_id` and global_username = `display_name`.
+    async fn create_user(&self, new_user_id: &str, display_name: &str) -> Result<(), Error>;
 
-    /// Begin auth flow using the default label.
+    // Remove the user record from DB, if it exists:
+    async fn remove_user(&self, user_id: &str) -> Result<(), Error>;
+
+    // Return the user row if found:
+    async fn get_user(&self, user_id: &str) -> Result<Option<User>, Error>;
+
+    // Mark user as active/inactive:
+    async fn update_user_active(&self, user_id: &str, is_active: bool) -> Result<(), Error>;
+
+    // Return all users matching `query` (e.g. partial or exact search).
+    async fn search_users(&self, query: &str) -> Result<Vec<User>, Error>;
+
     async fn begin_auth_flow(
         &self,
         platform: Platform,
@@ -35,6 +48,13 @@ pub trait BotApi: Send + Sync {
         &self,
         platform: Platform,
         code: String
+    ) -> Result<PlatformCredential, Error>;
+
+    async fn complete_auth_flow_for_user(
+        &self,
+        platform: Platform,
+        code: String,
+        user_id: &str
     ) -> Result<PlatformCredential, Error>;
 
     async fn revoke_credentials(

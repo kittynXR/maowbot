@@ -1,6 +1,5 @@
 // =============================================================================
 // maowbot-core/src/auth/manager.rs
-//   - Removed “label” usage. We now store only one config row per platform.
 // =============================================================================
 
 use std::collections::HashMap;
@@ -47,7 +46,7 @@ impl AuthManager {
         self.authenticators.insert(platform, authenticator);
     }
 
-    /// This older convenience method is left for any backward usage.
+    /// Convenience method (old usage).
     pub async fn authenticate_platform(&mut self, platform: Platform) -> Result<PlatformCredential, Error> {
         self.authenticate_platform_for_role(platform, false).await
     }
@@ -63,7 +62,7 @@ impl AuthManager {
         ))
     }
 
-    /// Start an auth flow for the given platform. Returns the “redirect” or user prompt URL.
+    /// Step 1 of the OAuth process: returns a “redirect” or user prompt URL.
     pub async fn begin_auth_flow(
         &mut self,
         platform: Platform,
@@ -89,7 +88,7 @@ impl AuthManager {
             )));
         };
 
-        // Build authenticator
+        // Build the appropriate authenticator
         let authenticator: Box<dyn PlatformAuthenticator + Send + Sync> = match platform {
             Platform::Discord => {
                 Box::new(DiscordAuthenticator::new(
@@ -145,6 +144,7 @@ impl AuthManager {
         )))
     }
 
+    /// Step 2 (old usage) — no user_id is set => foreign key fails if user_id is required.
     pub async fn complete_auth_flow(
         &mut self,
         platform: Platform,
@@ -155,13 +155,43 @@ impl AuthManager {
             .get_mut(&platform)
             .ok_or_else(|| Error::Platform(format!("No authenticator for {platform:?}")))?;
 
+        // This returns `user_id = ""` by default → F.K. error
         let cred = authenticator
             .complete_authentication(AuthenticationResponse::Code(code))
             .await?;
+
+        // Then we store it in DB => fails if no user row with user_id=""
         self.credentials_repo.store_credentials(&cred).await?;
         Ok(cred)
     }
 
+    // ------------------------------------------------------------------------
+    // NEW METHOD: “Complete the auth flow” while specifying the user_id to store
+    // ------------------------------------------------------------------------
+    pub async fn complete_auth_flow_for_user(
+        &mut self,
+        platform: Platform,
+        code: String,
+        user_id: &str,
+    ) -> Result<PlatformCredential, Error> {
+        let authenticator = self
+            .authenticators
+            .get_mut(&platform)
+            .ok_or_else(|| Error::Platform(format!("No authenticator for {platform:?}")))?;
+
+        let mut cred = authenticator
+            .complete_authentication(AuthenticationResponse::Code(code))
+            .await?;
+
+        // Overwrite the user_id so we have a valid row in the DB
+        cred.user_id = user_id.to_string();
+
+        // Now store in DB
+        self.credentials_repo.store_credentials(&cred).await?;
+        Ok(cred)
+    }
+
+    // If you want a direct place to store credentials from external calls:
     pub async fn store_credentials(&self, cred: &PlatformCredential) -> Result<(), Error> {
         self.credentials_repo.store_credentials(cred).await
     }
@@ -212,7 +242,7 @@ impl AuthManager {
         authenticator.validate(cred).await
     }
 
-    /// Replaces the old 'insert_platform_config' that needed a label. We just upsert by platform.
+    /// Replaces old 'insert_platform_config'. We just upsert by platform now.
     pub async fn create_platform_config(
         &self,
         platform_str: &str,

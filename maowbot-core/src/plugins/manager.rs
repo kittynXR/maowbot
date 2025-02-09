@@ -36,7 +36,9 @@ use maowbot_proto::plugs::{
     ForceDisconnect, PluginCapability,
 };
 use crate::auth::AuthManager;
-use crate::models::{Platform, PlatformCredential};
+use crate::models::{Platform, PlatformCredential, User};
+use crate::repositories::postgres::user::UserRepo;
+use crate::repositories::postgres::UserRepository;
 
 /// Plugin type.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -225,10 +227,11 @@ pub struct PluginManager {
     pub event_bus: Option<Arc<EventBus>>,
     pub persist_path: PathBuf,
     pub auth_manager: Option<Arc<tokio::sync::Mutex<AuthManager>>>,
+    pub user_repo: Arc<UserRepository>,
 }
 
 impl PluginManager {
-    pub fn new(passphrase: Option<String>) -> Self {
+    pub fn new(passphrase: Option<String>, user_repo: Arc<UserRepository>) -> Self {
         let manager = Self {
             plugins: Arc::new(AsyncMutex::new(Vec::new())),
             plugin_records: Arc::new(Mutex::new(Vec::new())),
@@ -237,6 +240,7 @@ impl PluginManager {
             event_bus: None,
             persist_path: PathBuf::from("plugs/plugins_state.json"),
             auth_manager: None,
+            user_repo,
         };
         manager.load_plugin_states();
         manager
@@ -890,6 +894,58 @@ impl BotApi for PluginManager {
         self.remove_plugin(plugin_name).await
     }
 
+    async fn create_user(&self, new_user_id: &str, display_name: &str) -> Result<(), Error> {
+        let user_repo = self.user_repo.clone();
+        // Or if you have user_manager: user_manager.get_or_create_user(...) or direct create:
+
+        // Example direct approach with user_repo:
+        let user = User {
+            user_id: new_user_id.to_string(),
+            global_username: Some(display_name.to_string()),
+            created_at: chrono::Utc::now(),
+            last_seen: chrono::Utc::now(),
+            is_active: true,
+        };
+        user_repo.create(&user).await?;
+        Ok(())
+    }
+
+    async fn remove_user(&self, user_id: &str) -> Result<(), Error> {
+        let user_repo = self.user_repo.clone();
+        user_repo.delete(user_id).await?;
+        Ok(())
+    }
+
+    async fn get_user(&self, user_id: &str) -> Result<Option<User>, Error> {
+        let user_repo = self.user_repo.clone();
+        let found = user_repo.get(user_id).await?;
+        Ok(found)
+    }
+
+    async fn update_user_active(&self, user_id: &str, is_active: bool) -> Result<(), Error> {
+        let user_repo = self.user_repo.clone();
+        if let Some(mut u) = user_repo.get(user_id).await? {
+            u.is_active = is_active;
+            u.last_seen = chrono::Utc::now(); // or keep old
+            user_repo.update(&u).await?;
+        }
+        Ok(())
+    }
+
+    async fn search_users(&self, query: &str) -> Result<Vec<User>, Error> {
+        let user_repo = self.user_repo.clone();
+        // If there's no direct "search" method, do something like:
+        let all_users = user_repo.list_all().await?; // you'd need a "list_all()" if not present
+        // Then filter by partial match on global_username or user_id
+        let filtered = all_users.into_iter()
+            .filter(|u| {
+                u.user_id.contains(query)
+                    || u.global_username.as_deref().unwrap_or("").contains(query)
+            })
+            .collect();
+        Ok(filtered)
+    }
+
     // ---------- Auth Flow from the snippet ----------
     async fn begin_auth_flow(
         &self,
@@ -912,6 +968,20 @@ impl BotApi for PluginManager {
         if let Some(am) = &self.auth_manager {
             let mut lock = am.lock().await;
             lock.complete_auth_flow(platform, code).await
+        } else {
+            Err(Error::Auth("No auth manager set in plugin manager".into()))
+        }
+    }
+
+    async fn complete_auth_flow_for_user(
+        &self,
+        platform: Platform,
+        code: String,
+        user_id: &str
+    ) -> Result<PlatformCredential, Error> {
+        if let Some(am) = &self.auth_manager {
+            let mut lock = am.lock().await;
+            lock.complete_auth_flow_for_user(platform, code, user_id).await
         } else {
             Err(Error::Auth("No auth manager set in plugin manager".into()))
         }

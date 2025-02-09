@@ -169,6 +169,7 @@ async fn run_server(args: Args) -> Result<(), Error> {
 
     let platform_config_repo = Arc::new(PostgresPlatformConfigRepository::new(db.pool().clone()));
     let bot_config_repo = Arc::new(PostgresBotConfigRepository::new(db.pool().clone()));
+    let user_repo = UserRepository::new(db.pool().clone());
 
     let auth_manager = AuthManager::new(
         Box::new(creds_repo),
@@ -176,7 +177,10 @@ async fn run_server(args: Args) -> Result<(), Error> {
         bot_config_repo.clone(),
     );
 
-    let mut plugin_manager = PluginManager::new(args.plugin_passphrase.clone());
+    let mut plugin_manager = PluginManager::new(
+        args.plugin_passphrase.clone(),
+        Arc::new(user_repo),
+    );
     plugin_manager.subscribe_to_event_bus(event_bus.clone());
     plugin_manager.set_event_bus(event_bus.clone());
     plugin_manager.set_auth_manager(Arc::new(tokio::sync::Mutex::new(auth_manager)));

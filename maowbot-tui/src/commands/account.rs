@@ -1,7 +1,4 @@
 // maowbot-tui/src/commands/account.rs
-//
-// No label prompts anymore. We simply do "begin_auth_flow(platform, is_bot)"
-// and "complete_auth_flow" once we get the code from the callback.
 
 use std::sync::Arc;
 use std::io::{Write, stdin, stdout};
@@ -70,9 +67,9 @@ pub fn handle_account_command(args: &[&str], bot_api: &Arc<dyn BotApi>) -> Strin
     }
 }
 
-/// The 2-step OAuth (or other token) flow for adding credentials.
+/// The 2-step OAuth flow for adding credentials,
+/// now calling `complete_auth_flow_for_user` with the TUI’s `username`.
 fn account_add_flow(platform: Platform, username: &str, bot_api: &Arc<dyn BotApi>) -> String {
-    // 1) Ask if it's a bot account
     println!("Is this a bot account? (y/n):");
     print!("> ");
     let _ = stdout().flush();
@@ -80,15 +77,20 @@ fn account_add_flow(platform: Platform, username: &str, bot_api: &Arc<dyn BotApi
     let _ = stdin().read_line(&mut line);
     let is_bot = line.trim().eq_ignore_ascii_case("y");
 
-    // 2) Start local callback server on port=9876
-    let rt = tokio::runtime::Builder::new_multi_thread().worker_threads(2).enable_all().build().unwrap();
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()
+        .unwrap();
+
+    // 1) Start local callback server on port=9876
     let fixed_port: u16 = 9876;
     let (done_rx, shutdown_tx) = match rt.block_on(start_callback_server(fixed_port)) {
         Ok(pair) => pair,
         Err(e) => return format!("Error starting callback server => {:?}", e),
     };
 
-    // 3) Begin auth flow
+    // 2) Begin auth flow
     let url_res = rt.block_on(bot_api.begin_auth_flow(platform.clone(), is_bot));
     let url = match url_res {
         Ok(u) => u,
@@ -109,7 +111,7 @@ fn account_add_flow(platform: Platform, username: &str, bot_api: &Arc<dyn BotApi
     }
     println!("Waiting for the OAuth callback on port {}...", fixed_port);
 
-    // 4) Wait for callback
+    // 3) Wait for OAuth callback
     let callback_result = match done_rx.blocking_recv() {
         Ok(res) => res,
         Err(e) => {
@@ -117,14 +119,20 @@ fn account_add_flow(platform: Platform, username: &str, bot_api: &Arc<dyn BotApi
             return format!("Error receiving OAuth code => {:?}", e);
         }
     };
+    // Shut down the local callback server
     shutdown_tx.send(()).ok();
 
-    // 5) Complete
-    match rt.block_on(bot_api.complete_auth_flow(platform.clone(), callback_result.code)) {
+    // 4) Complete the auth flow (now specifying user_id = `username`)
+    // IMPORTANT: You must ensure `username` exists in the `users` table (same user_id).
+    match rt.block_on(bot_api.complete_auth_flow_for_user(
+        platform.clone(),
+        callback_result.code,
+        username,
+    )) {
         Ok(cred) => {
             format!(
-                "Success! Stored credentials for platform={:?}, user_id='{}', is_bot={}, (username='{}')",
-                cred.platform, cred.user_id, cred.is_bot, username
+                "Success! Stored credentials for platform={:?}, user_id='{}', is_bot={}.",
+                cred.platform, cred.user_id, cred.is_bot
             )
         }
         Err(e) => format!("Error completing auth => {:?}", e),
