@@ -59,10 +59,10 @@ impl PlatformAuthenticator for TwitchIrcAuthenticator {
         }
 
         Ok(PlatformCredential {
-            credential_id: Uuid::new_v4().to_string(),
+            credential_id: Uuid::new_v4(),
             platform: Platform::TwitchIRC,
             credential_type: CredentialType::BearerToken, // or CredentialType::APIKey
-            user_id: String::new(),
+            user_id: Uuid::new_v4(),
             primary_token: token,
             refresh_token: None,
             additional_data: Some(json!({ "source": "twitch-irc-token" })),

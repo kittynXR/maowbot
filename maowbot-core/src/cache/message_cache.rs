@@ -206,7 +206,7 @@ impl<R: UserAnalysisRepository> ChatCache<R> {
         // 1) Gather user_ids to purge (do async calls *without* holding the ring).
         let mut purge_list = Vec::new();
         for user_id in self.user_map.iter().map(|e| e.key().clone()) {
-            if let Ok(Some(analysis)) = self.user_analysis_repo.get_analysis(&user_id).await {
+            if let Ok(Some(analysis)) = self.user_analysis_repo.get_analysis(user_id.parse().unwrap()).await {
                 if analysis.spam_score >= spam_cut || analysis.quality_score < quality_min {
                     purge_list.push(user_id);
                 }

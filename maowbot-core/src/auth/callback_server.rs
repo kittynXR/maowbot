@@ -1,5 +1,3 @@
-// File: maowbot-core/src/auth/callback_server.rs
-
 use std::{net::SocketAddr, sync::Arc, process::Command};
 use tokio::sync::{oneshot, Mutex};
 use axum::{

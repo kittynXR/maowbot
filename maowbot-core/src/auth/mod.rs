@@ -1,8 +1,3 @@
-// =============================================================================
-// maowbot-core/src/auth/mod.rs
-//   (Adjusted references: renamed "auth_config_repo" usage to "platform_config_repo" in docstrings.)
-// =============================================================================
-
 use async_trait::async_trait;
 use crate::Error;
 
@@ -48,7 +43,7 @@ impl AuthenticationHandler for StubAuthHandler {
     }
 }
 
-/// Each platform's authenticator will implement this.
+/// Every platform's authenticator must implement these methods.
 #[async_trait]
 pub trait PlatformAuthenticator: Send {
     async fn initialize(&mut self) -> Result<(), Error>;

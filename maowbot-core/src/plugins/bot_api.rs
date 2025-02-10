@@ -1,17 +1,22 @@
-// maowbot-core/src/plugins/bot_api.rs
+// File: maowbot-core/src/plugins/bot_api.rs
 
+use std::format;
 use crate::{Error, models::Platform, models::PlatformCredential, models::User};
 use async_trait::async_trait;
+use uuid::Uuid;
+use crate::repositories::postgres::UserRepository;
 
+/// Status data reported by the bot to the plugin(s).
 #[derive(Debug)]
 pub struct StatusData {
     pub connected_plugins: Vec<String>,
     pub uptime_seconds: u64,
 }
 
+/// Represents one platform config row. Usually only one per platform.
 #[derive(Debug, Clone)]
 pub struct PlatformConfigData {
-    pub platform_config_id: String,
+    pub platform_config_id: Uuid,
     pub platform: String,
     pub client_id: Option<String>,
     pub client_secret: Option<String>,
@@ -24,42 +29,54 @@ pub trait BotApi: Send + Sync {
     async fn shutdown(&self);
     async fn toggle_plugin(&self, plugin_name: &str, enable: bool) -> Result<(), Error>;
     async fn remove_plugin(&self, plugin_name: &str) -> Result<(), Error>;
-    async fn create_user(&self, new_user_id: &str, display_name: &str) -> Result<(), Error>;
-    async fn remove_user(&self, user_id: &str) -> Result<(), Error>;
-    async fn get_user(&self, user_id: &str) -> Result<Option<User>, Error>;
-    async fn update_user_active(&self, user_id: &str, is_active: bool) -> Result<(), Error>;
+
+    /// Create a new user with the specified UUID as `user_id` and display_name as `global_username`.
+    async fn create_user(&self, new_user_id: Uuid, display_name: &str) -> Result<(), Error>;
+
+    /// Remove a user (by UUID).
+    async fn remove_user(&self, user_id: Uuid) -> Result<(), Error>;
+
+    /// Get a user by UUID.
+    async fn get_user(&self, user_id: Uuid) -> Result<Option<User>, Error>;
+
+    /// Update user’s active status by UUID.
+    async fn update_user_active(&self, user_id: Uuid, is_active: bool) -> Result<(), Error>;
+
+    /// Searches users by some textual query (may remain string‐based).
     async fn search_users(&self, query: &str) -> Result<Vec<User>, Error>;
+    async fn find_user_by_name(&self, name: &str) -> Result<User, Error>;
+    /// Step 1 of OAuth or other flows: returns a URL or instructions.
+    async fn begin_auth_flow(&self, platform: Platform, is_bot: bool) -> Result<String, Error>;
 
-    async fn begin_auth_flow(
-        &self,
-        platform: Platform,
-        is_bot: bool
-    ) -> Result<String, Error>;
-
+    /// Complete the flow with code, but **no** user_id – you might store with an empty or default user field.
     async fn complete_auth_flow(
         &self,
         platform: Platform,
         code: String
     ) -> Result<PlatformCredential, Error>;
 
+    /// Complete the flow with code **for a specific user** (by UUID).
     async fn complete_auth_flow_for_user(
         &self,
         platform: Platform,
         code: String,
-        user_id: &str
+        user_id: Uuid
     ) -> Result<PlatformCredential, Error>;
 
+    /// Revoke credentials for a user (by UUID).
     async fn revoke_credentials(
         &self,
         platform: Platform,
-        user_id: &str
+        user_id: String
     ) -> Result<(), Error>;
 
+    /// List all credentials (optionally filtered by platform).
     async fn list_credentials(
         &self,
         maybe_platform: Option<Platform>
     ) -> Result<Vec<PlatformCredential>, Error>;
 
+    /// Create or update the stored client_id/secret for a platform.
     async fn create_platform_config(
         &self,
         platform: Platform,

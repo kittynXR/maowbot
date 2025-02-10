@@ -7,40 +7,38 @@ use serde_json::Value;
 use uuid::Uuid;
 use crate::Error;
 
-/// Represents a single chat message row.
-#[derive(Clone, Debug, FromRow)]
+#[derive(Clone, Debug)]
+#[derive(sqlx::FromRow)]
 pub struct ChatMessage {
-    pub message_id: String,
+    pub message_id: Uuid,
     pub platform: String,
     pub channel: String,
-    pub user_id: String,
+    pub user_id: Uuid,
     pub message_text: String,
     pub timestamp: DateTime<Utc>,
     pub metadata: Option<Value>,
 }
 
-/// Represents a chat session (user's join/leave times).
 #[derive(Clone, Debug)]
 pub struct ChatSession {
-    pub session_id: String,
+    pub session_id: Uuid,
     pub platform: String,
     pub channel: String,
-    pub user_id: String,
+    pub user_id: Uuid,
     pub joined_at: DateTime<Utc>,
     pub left_at: Option<DateTime<Utc>>,
     pub session_duration_seconds: Option<i64>,
 }
 
-/// Represents an arbitrary bot event (for logging or analytics).
+/// Arbitrary bot event
 #[derive(Clone, Debug)]
 pub struct BotEvent {
-    pub event_id: String,
+    pub event_id: Uuid,
     pub event_type: String,
     pub event_timestamp: DateTime<Utc>,
     pub data: Option<Value>,
 }
 
-/// Defines the analytics repository trait.
 #[async_trait]
 pub trait AnalyticsRepo: Send + Sync {
     async fn insert_chat_message(&self, msg: &ChatMessage) -> Result<(), Error>;
@@ -54,7 +52,7 @@ pub trait AnalyticsRepo: Send + Sync {
     async fn insert_chat_session(&self, session: &ChatSession) -> Result<(), Error>;
     async fn close_chat_session(
         &self,
-        session_id: &str,
+        session_id: Uuid,
         left_at: DateTime<Utc>,
         duration_seconds: i64
     ) -> Result<(), Error>;
@@ -69,7 +67,6 @@ pub trait AnalyticsRepo: Send + Sync {
     ) -> Result<(), Error>;
 }
 
-/// Postgres-based analytics repository.
 #[derive(Clone)]
 pub struct PostgresAnalyticsRepository {
     pool: Pool<Postgres>,
@@ -96,12 +93,12 @@ impl AnalyticsRepo for PostgresAnalyticsRepository {
                 message_text, timestamp, metadata
             )
             VALUES ($1, $2, $3, $4, $5, $6, $7)
-            "#
+            "#,
         )
-            .bind(&msg.message_id)
+            .bind(msg.message_id)
             .bind(&msg.platform)
             .bind(&msg.channel)
-            .bind(&msg.user_id)
+            .bind(msg.user_id)
             .bind(&msg.message_text)
             .bind(msg.timestamp)
             .bind(metadata_str)
@@ -132,7 +129,7 @@ impl AnalyticsRepo for PostgresAnalyticsRepository {
               AND channel = $2
             ORDER BY timestamp DESC
             LIMIT $3
-            "#
+            "#,
         )
             .bind(platform)
             .bind(channel)
@@ -153,7 +150,7 @@ impl AnalyticsRepo for PostgresAnalyticsRepository {
                 channel: row.try_get("channel")?,
                 user_id: row.try_get("user_id")?,
                 message_text: row.try_get("message_text")?,
-                timestamp: row.try_get::<DateTime<Utc>, _>("timestamp")?,
+                timestamp: row.try_get("timestamp")?,
                 metadata,
             });
         }
@@ -168,12 +165,12 @@ impl AnalyticsRepo for PostgresAnalyticsRepository {
                 joined_at, left_at, session_duration_seconds
             )
             VALUES ($1, $2, $3, $4, $5, $6, $7)
-            "#
+            "#,
         )
-            .bind(&session.session_id)
+            .bind(session.session_id)
             .bind(&session.platform)
             .bind(&session.channel)
-            .bind(&session.user_id)
+            .bind(session.user_id)
             .bind(session.joined_at)
             .bind(session.left_at)
             .bind(session.session_duration_seconds)
@@ -185,7 +182,7 @@ impl AnalyticsRepo for PostgresAnalyticsRepository {
 
     async fn close_chat_session(
         &self,
-        session_id: &str,
+        session_id: Uuid,
         left_at: DateTime<Utc>,
         duration_seconds: i64
     ) -> Result<(), Error> {
@@ -195,7 +192,7 @@ impl AnalyticsRepo for PostgresAnalyticsRepository {
             SET left_at = $1,
                 session_duration_seconds = $2
             WHERE session_id = $3
-            "#
+            "#,
         )
             .bind(left_at)
             .bind(duration_seconds)
@@ -215,9 +212,9 @@ impl AnalyticsRepo for PostgresAnalyticsRepository {
                 event_id, event_type, event_timestamp, data
             )
             VALUES ($1, $2, $3, $4)
-            "#
+            "#,
         )
-            .bind(&event.event_id)
+            .bind(event.event_id)
             .bind(&event.event_type)
             .bind(event.event_timestamp)
             .bind(data_str)
@@ -233,7 +230,6 @@ impl AnalyticsRepo for PostgresAnalyticsRepository {
         new_messages: i64,
         new_visits: i64
     ) -> Result<(), Error> {
-        // Postgres "ON CONFLICT" upsert
         sqlx::query(
             r#"
             INSERT INTO daily_stats (date, total_messages, total_chat_visits)
@@ -241,7 +237,7 @@ impl AnalyticsRepo for PostgresAnalyticsRepository {
             ON CONFLICT (date) DO UPDATE
               SET total_messages = daily_stats.total_messages + EXCLUDED.total_messages,
                   total_chat_visits = daily_stats.total_chat_visits + EXCLUDED.total_chat_visits
-            "#
+            "#,
         )
             .bind(date_str)
             .bind(new_messages)

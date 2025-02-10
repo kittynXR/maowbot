@@ -1,13 +1,17 @@
-// maowbot-tui/src/commands/account.rs
+// File: maowbot-tui/src/commands/account.rs
 
 use std::sync::Arc;
 use std::io::{Write, stdin, stdout};
 use std::str::FromStr;
 use open;
-use maowbot_core::models::Platform;
-use maowbot_core::auth::callback_server::start_callback_server;
-use maowbot_core::plugins::bot_api::BotApi;
+use tokio::runtime::Builder as RuntimeBuilder;
 
+use maowbot_core::models::{Platform, User};
+use maowbot_core::plugins::bot_api::BotApi;
+use maowbot_core::auth::callback_server::start_callback_server;
+use maowbot_core::Error;
+
+/// Handle "account <add|remove|list|show>" commands.
 pub fn handle_account_command(args: &[&str], bot_api: &Arc<dyn BotApi>) -> String {
     if args.is_empty() {
         return "Usage: account <add|remove|list|show> [platform] [username]".to_string();
@@ -16,23 +20,23 @@ pub fn handle_account_command(args: &[&str], bot_api: &Arc<dyn BotApi>) -> Strin
     match args[0] {
         "add" => {
             if args.len() < 3 {
-                return "Usage: account add <platform> <username>".to_string();
+                return "Usage: account add <platform> <desired_global_username>".to_string();
             }
             let platform_str = args[1];
-            let username = args[2];
+            let typed_name   = args[2];
             match Platform::from_str(platform_str) {
-                Ok(p) => account_add_flow(p, username, bot_api),
+                Ok(p) => account_add_flow(p, typed_name, bot_api),
                 Err(_) => format!("Unknown platform '{}'", platform_str),
             }
         }
         "remove" => {
             if args.len() < 3 {
-                return "Usage: account remove <platform> <username>".to_string();
+                return "Usage: account remove <platform> <usernameOrUserId>".to_string();
             }
             let platform_str = args[1];
-            let username = args[2];
+            let user_id_str  = args[2];
             match Platform::from_str(platform_str) {
-                Ok(p) => account_remove(p, username, bot_api),
+                Ok(p) => account_remove(p, user_id_str, bot_api),
                 Err(_) => format!("Unknown platform '{}'", platform_str),
             }
         }
@@ -43,12 +47,7 @@ pub fn handle_account_command(args: &[&str], bot_api: &Arc<dyn BotApi>) -> Strin
             } else {
                 None
             };
-
-            // ----------------------------------
-            // FIX: Use a multi-threaded runtime
-            // ----------------------------------
-            let rt = tokio::runtime::Builder::new_multi_thread()
-                .worker_threads(2)
+            let rt = RuntimeBuilder::new_current_thread()
                 .enable_all()
                 .build()
                 .unwrap();
@@ -73,14 +72,14 @@ pub fn handle_account_command(args: &[&str], bot_api: &Arc<dyn BotApi>) -> Strin
             }
         }
         "show" => {
-            // account show <platform> <username>
+            // account show <platform> <usernameOrUserId>
             if args.len() < 3 {
-                return "Usage: account show <platform> <username>".to_string();
+                return "Usage: account show <platform> <userId>".to_string();
             }
             let platform_str = args[1];
-            let username = args[2];
+            let user_id_str  = args[2];
             match Platform::from_str(platform_str) {
-                Ok(p) => account_show(p, username, bot_api),
+                Ok(p) => account_show(p, user_id_str, bot_api),
                 Err(_) => format!("Unknown platform '{}'", platform_str),
             }
         }
@@ -88,10 +87,15 @@ pub fn handle_account_command(args: &[&str], bot_api: &Arc<dyn BotApi>) -> Strin
     }
 }
 
-/// The 2-step OAuth flow for adding credentials:
-/// Step 1 => begin_auth_flow => we open in browser
-/// Step 2 => wait for callback => complete_auth_flow_for_user => store in DB
-fn account_add_flow(platform: Platform, username: &str, bot_api: &Arc<dyn BotApi>) -> String {
+/// The “account add” flow (OAuth2 or other method):
+///
+/// 1) Prompt “Is this a bot account?”
+/// 2) Ask user if they want to keep the typed name (`typed_name`) as a new global username or pick a different one.
+///    Then find/create a user row (which yields a real user_id=UUID).
+/// 3) Optionally ask about the platform-specific user ID, if that matters.
+/// 4) Start auth flow -> open browser -> wait for callback -> complete auth -> store credentials for that user_id.
+fn account_add_flow(platform: Platform, typed_name: &str, bot_api: &Arc<dyn BotApi>) -> String {
+    // is bot?
     println!("Is this a bot account? (y/n):");
     print!("> ");
     let _ = stdout().flush();
@@ -99,99 +103,146 @@ fn account_add_flow(platform: Platform, username: &str, bot_api: &Arc<dyn BotApi
     let _ = stdin().read_line(&mut line);
     let is_bot = line.trim().eq_ignore_ascii_case("y");
 
-    // ----------------------------------
-    // FIX: Also multi-threaded here
-    // ----------------------------------
-    let rt = tokio::runtime::Builder::new_multi_thread()
+    // Ask: “Use ‘{typed_name}’ for the user’s global_username in the DB?”
+    println!("Use '{}' for the user’s global_username? (y/n):", typed_name);
+    print!("> ");
+    let _ = stdout().flush();
+    let mut line2 = String::new();
+    let _ = stdin().read_line(&mut line2);
+    let mut final_username = typed_name.to_string();
+    if !line2.trim().eq_ignore_ascii_case("y") {
+        println!("Enter a different global username:");
+        print!("> ");
+        let _ = stdout().flush();
+        let mut alt = String::new();
+        let _ = stdin().read_line(&mut alt);
+        let alt = alt.trim();
+        if !alt.is_empty() {
+            final_username = alt.to_string();
+        }
+    }
+
+    // Create a small runtime:
+    let rt = RuntimeBuilder::new_multi_thread()
         .worker_threads(2)
         .enable_all()
         .build()
         .unwrap();
 
-    // 1) Start local callback server on port=9876
-    let fixed_port: u16 = 9876;
-    let (done_rx, shutdown_tx) = match rt.block_on(start_callback_server(fixed_port)) {
-        Ok(pair) => pair,
-        Err(e) => return format!("Error starting callback server => {:?}", e),
+    // Step A: Check if there's already a user with that global_username, or create one:
+    let user = match rt.block_on(find_or_create_user_by_name(bot_api, &final_username)) {
+        Ok(u) => u,
+        Err(e) => return format!("Error finding/creating user '{}': {:?}", final_username, e),
     };
 
-    // 2) Begin auth flow
+    println!(
+        "Will associate new credentials with user_id={}, global_username='{}'",
+        user.user_id, user.global_username.as_deref().unwrap_or("")
+    );
+
+    // Step B: Start the local callback server on a fixed port:
+    let port = 9876;
+    let (done_rx, shutdown_tx) = match rt.block_on(start_callback_server(port)) {
+        Ok(pair) => pair,
+        Err(e) => {
+            return format!("Error starting callback server => {:?}", e);
+        }
+    };
+
+    println!(
+        "OAuth callback server listening on http://127.0.0.1:{}",
+        port
+    );
+
+    // Step C: begin auth flow
     let url_res = rt.block_on(bot_api.begin_auth_flow(platform.clone(), is_bot));
     let url = match url_res {
         Ok(u) => u,
         Err(e) => {
-            shutdown_tx.send(()).ok();
+            let _ = shutdown_tx.send(());
             return format!("Error => {:?}", e);
         }
     };
 
-    println!("2025-02-10T01:06:28.902887Z  INFO maowbot_core::auth::callback_server: OAuth callback server listening on http://127.0.0.1:{}", fixed_port);
     println!("Open this URL to authenticate:\n  {}", url);
-
     println!("Open in browser now? (y/n):");
     print!("> ");
     let _ = stdout().flush();
-    let mut line2 = String::new();
-    let _ = stdin().read_line(&mut line2);
-    if line2.trim().eq_ignore_ascii_case("y") {
+    let mut line3 = String::new();
+    let _ = stdin().read_line(&mut line3);
+    if line3.trim().eq_ignore_ascii_case("y") {
         let _ = open::that(&url);
     }
-    println!("Waiting for the OAuth callback on port {}...", fixed_port);
+    println!("Waiting for the OAuth callback on port {}...", port);
 
-    // 3) Wait for OAuth callback
+    // Step D: wait for the callback
     let callback_result = match done_rx.blocking_recv() {
         Ok(res) => res,
         Err(e) => {
-            shutdown_tx.send(()).ok();
+            let _ = shutdown_tx.send(());
             return format!("Error receiving OAuth code => {:?}", e);
         }
     };
-    // Shut down the local callback server
-    shutdown_tx.send(()).ok();
+    // Shut down the local callback server now that we have our code
+    let _ = shutdown_tx.send(());
 
-    // 4) Complete the auth flow with user_id=the TUI `username`
+    // Step E: complete the auth flow with the real user_id
     match rt.block_on(bot_api.complete_auth_flow_for_user(
         platform.clone(),
         callback_result.code,
-        username,
+        user.user_id,
     )) {
         Ok(cred) => {
             format!(
-                "Success! Stored credentials for platform={:?}, user_id='{}', is_bot={}.",
-                cred.platform, cred.user_id, cred.is_bot
+                "Success! Stored credentials => platform={:?}, user_id={}, is_bot={}",
+                cred.platform,
+                cred.user_id,
+                cred.is_bot
             )
         }
         Err(e) => format!("Error completing auth => {:?}", e),
     }
 }
 
-/// Revoke stored credentials
-fn account_remove(platform: Platform, username: &str, bot_api: &Arc<dyn BotApi>) -> String {
-    // --------------------------------
-    // Switch from current_thread to multi_thread:
-    // --------------------------------
-    let rt = tokio::runtime::Builder::new_multi_thread()
-        .worker_threads(2)
-        .enable_all()
-        .build()
-        .unwrap();
+/// Helper that tries to find a user with `global_username == name`, or if not found, creates one.
+/// Returns the full user record (including the real user_id=UUID).
+async fn find_or_create_user_by_name(
+    bot_api: &Arc<dyn BotApi>,
+    final_username: &str
+) -> Result<User, Error> {
+    // Example: call an async method to search
+    let all = bot_api.search_users(final_username).await?;
+    if let Some(u) = all.into_iter().find(|usr| {
+        usr.global_username.as_deref() == Some(final_username)
+    }) {
+        // found
+        Ok(u)
+    } else {
+        // not found => create
+        use uuid::Uuid;
+        let new_uuid = Uuid::new_v4();
 
-    match rt.block_on(bot_api.revoke_credentials(platform.clone(), username)) {
-        Ok(_) => format!("Removed credentials for platform={:?}, user_id={}", platform, username),
+        // also an async call
+        bot_api.create_user(new_uuid, final_username).await?;
+
+        // fetch or build a new user object to return
+        // e.g. get_user(new_uuid)
+        let user_opt = bot_api.get_user(new_uuid).await?;
+        let user = user_opt.ok_or_else(|| Error::Database(sqlx::Error::RowNotFound))?;
+        Ok(user)
+    }
+}
+
+fn account_remove(platform: Platform, user_id_str: &str, bot_api: &Arc<dyn BotApi>) -> String {
+    let rt = RuntimeBuilder::new_current_thread().enable_all().build().unwrap();
+    match rt.block_on(bot_api.revoke_credentials(platform.clone(), user_id_str.parse().unwrap())) {
+        Ok(_) => format!("Removed credentials for platform={:?}, user_id={}", platform, user_id_str),
         Err(e) => format!("Error removing => {:?}", e),
     }
 }
 
-/// "account show <platform> <username>"
-fn account_show(platform: Platform, username: &str, bot_api: &Arc<dyn BotApi>) -> String {
-    // --------------------------------
-    // Also multi‐threaded
-    // --------------------------------
-    let rt = tokio::runtime::Builder::new_multi_thread()
-        .worker_threads(2)
-        .enable_all()
-        .build()
-        .unwrap();
+fn account_show(platform: Platform, user_id_str: &str, bot_api: &Arc<dyn BotApi>) -> String {
+    let rt = RuntimeBuilder::new_current_thread().enable_all().build().unwrap();
 
     // We'll re-use list_credentials(Some(platform)), then filter by user_id:
     let all = match rt.block_on(bot_api.list_credentials(Some(platform.clone()))) {
@@ -199,7 +250,8 @@ fn account_show(platform: Platform, username: &str, bot_api: &Arc<dyn BotApi>) -
         Err(e) => return format!("Error => {:?}", e),
     };
 
-    let maybe_cred = all.into_iter().find(|c| c.user_id == username);
+    // Compare user_id_str to credential.user_id.to_string()
+    let maybe_cred = all.into_iter().find(|c| c.user_id.to_string() == user_id_str);
     match maybe_cred {
         Some(c) => {
             let mut out = String::new();
@@ -212,6 +264,9 @@ fn account_show(platform: Platform, username: &str, bot_api: &Arc<dyn BotApi>) -
             out.push_str(&format!("created_at={}\nupdated_at={}\n", c.created_at, c.updated_at));
             out
         }
-        None => format!("No credentials found for platform={:?}, user_id='{}'", platform, username),
+        None => format!(
+            "No credentials found for platform={:?}, user_id='{}'",
+            platform, user_id_str
+        ),
     }
 }

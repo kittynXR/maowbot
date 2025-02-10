@@ -40,7 +40,7 @@ anyhow = "^1.0"
 dotenv = "^0.15"
 
 base64 = "^0.22"
-uuid = { version = "^1.12", features = ["v4"] }
+uuid = { version = "^1.12", features = ["v4", "serde"] }
 rand = { version ="^0.9", features = ["os_rng"] }
 rand_core = "^0.9"
 

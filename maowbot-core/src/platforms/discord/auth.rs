@@ -62,10 +62,10 @@ impl PlatformAuthenticator for DiscordAuthenticator {
                     .ok_or_else(|| Error::Auth("Bot token is required".into()))?;
 
                 Ok(PlatformCredential {
-                    credential_id: Uuid::new_v4().to_string(),
+                    credential_id: Uuid::new_v4(),
                     platform: Platform::Discord,
                     credential_type: CredentialType::BearerToken,
-                    user_id: String::new(), // set later
+                    user_id: Uuid::new_v4(), // set later
                     primary_token: bot_token.clone(),
                     refresh_token: None,
                     additional_data: Some(json!({

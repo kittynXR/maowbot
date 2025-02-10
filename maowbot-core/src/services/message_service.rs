@@ -4,7 +4,7 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use chrono::{DateTime, Utc};
 use tracing::{info, error};
-
+use uuid::Uuid;
 use crate::cache::{ChatCache, CachedMessage};
 use crate::eventbus::{EventBus, BotEvent};
 use crate::Error;
@@ -30,7 +30,7 @@ impl MessageService {
         &self,
         platform: &str,
         channel: &str,
-        user_id: &str,
+        user_id: &Uuid,
         text: &str,
     ) -> Result<(), Error> {
 

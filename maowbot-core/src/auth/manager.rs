@@ -1,9 +1,7 @@
-// =============================================================================
-// maowbot-core/src/auth/manager.rs
-// =============================================================================
-
 use std::collections::HashMap;
 use std::sync::Arc;
+use clap::builder::TypedValueParser;
+use uuid::Uuid;
 
 use crate::auth::{PlatformAuthenticator, AuthenticationPrompt, AuthenticationResponse};
 use crate::Error;
@@ -16,7 +14,8 @@ use crate::platforms::twitch_helix::auth::TwitchAuthenticator;
 use crate::platforms::vrchat::auth::VRChatAuthenticator;
 use crate::platforms::twitch_irc::auth::TwitchIrcAuthenticator;
 
-/// AuthManager: manages platform authenticators, reading config from the DB.
+/// AuthManager: manages platform authenticators, reading config from DB
+/// and storing credentials in DB once retrieved.
 pub struct AuthManager {
     pub credentials_repo: Box<dyn CredentialsRepository + Send + Sync>,
     pub platform_config_repo: Arc<dyn PlatformConfigRepository + Send + Sync>,
@@ -46,7 +45,7 @@ impl AuthManager {
         self.authenticators.insert(platform, authenticator);
     }
 
-    /// Convenience method (old usage).
+    /// For older usage: calls begin_auth_flow but never completes it properly
     pub async fn authenticate_platform(&mut self, platform: Platform) -> Result<PlatformCredential, Error> {
         self.authenticate_platform_for_role(platform, false).await
     }
@@ -62,7 +61,7 @@ impl AuthManager {
         ))
     }
 
-    /// Step 1 of the OAuth process: returns a “redirect” or user prompt URL.
+    /// Step 1 of OAuth: get the redirect URL or instructions
     pub async fn begin_auth_flow(
         &mut self,
         platform: Platform,
@@ -75,7 +74,7 @@ impl AuthManager {
             Platform::TwitchIRC => "twitch-irc",
         };
 
-        // Single config row for this platform:
+        // get config from DB
         let maybe_conf = self.platform_config_repo.get_by_platform(platform_str).await?;
         let (client_id, client_secret) = if let Some(conf_row) = maybe_conf {
             let cid = conf_row.client_id.unwrap_or_default();
@@ -88,7 +87,7 @@ impl AuthManager {
             )));
         };
 
-        // Build the appropriate authenticator
+        // create the authenticator for the requested platform
         let authenticator: Box<dyn PlatformAuthenticator + Send + Sync> = match platform {
             Platform::Discord => {
                 Box::new(DiscordAuthenticator::new(
@@ -115,36 +114,24 @@ impl AuthManager {
         if let Some(auth) = self.authenticators.get_mut(&platform) {
             auth.set_is_bot(is_bot);
             auth.initialize().await?;
-            if let Ok(prompt) = auth.start_authentication().await {
-                match prompt {
-                    AuthenticationPrompt::Browser { url } => {
-                        return Ok(url);
-                    }
-                    AuthenticationPrompt::Code { message } => {
-                        return Err(Error::Auth(message));
-                    }
-                    AuthenticationPrompt::ApiKey { message } => {
-                        return Ok(format!("(API key) {}", message));
-                    }
-                    AuthenticationPrompt::MultipleKeys { .. } => {
-                        return Ok("(Multiple keys required) handle in TUI".into());
-                    }
-                    AuthenticationPrompt::TwoFactor { message } => {
-                        return Ok(format!("(2FA) {}", message));
-                    }
-                    AuthenticationPrompt::None => {
-                        return Ok("(No prompt needed)".into());
-                    }
+            match auth.start_authentication().await? {
+                AuthenticationPrompt::Browser { url } => Ok(url),
+                AuthenticationPrompt::Code { message } => Err(Error::Auth(message)),
+                AuthenticationPrompt::ApiKey { message } => Ok(format!("(API key) {message}")),
+                AuthenticationPrompt::MultipleKeys { .. } => {
+                    Ok("(Multiple keys required) handle in TUI".into())
                 }
+                AuthenticationPrompt::TwoFactor { message } => Ok(format!("(2FA) {message}")),
+                AuthenticationPrompt::None => Ok("(No prompt needed)".into()),
             }
+        } else {
+            Err(Error::Platform(format!(
+                "No authenticator available for platform={platform:?}"
+            )))
         }
-        Err(Error::Platform(format!(
-            "Could not begin auth flow for platform={:?}",
-            platform
-        )))
     }
 
-    /// Step 2 (old usage) — no user_id is set => foreign key fails if user_id is required.
+    /// Step 2 (old usage): tries to complete for the given code, but sets user_id = ""
     pub async fn complete_auth_flow(
         &mut self,
         platform: Platform,
@@ -155,19 +142,16 @@ impl AuthManager {
             .get_mut(&platform)
             .ok_or_else(|| Error::Platform(format!("No authenticator for {platform:?}")))?;
 
-        // This returns `user_id = ""` by default → F.K. error
         let cred = authenticator
             .complete_authentication(AuthenticationResponse::Code(code))
             .await?;
 
-        // Then we store it in DB => fails if no user row with user_id=""
+        // This fails if user_id="" is not found in DB:
         self.credentials_repo.store_credentials(&cred).await?;
         Ok(cred)
     }
 
-    // ------------------------------------------------------------------------
-    // NEW METHOD: “Complete the auth flow” while specifying the user_id to store
-    // ------------------------------------------------------------------------
+    /// Step 2 (improved): specify the user_id (UUID string) to store in DB
     pub async fn complete_auth_flow_for_user(
         &mut self,
         platform: Platform,
@@ -179,60 +163,72 @@ impl AuthManager {
             .get_mut(&platform)
             .ok_or_else(|| Error::Platform(format!("No authenticator for {platform:?}")))?;
 
+        // finish the OAuth steps
         let mut cred = authenticator
             .complete_authentication(AuthenticationResponse::Code(code))
             .await?;
 
-        // Overwrite the user_id so we have a valid row in the DB
-        cred.user_id = user_id.to_string();
+        // parse the user_id as a UUID
+        let user_uuid = Uuid::parse_str(user_id)
+            .map_err(|e| Error::Auth(format!("Failed to parse user_id as UUID: {e}")))?;
 
-        // Now store in DB
+        // store the real UUID in the credential
+        cred.user_id = user_uuid;
+
+        // now persist to DB
         self.credentials_repo.store_credentials(&cred).await?;
         Ok(cred)
     }
 
-    // If you want a direct place to store credentials from external calls:
+    /// If an external caller has already built a PlatformCredential, store it
     pub async fn store_credentials(&self, cred: &PlatformCredential) -> Result<(), Error> {
         self.credentials_repo.store_credentials(cred).await
     }
 
+    /// Retrieve credentials
     pub async fn get_credentials(
         &self,
         platform: &Platform,
         user_id: &str,
     ) -> Result<Option<PlatformCredential>, Error> {
-        self.credentials_repo.get_credentials(platform, user_id).await
+        self.credentials_repo.get_credentials(platform, user_id.parse().unwrap()).await
     }
 
+    /// Revoke & remove from DB
     pub async fn revoke_credentials(
         &mut self,
         platform: &Platform,
         user_id: &str,
     ) -> Result<(), Error> {
-        if let Some(cred) = self.credentials_repo.get_credentials(platform, user_id).await? {
+        if let Some(cred) = self.credentials_repo.get_credentials(platform, user_id.parse().unwrap()).await? {
             let authenticator = self.authenticators.get_mut(platform)
-                .ok_or_else(|| Error::Platform(format!("No authenticator for {:?}", platform)))?;
+                .ok_or_else(|| Error::Platform(format!("No authenticator for {platform:?}")))?;
             authenticator.revoke(&cred).await?;
-            self.credentials_repo.delete_credentials(platform, user_id).await?;
+            self.credentials_repo.delete_credentials(platform, user_id.parse().unwrap()).await?;
         }
         Ok(())
     }
 
+    /// Attempt to refresh a credential
     pub async fn refresh_platform_credentials(
         &mut self,
         platform: &Platform,
-        user_id: &str,
+        user_id: &Uuid,
     ) -> Result<PlatformCredential, Error> {
-        let cred = self.credentials_repo
-            .get_credentials(platform, user_id).await?
-            .ok_or_else(|| Error::Auth("No credentials found".into()))?;
+        let Some(cred) = self.credentials_repo
+            .get_credentials(platform, *user_id).await? else {
+            return Err(Error::Auth("No credentials found".into()));
+        };
+
         let authenticator = self.authenticators.get_mut(platform)
-            .ok_or_else(|| Error::Platform(format!("No authenticator for {:?}", platform)))?;
+            .ok_or_else(|| Error::Platform(format!("No authenticator for {platform:?}")))?;
+
         let refreshed = authenticator.refresh(&cred).await?;
         self.credentials_repo.store_credentials(&refreshed).await?;
         Ok(refreshed)
     }
 
+    /// Confirm validity
     pub async fn validate_credentials(
         &mut self,
         cred: &PlatformCredential
@@ -242,7 +238,7 @@ impl AuthManager {
         authenticator.validate(cred).await
     }
 
-    /// Replaces old 'insert_platform_config'. We just upsert by platform now.
+    /// Upsert a platform_config record in DB
     pub async fn create_platform_config(
         &self,
         platform_str: &str,

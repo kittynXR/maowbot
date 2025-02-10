@@ -1,22 +1,22 @@
-// src/repositories/postgres/platform_identity.rs
-
 use crate::models::{PlatformIdentity, Platform};
 use crate::Error;
-use sqlx::{Pool, Postgres, Row};
 use async_trait::async_trait;
+use chrono::{DateTime, Utc};
 use serde_json;
+use sqlx::{Pool, Postgres, Row};
+use uuid::Uuid;
 
 #[async_trait]
 pub trait PlatformIdentityRepo {
     async fn create(&self, identity: &PlatformIdentity) -> Result<(), Error>;
-    async fn get(&self, id: &str) -> Result<Option<PlatformIdentity>, Error>;
+    async fn get(&self, id: Uuid) -> Result<Option<PlatformIdentity>, Error>;
     async fn update(&self, identity: &PlatformIdentity) -> Result<(), Error>;
-    async fn delete(&self, id: &str) -> Result<(), Error>;
+    async fn delete(&self, id: Uuid) -> Result<(), Error>;
 
     async fn get_by_platform(&self, platform: Platform, platform_user_id: &str)
                              -> Result<Option<PlatformIdentity>, Error>;
 
-    async fn get_all_for_user(&self, user_id: &str)
+    async fn get_all_for_user(&self, user_id: Uuid)
                               -> Result<Vec<PlatformIdentity>, Error>;
 }
 
@@ -47,14 +47,14 @@ impl PlatformIdentityRepo for PlatformIdentityRepository {
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
             "#,
         )
-            .bind(&identity.platform_identity_id)
-            .bind(&identity.user_id)
+            .bind(identity.platform_identity_id)
+            .bind(identity.user_id)
             .bind(platform_str)
             .bind(&identity.platform_user_id)
             .bind(&identity.platform_username)
             .bind(&identity.platform_display_name)
-            .bind(&roles_json)
-            .bind(&data_json)
+            .bind(roles_json)
+            .bind(data_json)
             .bind(identity.created_at)
             .bind(identity.last_updated)
             .execute(&self.pool)
@@ -62,7 +62,7 @@ impl PlatformIdentityRepo for PlatformIdentityRepository {
         Ok(())
     }
 
-    async fn get(&self, id: &str) -> Result<Option<PlatformIdentity>, Error> {
+    async fn get(&self, id: Uuid) -> Result<Option<PlatformIdentity>, Error> {
         let row = sqlx::query(
             r#"
             SELECT
@@ -88,7 +88,7 @@ impl PlatformIdentityRepo for PlatformIdentityRepository {
             let roles_json: String = r.try_get("platform_roles")?;
             let data_json: String = r.try_get("platform_data")?;
 
-            Ok(Some(PlatformIdentity {
+            let pi = PlatformIdentity {
                 platform_identity_id: r.try_get("platform_identity_id")?,
                 user_id: r.try_get("user_id")?,
                 platform: Platform::from(r.try_get::<String, _>("platform")?),
@@ -97,9 +97,10 @@ impl PlatformIdentityRepo for PlatformIdentityRepository {
                 platform_display_name: r.try_get("platform_display_name")?,
                 platform_roles: serde_json::from_str(&roles_json)?,
                 platform_data: serde_json::from_str(&data_json)?,
-                created_at: r.try_get::<chrono::DateTime<chrono::Utc>, _>("created_at")?,
-                last_updated: r.try_get::<chrono::DateTime<chrono::Utc>, _>("last_updated")?,
-            }))
+                created_at: r.try_get("created_at")?,
+                last_updated: r.try_get("last_updated")?,
+            };
+            Ok(Some(pi))
         } else {
             Ok(None)
         }
@@ -124,7 +125,7 @@ impl PlatformIdentityRepo for PlatformIdentityRepository {
             WHERE platform_identity_id = $9
             "#,
         )
-            .bind(&identity.user_id)
+            .bind(identity.user_id)
             .bind(platform_str)
             .bind(&identity.platform_user_id)
             .bind(&identity.platform_username)
@@ -132,13 +133,13 @@ impl PlatformIdentityRepo for PlatformIdentityRepository {
             .bind(roles_json)
             .bind(data_json)
             .bind(identity.last_updated)
-            .bind(&identity.platform_identity_id)
+            .bind(identity.platform_identity_id)
             .execute(&self.pool)
             .await?;
         Ok(())
     }
 
-    async fn delete(&self, id: &str) -> Result<(), Error> {
+    async fn delete(&self, id: Uuid) -> Result<(), Error> {
         sqlx::query("DELETE FROM platform_identities WHERE platform_identity_id = $1")
             .bind(id)
             .execute(&self.pool)
@@ -147,7 +148,8 @@ impl PlatformIdentityRepo for PlatformIdentityRepository {
     }
 
     async fn get_by_platform(&self, platform: Platform, platform_user_id: &str)
-                             -> Result<Option<PlatformIdentity>, Error> {
+                             -> Result<Option<PlatformIdentity>, Error>
+    {
         let platform_str = platform.to_string();
 
         let row = sqlx::query(
@@ -176,7 +178,7 @@ impl PlatformIdentityRepo for PlatformIdentityRepository {
             let roles_json: String = r.try_get("platform_roles")?;
             let data_json: String = r.try_get("platform_data")?;
 
-            Ok(Some(PlatformIdentity {
+            let pi = PlatformIdentity {
                 platform_identity_id: r.try_get("platform_identity_id")?,
                 user_id: r.try_get("user_id")?,
                 platform: Platform::from(r.try_get::<String, _>("platform")?),
@@ -185,16 +187,18 @@ impl PlatformIdentityRepo for PlatformIdentityRepository {
                 platform_display_name: r.try_get("platform_display_name")?,
                 platform_roles: serde_json::from_str(&roles_json)?,
                 platform_data: serde_json::from_str(&data_json)?,
-                created_at: r.try_get::<chrono::DateTime<chrono::Utc>, _>("created_at")?,
-                last_updated: r.try_get::<chrono::DateTime<chrono::Utc>, _>("last_updated")?,
-            }))
+                created_at: r.try_get("created_at")?,
+                last_updated: r.try_get("last_updated")?,
+            };
+            Ok(Some(pi))
         } else {
             Ok(None)
         }
     }
 
-    async fn get_all_for_user(&self, user_id: &str)
-                              -> Result<Vec<PlatformIdentity>, Error> {
+    async fn get_all_for_user(&self, user_id: Uuid)
+                              -> Result<Vec<PlatformIdentity>, Error>
+    {
         let rows = sqlx::query(
             r#"
             SELECT
@@ -221,7 +225,7 @@ impl PlatformIdentityRepo for PlatformIdentityRepository {
             let roles_json: String = r.try_get("platform_roles")?;
             let data_json: String = r.try_get("platform_data")?;
 
-            identities.push(PlatformIdentity {
+            let pi = PlatformIdentity {
                 platform_identity_id: r.try_get("platform_identity_id")?,
                 user_id: r.try_get("user_id")?,
                 platform: Platform::from(r.try_get::<String, _>("platform")?),
@@ -230,11 +234,11 @@ impl PlatformIdentityRepo for PlatformIdentityRepository {
                 platform_display_name: r.try_get("platform_display_name")?,
                 platform_roles: serde_json::from_str(&roles_json)?,
                 platform_data: serde_json::from_str(&data_json)?,
-                created_at: r.try_get::<chrono::DateTime<chrono::Utc>, _>("created_at")?,
-                last_updated: r.try_get::<chrono::DateTime<chrono::Utc>, _>("last_updated")?,
-            });
+                created_at: r.try_get("created_at")?,
+                last_updated: r.try_get("last_updated")?,
+            };
+            identities.push(pi);
         }
-
         Ok(identities)
     }
 }

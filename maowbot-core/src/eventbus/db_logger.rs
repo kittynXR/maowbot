@@ -103,10 +103,10 @@ where
 fn convert_to_chat_message(event: &BotEvent) -> Option<ChatMessage> {
     if let BotEvent::ChatMessage { platform, channel, user, text, timestamp } = event {
         Some(ChatMessage {
-            message_id: uuid::Uuid::new_v4().to_string(),
+            message_id: uuid::Uuid::new_v4(),
             platform: platform.clone(),
             channel: channel.clone(),
-            user_id: user.clone(),
+            user_id: user.parse().unwrap(),
             message_text: text.clone(),
             timestamp: timestamp.to_utc(),
             metadata: None,

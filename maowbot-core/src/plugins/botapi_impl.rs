@@ -1,7 +1,9 @@
-// src/plugins/botapi_impl.rs
+// File: maowbot-core/src/plugins/botapi_impl.rs
 
 use async_trait::async_trait;
 use std::sync::Arc;
+use uuid::Uuid;
+
 use crate::plugins::manager::PluginManager;
 use crate::plugins::types::PluginRecord;
 use crate::plugins::plugin_connection::PluginConnection;
@@ -10,6 +12,7 @@ use crate::Error;
 use crate::eventbus::{BotEvent, EventBus};
 use crate::plugins::bot_api::{BotApi, StatusData, PlatformConfigData};
 use crate::models::{Platform, PlatformCredential, User};
+
 use crate::repositories::postgres::bot_config::BotConfigRepository;
 use crate::repositories::postgres::credentials::CredentialsRepository;
 use crate::repositories::postgres::platform_config::PlatformConfigRepository;
@@ -58,10 +61,14 @@ impl BotApi for PluginManager {
         self.remove_plugin(plugin_name).await
     }
 
-    async fn create_user(&self, new_user_id: &str, display_name: &str) -> Result<(), Error> {
+    // --------------------------------------------------------------------------------
+    //  All user-related methods now pass Uuid for user_id:
+    // --------------------------------------------------------------------------------
+
+    async fn create_user(&self, new_user_id: Uuid, display_name: &str) -> Result<(), Error> {
         let user_repo = self.user_repo.clone();
         let user = crate::models::User {
-            user_id: new_user_id.to_string(),
+            user_id: new_user_id,
             global_username: Some(display_name.to_string()),
             created_at: chrono::Utc::now(),
             last_seen: chrono::Utc::now(),
@@ -71,19 +78,19 @@ impl BotApi for PluginManager {
         Ok(())
     }
 
-    async fn remove_user(&self, user_id: &str) -> Result<(), Error> {
+    async fn remove_user(&self, user_id: Uuid) -> Result<(), Error> {
         let user_repo = self.user_repo.clone();
         user_repo.delete(user_id).await?;
         Ok(())
     }
 
-    async fn get_user(&self, user_id: &str) -> Result<Option<crate::models::User>, Error> {
+    async fn get_user(&self, user_id: Uuid) -> Result<Option<crate::models::User>, Error> {
         let user_repo = self.user_repo.clone();
         let found = user_repo.get(user_id).await?;
         Ok(found)
     }
 
-    async fn update_user_active(&self, user_id: &str, is_active: bool) -> Result<(), Error> {
+    async fn update_user_active(&self, user_id: Uuid, is_active: bool) -> Result<(), Error> {
         let user_repo = self.user_repo.clone();
         if let Some(mut u) = user_repo.get(user_id).await? {
             u.is_active = is_active;
@@ -93,17 +100,40 @@ impl BotApi for PluginManager {
         Ok(())
     }
 
+    /// We still do naive substring matching for search_users. This remains a string-based query
+    /// so no change to the signature.
     async fn search_users(&self, query: &str) -> Result<Vec<crate::models::User>, Error> {
         let user_repo = self.user_repo.clone();
         let all_users = user_repo.list_all().await?;
         let filtered = all_users.into_iter()
             .filter(|u| {
-                u.user_id.contains(query)
+                // Convert user_id to string or do something else if you want
+                let user_id_str = u.user_id.to_string();
+                user_id_str.contains(query)
                     || u.global_username.as_deref().unwrap_or("").contains(query)
             })
             .collect();
         Ok(filtered)
     }
+
+    async fn find_user_by_name(&self, name: &str) -> Result<User, Error> {
+        // 1) call search_users
+        let all = self.search_users(name).await?;
+        // 2) find exact or partial match
+        if all.is_empty() {
+            Err(Error::Auth(format!("No user with name='{}'", name)))
+        } else if all.len() > 1 {
+            // optional: return error or pick the first
+            Err(Error::Auth(format!("Multiple matches for '{}'", name)))
+        } else {
+            // exactly 1
+            Ok(all[0].clone())
+        }
+    }
+
+    // --------------------------------------------------------------------------------
+    //  OAuth flows
+    // --------------------------------------------------------------------------------
 
     async fn begin_auth_flow(
         &self,
@@ -135,11 +165,11 @@ impl BotApi for PluginManager {
         &self,
         platform: Platform,
         code: String,
-        user_id: &str
+        user_id: Uuid
     ) -> Result<PlatformCredential, Error> {
         if let Some(am) = &self.auth_manager {
             let mut lock = am.lock().await;
-            lock.complete_auth_flow_for_user(platform, code, user_id).await
+            lock.complete_auth_flow_for_user(platform, code, &user_id.to_string()).await
         } else {
             Err(Error::Auth("No auth manager set in plugin manager".into()))
         }
@@ -148,11 +178,11 @@ impl BotApi for PluginManager {
     async fn revoke_credentials(
         &self,
         platform: Platform,
-        user_id: &str
+        user_id: String
     ) -> Result<(), Error> {
         if let Some(am) = &self.auth_manager {
             let mut lock = am.lock().await;
-            lock.revoke_credentials(&platform, user_id).await
+            lock.revoke_credentials(&platform, &user_id.to_string()).await
         } else {
             Err(Error::Auth("No auth manager set in plugin manager".into()))
         }
@@ -229,7 +259,7 @@ impl BotApi for PluginManager {
         if let Some(am) = &self.auth_manager {
             let lock = am.lock().await;
             let pc_repo = &lock.platform_config_repo;
-            pc_repo.delete_platform_config(platform_config_id).await?;
+            pc_repo.delete_platform_config(platform_config_id.parse().unwrap()).await?;
             Ok(())
         } else {
             Err(Error::Auth("No auth manager set in plugin manager".into()))

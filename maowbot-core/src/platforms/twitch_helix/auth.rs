@@ -125,10 +125,10 @@ impl PlatformAuthenticator for TwitchAuthenticator {
         let expires_at = Some(now + chrono::Duration::seconds(resp.expires_in as i64));
 
         let credential = PlatformCredential {
-            credential_id: Uuid::new_v4().to_string(),
+            credential_id: Uuid::new_v4(),
             platform: Platform::Twitch,
             credential_type: CredentialType::OAuth2,
-            user_id: String::new(),
+            user_id: Uuid::new_v4(),
             primary_token: resp.access_token,
             refresh_token: resp.refresh_token,
             additional_data: Some(serde_json::json!({

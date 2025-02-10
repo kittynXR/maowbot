@@ -196,7 +196,7 @@ async fn generate_user_summaries(
 
     // 2) For each user, gather messages & compute analysis
     for row in user_rows {
-        let user_id: String = row.try_get("user_id")?;
+        let user_id: Uuid = row.try_get("user_id")?;
 
         let messages = sqlx::query_as::<_, ChatMessage>(
             r#"
@@ -245,7 +245,7 @@ async fn generate_user_summaries(
             .await?;
 
         // Update or create user_analysis
-        if let Some(mut analysis) = user_analysis_repo.get_analysis(&user_id).await? {
+        if let Some(mut analysis) = user_analysis_repo.get_analysis(user_id).await? {
             // Simple weighted approach
             analysis.spam_score = 0.7 * analysis.spam_score + 0.3 * spam;
             analysis.intelligibility_score = 0.7 * analysis.intelligibility_score + 0.3 * intel;
@@ -260,7 +260,7 @@ async fn generate_user_summaries(
         } else {
             // If there's no existing analysis, create a brand-new one:
             let new_one = UserAnalysis {
-                user_analysis_id: Uuid::new_v4().to_string(),
+                user_analysis_id: Uuid::new_v4(),
                 user_id: user_id.clone(),
                 spam_score: spam,
                 intelligibility_score: intel,

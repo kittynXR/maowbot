@@ -6,13 +6,14 @@ use chrono::{DateTime, Utc};
 use serde::{Serialize, Deserialize};
 use serde_json::Value;
 use sqlx::FromRow;
+use uuid::Uuid;
 
 pub mod user_analysis;
 pub use user_analysis::UserAnalysis;
 
-#[derive(Debug, Serialize, Deserialize, Clone, FromRow)]
+#[derive(Debug, Serialize, Deserialize, Clone, sqlx::FromRow)]
 pub struct User {
-    pub user_id: String,
+    pub user_id: Uuid,
     pub global_username: Option<String>,
     pub created_at: DateTime<Utc>,
     pub last_seen: DateTime<Utc>,
@@ -107,8 +108,8 @@ impl FromStr for CredentialType {
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct PlatformIdentity {
-    pub platform_identity_id: String,
-    pub user_id: String,
+    pub platform_identity_id: Uuid,
+    pub user_id: Uuid,
     pub platform: Platform,
     pub platform_user_id: String,
     pub platform_username: String,
@@ -120,12 +121,12 @@ pub struct PlatformIdentity {
 }
 
 /// Add the FromRow derive so SQLx can convert rows to PlatformCredential.
-#[derive(Debug, Serialize, Deserialize, Clone, FromRow)]
+#[derive(Debug, Serialize, Deserialize, Clone, sqlx::FromRow)]
 pub struct PlatformCredential {
-    pub credential_id: String,
+    pub credential_id: Uuid,
     pub platform: Platform,
     pub credential_type: CredentialType,
-    pub user_id: String,
+    pub user_id: Uuid,   // <---- now UUID
     pub primary_token: String,
     pub refresh_token: Option<String>,
     pub additional_data: Option<Value>,

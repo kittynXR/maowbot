@@ -70,10 +70,10 @@ impl PlatformAuthenticator for VRChatAuthenticator {
 
                 // Real VRChat API call would happen here
                 Ok(PlatformCredential {
-                    credential_id: Uuid::new_v4().to_string(),
+                    credential_id: Uuid::new_v4(),
                     platform: Platform::VRChat,
                     credential_type: CredentialType::Interactive2FA,
-                    user_id: username.clone(),
+                    user_id: Uuid::new_v4(),
                     primary_token: "mock_auth_token".into(),
                     refresh_token: None,
                     additional_data: Some(json!({

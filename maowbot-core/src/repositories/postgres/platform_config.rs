@@ -1,17 +1,12 @@
-// maowbot-core/src/repositories/postgres/platform_config.rs
-
 use sqlx::{Pool, Postgres, Row};
 use async_trait::async_trait;
 use uuid::Uuid;
 use chrono::{DateTime, Utc};
 use crate::Error;
 
-/// Basic struct representing a row in `platform_config`, storing
-/// client_id/secret for a particular platform. We store exactly
-/// one row per platform (no “label”).
 #[derive(Debug, Clone)]
 pub struct PlatformConfig {
-    pub platform_config_id: String,
+    pub platform_config_id: Uuid,
     pub platform: String,
     pub client_id: Option<String>,
     pub client_secret: Option<String>,
@@ -27,7 +22,7 @@ impl PlatformConfig {
     ) -> Self {
         let now = Utc::now();
         Self {
-            platform_config_id: Uuid::new_v4().to_string(),
+            platform_config_id: Uuid::new_v4(),
             platform: platform.to_string(),
             client_id: client_id.map(|s| s.to_string()),
             client_secret: client_secret.map(|s| s.to_string()),
@@ -39,8 +34,6 @@ impl PlatformConfig {
 
 #[async_trait]
 pub trait PlatformConfigRepository: Send + Sync {
-    /// Insert or update the single config row for this `platform`.
-    /// If a row already exists for `platform`, update it; otherwise insert new.
     async fn upsert_platform_config(
         &self,
         platform: &str,
@@ -48,23 +41,13 @@ pub trait PlatformConfigRepository: Send + Sync {
         client_secret: Option<String>,
     ) -> Result<(), Error>;
 
-    /// Retrieve by ID (not used as much now that each platform has just one).
-    async fn get_platform_config(&self, platform_config_id: &str) -> Result<Option<PlatformConfig>, Error>;
-
-    /// List all configs (optionally filtered by platform).
+    async fn get_platform_config(&self, platform_config_id: Uuid) -> Result<Option<PlatformConfig>, Error>;
     async fn list_platform_configs(&self, maybe_platform: Option<&str>) -> Result<Vec<PlatformConfig>, Error>;
-
-    /// Delete row by ID (or use `platform` if you prefer).
-    async fn delete_platform_config(&self, platform_config_id: &str) -> Result<(), Error>;
-
-    /// Retrieve the single row by platform (returns None if not found).
+    async fn delete_platform_config(&self, platform_config_id: Uuid) -> Result<(), Error>;
     async fn get_by_platform(&self, platform: &str) -> Result<Option<PlatformConfig>, Error>;
-
-    /// Count how many rows exist for a given platform (should be 0 or 1 now).
     async fn count_for_platform(&self, platform: &str) -> Result<i64, Error>;
 }
 
-/// Postgres-based implementation.
 #[derive(Clone)]
 pub struct PostgresPlatformConfigRepository {
     pub pool: Pool<Postgres>,
@@ -84,10 +67,8 @@ impl PlatformConfigRepository for PostgresPlatformConfigRepository {
         client_id: Option<String>,
         client_secret: Option<String>,
     ) -> Result<(), Error> {
-        // We'll see if an existing row is present; if so, update. Otherwise, insert.
         let now = Utc::now();
 
-        // Check existing
         let existing = self.get_by_platform(platform).await?;
         if let Some(pc) = existing {
             // update
@@ -100,16 +81,15 @@ impl PlatformConfigRepository for PostgresPlatformConfigRepository {
                 WHERE platform_config_id = $4
                 "#
             )
-                .bind(&client_id)
-                .bind(&client_secret)
+                .bind(client_id)
+                .bind(client_secret)
                 .bind(now)
                 .bind(pc.platform_config_id)
                 .execute(&self.pool)
                 .await?;
-            Ok(())
         } else {
             // insert
-            let platform_config_id = Uuid::new_v4().to_string();
+            let new_id = Uuid::new_v4();
             sqlx::query(
                 r#"
                 INSERT INTO platform_config (
@@ -123,19 +103,19 @@ impl PlatformConfigRepository for PostgresPlatformConfigRepository {
                 VALUES ($1, $2, $3, $4, $5, $6)
                 "#
             )
-                .bind(&platform_config_id)
+                .bind(new_id)
                 .bind(platform)
-                .bind(&client_id)
-                .bind(&client_secret)
+                .bind(client_id)
+                .bind(client_secret)
                 .bind(now)
                 .bind(now)
                 .execute(&self.pool)
                 .await?;
-            Ok(())
         }
+        Ok(())
     }
 
-    async fn get_platform_config(&self, platform_config_id: &str) -> Result<Option<PlatformConfig>, Error> {
+    async fn get_platform_config(&self, platform_config_id: Uuid) -> Result<Option<PlatformConfig>, Error> {
         let row = sqlx::query(
             r#"
             SELECT
@@ -147,21 +127,22 @@ impl PlatformConfigRepository for PostgresPlatformConfigRepository {
                 updated_at
             FROM platform_config
             WHERE platform_config_id = $1
-            "#
+            "#,
         )
             .bind(platform_config_id)
             .fetch_optional(&self.pool)
             .await?;
 
         if let Some(r) = row {
-            Ok(Some(PlatformConfig {
+            let pc = PlatformConfig {
                 platform_config_id: r.try_get("platform_config_id")?,
                 platform: r.try_get("platform")?,
                 client_id: r.try_get("client_id")?,
                 client_secret: r.try_get("client_secret")?,
                 created_at: r.try_get("created_at")?,
                 updated_at: r.try_get("updated_at")?,
-            }))
+            };
+            Ok(Some(pc))
         } else {
             Ok(None)
         }
@@ -204,26 +185,26 @@ impl PlatformConfigRepository for PostgresPlatformConfigRepository {
                 .await?
         };
 
-        let mut results = Vec::new();
-        for row in rows {
-            results.push(PlatformConfig {
-                platform_config_id: row.try_get("platform_config_id")?,
-                platform: row.try_get("platform")?,
-                client_id: row.try_get("client_id")?,
-                client_secret: row.try_get("client_secret")?,
-                created_at: row.try_get("created_at")?,
-                updated_at: row.try_get("updated_at")?,
+        let mut result = Vec::new();
+        for r in rows {
+            result.push(PlatformConfig {
+                platform_config_id: r.try_get("platform_config_id")?,
+                platform: r.try_get("platform")?,
+                client_id: r.try_get("client_id")?,
+                client_secret: r.try_get("client_secret")?,
+                created_at: r.try_get("created_at")?,
+                updated_at: r.try_get("updated_at")?,
             });
         }
-        Ok(results)
+        Ok(result)
     }
 
-    async fn delete_platform_config(&self, platform_config_id: &str) -> Result<(), Error> {
+    async fn delete_platform_config(&self, platform_config_id: Uuid) -> Result<(), Error> {
         sqlx::query(
             r#"
             DELETE FROM platform_config
             WHERE platform_config_id = $1
-            "#
+            "#,
         )
             .bind(platform_config_id)
             .execute(&self.pool)
@@ -251,14 +232,15 @@ impl PlatformConfigRepository for PostgresPlatformConfigRepository {
             .await?;
 
         if let Some(r) = row {
-            Ok(Some(PlatformConfig {
+            let pc = PlatformConfig {
                 platform_config_id: r.try_get("platform_config_id")?,
                 platform: r.try_get("platform")?,
                 client_id: r.try_get("client_id")?,
                 client_secret: r.try_get("client_secret")?,
                 created_at: r.try_get("created_at")?,
                 updated_at: r.try_get("updated_at")?,
-            }))
+            };
+            Ok(Some(pc))
         } else {
             Ok(None)
         }
@@ -270,12 +252,12 @@ impl PlatformConfigRepository for PostgresPlatformConfigRepository {
             SELECT COUNT(*) AS count
             FROM platform_config
             WHERE platform = $1
-            "#
+            "#,
         )
             .bind(platform)
             .fetch_one(&self.pool)
             .await?;
-        let count: i64 = row.try_get("count")?;
-        Ok(count)
+        let c: i64 = row.try_get("count")?;
+        Ok(c)
     }
 }

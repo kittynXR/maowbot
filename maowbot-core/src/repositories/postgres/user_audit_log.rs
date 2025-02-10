@@ -1,5 +1,3 @@
-// src/repositories/postgres/user_audit_log.rs
-
 use crate::Error;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -8,8 +6,8 @@ use uuid::Uuid;
 
 #[derive(Debug, Clone)]
 pub struct UserAuditLogEntry {
-    pub audit_id: String,
-    pub user_id: String,
+    pub audit_id: Uuid,
+    pub user_id: Uuid,
     pub event_type: String,
     pub old_value: Option<String>,
     pub new_value: Option<String>,
@@ -20,7 +18,7 @@ pub struct UserAuditLogEntry {
 
 impl UserAuditLogEntry {
     pub fn new(
-        user_id: &str,
+        user_id: Uuid,
         event_type: &str,
         old_value: Option<&str>,
         new_value: Option<&str>,
@@ -28,8 +26,8 @@ impl UserAuditLogEntry {
         metadata: Option<&str>,
     ) -> Self {
         Self {
-            audit_id: Uuid::new_v4().to_string(),
-            user_id: user_id.to_string(),
+            audit_id: Uuid::new_v4(),
+            user_id,
             event_type: event_type.to_string(),
             old_value: old_value.map(String::from),
             new_value: new_value.map(String::from),
@@ -43,8 +41,8 @@ impl UserAuditLogEntry {
 #[async_trait]
 pub trait UserAuditLogRepository {
     async fn insert_entry(&self, entry: &UserAuditLogEntry) -> Result<(), Error>;
-    async fn get_entry(&self, audit_id: &str) -> Result<Option<UserAuditLogEntry>, Error>;
-    async fn get_entries_for_user(&self, user_id: &str, limit: i64) -> Result<Vec<UserAuditLogEntry>, Error>;
+    async fn get_entry(&self, audit_id: Uuid) -> Result<Option<UserAuditLogEntry>, Error>;
+    async fn get_entries_for_user(&self, user_id: Uuid, limit: i64) -> Result<Vec<UserAuditLogEntry>, Error>;
 }
 
 #[derive(Clone)]
@@ -74,10 +72,10 @@ impl UserAuditLogRepository for PostgresUserAuditLogRepository {
                 metadata
             )
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-            "#
+            "#,
         )
-            .bind(&entry.audit_id)
-            .bind(&entry.user_id)
+            .bind(entry.audit_id)
+            .bind(entry.user_id)
             .bind(&entry.event_type)
             .bind(&entry.old_value)
             .bind(&entry.new_value)
@@ -89,7 +87,7 @@ impl UserAuditLogRepository for PostgresUserAuditLogRepository {
         Ok(())
     }
 
-    async fn get_entry(&self, audit_id: &str) -> Result<Option<UserAuditLogEntry>, Error> {
+    async fn get_entry(&self, audit_id: Uuid) -> Result<Option<UserAuditLogEntry>, Error> {
         let row = sqlx::query(
             r#"
             SELECT
@@ -110,22 +108,23 @@ impl UserAuditLogRepository for PostgresUserAuditLogRepository {
             .await?;
 
         if let Some(r) = row {
-            Ok(Some(UserAuditLogEntry {
+            let entry = UserAuditLogEntry {
                 audit_id: r.try_get("audit_id")?,
                 user_id: r.try_get("user_id")?,
                 event_type: r.try_get("event_type")?,
                 old_value: r.try_get("old_value")?,
                 new_value: r.try_get("new_value")?,
                 changed_by: r.try_get("changed_by")?,
-                timestamp: r.try_get::<DateTime<Utc>, _>("timestamp")?,
+                timestamp: r.try_get("timestamp")?,
                 metadata: r.try_get("metadata")?,
-            }))
+            };
+            Ok(Some(entry))
         } else {
             Ok(None)
         }
     }
 
-    async fn get_entries_for_user(&self, user_id: &str, limit: i64)
+    async fn get_entries_for_user(&self, user_id: Uuid, limit: i64)
                                   -> Result<Vec<UserAuditLogEntry>, Error>
     {
         let rows = sqlx::query(
@@ -143,7 +142,7 @@ impl UserAuditLogRepository for PostgresUserAuditLogRepository {
             WHERE user_id = $1
             ORDER BY timestamp DESC
             LIMIT $2
-            "#
+            "#,
         )
             .bind(user_id)
             .bind(limit)
@@ -159,7 +158,7 @@ impl UserAuditLogRepository for PostgresUserAuditLogRepository {
                 old_value: r.try_get("old_value")?,
                 new_value: r.try_get("new_value")?,
                 changed_by: r.try_get("changed_by")?,
-                timestamp: r.try_get::<DateTime<Utc>, _>("timestamp")?,
+                timestamp: r.try_get("timestamp")?,
                 metadata: r.try_get("metadata")?,
             });
         }

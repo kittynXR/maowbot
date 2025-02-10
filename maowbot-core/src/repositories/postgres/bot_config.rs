@@ -4,16 +4,9 @@ use crate::Error;
 
 #[async_trait]
 pub trait BotConfigRepository: Send + Sync {
-    /// Returns the port stored under key="callback_port", or None if not set.
     async fn get_callback_port(&self) -> Result<Option<u16>, Error>;
-
-    /// Sets the callback port in the bot_config table.
     async fn set_callback_port(&self, port: u16) -> Result<(), Error>;
-
-    /// Generic setter for any string config_value, keyed by config_key.
     async fn set_value(&self, config_key: &str, config_value: &str) -> Result<(), Error>;
-
-    /// Generic getter for any string config_value, keyed by config_key.
     async fn get_value(&self, config_key: &str) -> Result<Option<String>, Error>;
 }
 
@@ -43,7 +36,6 @@ impl BotConfigRepository for PostgresBotConfigRepository {
 
         if let Some(r) = row {
             let val: String = r.try_get("config_value")?;
-            // Attempt parse u16
             if let Ok(parsed) = val.parse::<u16>() {
                 Ok(Some(parsed))
             } else {
@@ -66,7 +58,7 @@ impl BotConfigRepository for PostgresBotConfigRepository {
             VALUES ($1, $2)
             ON CONFLICT (config_key) DO UPDATE
                 SET config_value = EXCLUDED.config_value
-            "#
+            "#,
         )
             .bind(config_key)
             .bind(config_value)

@@ -315,7 +315,7 @@ async fn maybe_create_owner_user(db: &Database) -> Result<(), Error> {
             return Err(Error::Auth("Owner username cannot be empty.".into()));
         }
 
-        let user_id = uuid::Uuid::new_v4().to_string();
+        let user_id = uuid::Uuid::new_v4();
         let now = chrono::Utc::now();
         // Insert into users
         sqlx::query(
@@ -324,7 +324,7 @@ async fn maybe_create_owner_user(db: &Database) -> Result<(), Error> {
             VALUES ($1, $2, $3, $4, true)
             "#
         )
-            .bind(&user_id)
+            .bind(user_id)
             .bind(&owner_username)
             .bind(now)
             .bind(now)
@@ -340,7 +340,7 @@ async fn maybe_create_owner_user(db: &Database) -> Result<(), Error> {
                 SET config_value = EXCLUDED.config_value
             "#
         )
-            .bind(&user_id)
+            .bind(user_id)
             .execute(db.pool())
             .await?;
 

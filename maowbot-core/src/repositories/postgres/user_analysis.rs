@@ -1,14 +1,13 @@
-// src/repositories/postgres/user_analysis.rs
-
 use sqlx::{Pool, Postgres, Row};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
+use uuid::Uuid;
 use crate::{Error, models::UserAnalysis};
 
 #[async_trait]
 pub trait UserAnalysisRepository: Send + Sync {
     async fn create_analysis(&self, analysis: &UserAnalysis) -> Result<(), Error>;
-    async fn get_analysis(&self, user_id: &str) -> Result<Option<UserAnalysis>, Error>;
+    async fn get_analysis(&self, user_id: Uuid) -> Result<Option<UserAnalysis>, Error>;
     async fn update_analysis(&self, analysis: &UserAnalysis) -> Result<(), Error>;
 }
 
@@ -41,10 +40,10 @@ impl UserAnalysisRepository for PostgresUserAnalysisRepository {
                 updated_at
             )
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-            "#
+            "#,
         )
-            .bind(&analysis.user_analysis_id)
-            .bind(&analysis.user_id)
+            .bind(analysis.user_analysis_id)
+            .bind(analysis.user_id)
             .bind(analysis.spam_score)
             .bind(analysis.intelligibility_score)
             .bind(analysis.quality_score)
@@ -55,10 +54,11 @@ impl UserAnalysisRepository for PostgresUserAnalysisRepository {
             .bind(analysis.updated_at)
             .execute(&self.pool)
             .await?;
+
         Ok(())
     }
 
-    async fn get_analysis(&self, user_id: &str) -> Result<Option<UserAnalysis>, Error> {
+    async fn get_analysis(&self, user_id: Uuid) -> Result<Option<UserAnalysis>, Error> {
         let row = sqlx::query(
             r#"
             SELECT user_analysis_id,
@@ -73,14 +73,14 @@ impl UserAnalysisRepository for PostgresUserAnalysisRepository {
                    updated_at
             FROM user_analysis
             WHERE user_id = $1
-            "#
+            "#,
         )
             .bind(user_id)
             .fetch_optional(&self.pool)
             .await?;
 
         if let Some(r) = row {
-            Ok(Some(UserAnalysis {
+            let ua = UserAnalysis {
                 user_analysis_id: r.try_get("user_analysis_id")?,
                 user_id: r.try_get("user_id")?,
                 spam_score: r.try_get("spam_score")?,
@@ -89,9 +89,10 @@ impl UserAnalysisRepository for PostgresUserAnalysisRepository {
                 horni_score: r.try_get("horni_score")?,
                 ai_notes: r.try_get("ai_notes")?,
                 moderator_notes: r.try_get("moderator_notes")?,
-                created_at: r.try_get::<DateTime<Utc>, _>("created_at")?,
-                updated_at: r.try_get::<DateTime<Utc>, _>("updated_at")?,
-            }))
+                created_at: r.try_get("created_at")?,
+                updated_at: r.try_get("updated_at")?,
+            };
+            Ok(Some(ua))
         } else {
             Ok(None)
         }
@@ -119,7 +120,7 @@ impl UserAnalysisRepository for PostgresUserAnalysisRepository {
             .bind(&analysis.ai_notes)
             .bind(&analysis.moderator_notes)
             .bind(now)
-            .bind(&analysis.user_analysis_id)
+            .bind(analysis.user_analysis_id)
             .execute(&self.pool)
             .await?;
         Ok(())

@@ -1,5 +1,3 @@
-// src/repositories/postgres/link_requests.rs
-
 use crate::Error;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -8,8 +6,8 @@ use uuid::Uuid;
 
 #[derive(Debug, Clone)]
 pub struct LinkRequest {
-    pub link_request_id: String,
-    pub requesting_user_id: String,
+    pub link_request_id: Uuid,
+    pub requesting_user_id: Uuid,
     pub target_platform: Option<String>,
     pub target_platform_user_id: Option<String>,
     pub link_code: Option<String>,
@@ -20,15 +18,15 @@ pub struct LinkRequest {
 
 impl LinkRequest {
     pub fn new(
-        requesting_user_id: &str,
+        requesting_user_id: Uuid,
         target_platform: Option<&str>,
         target_platform_user_id: Option<&str>,
         link_code: Option<&str>,
     ) -> Self {
         let now = Utc::now();
         Self {
-            link_request_id: Uuid::new_v4().to_string(),
-            requesting_user_id: requesting_user_id.to_string(),
+            link_request_id: Uuid::new_v4(),
+            requesting_user_id,
             target_platform: target_platform.map(|s| s.to_string()),
             target_platform_user_id: target_platform_user_id.map(|s| s.to_string()),
             link_code: link_code.map(|s| s.to_string()),
@@ -42,9 +40,9 @@ impl LinkRequest {
 #[async_trait]
 pub trait LinkRequestsRepository {
     async fn create_link_request(&self, req: &LinkRequest) -> Result<(), Error>;
-    async fn get_link_request(&self, link_request_id: &str) -> Result<Option<LinkRequest>, Error>;
+    async fn get_link_request(&self, link_request_id: Uuid) -> Result<Option<LinkRequest>, Error>;
     async fn update_link_request(&self, req: &LinkRequest) -> Result<(), Error>;
-    async fn delete_link_request(&self, link_request_id: &str) -> Result<(), Error>;
+    async fn delete_link_request(&self, link_request_id: Uuid) -> Result<(), Error>;
 }
 
 #[derive(Clone)]
@@ -76,8 +74,8 @@ impl LinkRequestsRepository for PostgresLinkRequestsRepository {
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
             "#,
         )
-            .bind(&req.link_request_id)
-            .bind(&req.requesting_user_id)
+            .bind(req.link_request_id)
+            .bind(req.requesting_user_id)
             .bind(&req.target_platform)
             .bind(&req.target_platform_user_id)
             .bind(&req.link_code)
@@ -89,7 +87,7 @@ impl LinkRequestsRepository for PostgresLinkRequestsRepository {
         Ok(())
     }
 
-    async fn get_link_request(&self, link_request_id: &str) -> Result<Option<LinkRequest>, Error> {
+    async fn get_link_request(&self, link_request_id: Uuid) -> Result<Option<LinkRequest>, Error> {
         let row = sqlx::query(
             r#"
             SELECT
@@ -103,7 +101,7 @@ impl LinkRequestsRepository for PostgresLinkRequestsRepository {
                 updated_at
             FROM link_requests
             WHERE link_request_id = $1
-            "#
+            "#,
         )
             .bind(link_request_id)
             .fetch_optional(&self.pool)
@@ -117,8 +115,8 @@ impl LinkRequestsRepository for PostgresLinkRequestsRepository {
                 target_platform_user_id: r.try_get("target_platform_user_id")?,
                 link_code: r.try_get("link_code")?,
                 status: r.try_get("status")?,
-                created_at: r.try_get::<DateTime<Utc>, _>("created_at")?,
-                updated_at: r.try_get::<DateTime<Utc>, _>("updated_at")?,
+                created_at: r.try_get("created_at")?,
+                updated_at: r.try_get("updated_at")?,
             }))
         } else {
             Ok(None)
@@ -139,19 +137,19 @@ impl LinkRequestsRepository for PostgresLinkRequestsRepository {
             WHERE link_request_id = $7
             "#,
         )
-            .bind(&req.requesting_user_id)
+            .bind(req.requesting_user_id)
             .bind(&req.target_platform)
             .bind(&req.target_platform_user_id)
             .bind(&req.link_code)
             .bind(&req.status)
             .bind(now)
-            .bind(&req.link_request_id)
+            .bind(req.link_request_id)
             .execute(&self.pool)
             .await?;
         Ok(())
     }
 
-    async fn delete_link_request(&self, link_request_id: &str) -> Result<(), Error> {
+    async fn delete_link_request(&self, link_request_id: Uuid) -> Result<(), Error> {
         sqlx::query("DELETE FROM link_requests WHERE link_request_id = $1")
             .bind(link_request_id)
             .execute(&self.pool)

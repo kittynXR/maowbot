@@ -57,47 +57,68 @@ pub fn handle_user_command(args: &[&str], bot_api: &Arc<dyn BotApi>) -> String {
 // -----------------------------------------------------------------------------
 // "user add" => create a user row in DB
 // -----------------------------------------------------------------------------
-fn user_add(username: &str, bot_api: &Arc<dyn BotApi>) -> String {
-    // Here we assume the user wants to store the same string in `user_id` and
-    // maybe also in `User.global_username`.
-    // In real code, you might generate a new UUID for user_id, or prompt for it, etc.
-    let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
-    match rt.block_on(bot_api.create_user(username, username)) {
-        Ok(_) => format!("Created user_id='{}' (global_username='{}').", username, username),
-        Err(e) => format!("Error creating user '{}': {:?}", username, e),
+fn user_add(display_name: &str, bot_api: &Arc<dyn BotApi>) -> String {
+    use uuid::Uuid;
+    let new_user_id = Uuid::new_v4();
+
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+
+    match rt.block_on(bot_api.create_user(new_user_id, display_name)) {
+        Ok(_) => format!(
+            "Created user with user_id={} (display_name='{}').",
+            new_user_id, display_name
+        ),
+        Err(e) => format!("Error creating user '{}': {:?}", display_name, e),
     }
 }
+
+
 
 // -----------------------------------------------------------------------------
 // "user remove" => delete the user row
 // -----------------------------------------------------------------------------
-fn user_remove(username: &str, bot_api: &Arc<dyn BotApi>) -> String {
-    // Possibly you’d block removal if the user is your “owner” or if references exist, etc.
+fn user_remove(typed_name: &str, bot_api: &Arc<dyn BotApi>) -> String {
+    // 1) find user by name
     let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
-    match rt.block_on(bot_api.remove_user(username)) {
-        Ok(_) => format!("Removed user '{}'.", username),
-        Err(e) => match e {
-            Error::Database(db_err) => format!("DB error removing '{}': {:?}", username, db_err),
-            other => format!("Error removing '{}': {:?}", username, other),
-        },
+    match rt.block_on(bot_api.find_user_by_name(typed_name)) {
+        Ok(user) => {
+            match rt.block_on(bot_api.remove_user(user.user_id)) {
+                Ok(_) => format!("Removed user '{}'.", typed_name),
+                Err(e) => format!("Error removing '{}': {:?}", typed_name, e),
+            }
+        }
+        Err(e) => format!("User '{}' not found or DB error => {:?}", typed_name, e),
     }
 }
+
+
 
 // -----------------------------------------------------------------------------
 // "user edit" => fetch user from DB and allow interactive changes
 // -----------------------------------------------------------------------------
-fn user_edit(username: &str, bot_api: &Arc<dyn BotApi>) -> String {
-    let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
-    let maybe_user = match rt.block_on(bot_api.get_user(username)) {
+fn user_edit(typed_user_id: &str, bot_api: &Arc<dyn BotApi>) -> String {
+    let parsed_id = match uuid::Uuid::parse_str(typed_user_id) {
+        Ok(u) => u,
+        Err(e) => return format!("Error: not a valid UUID '{}': {e}", typed_user_id),
+    };
+
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let maybe_user = match rt.block_on(bot_api.get_user(parsed_id)) {
         Ok(u) => u,
         Err(e) => {
-            return format!("Error fetching user '{}': {:?}", username, e);
+            return format!("Error fetching user '{}': {:?}", parsed_id, e);
         }
     };
 
     let user = match maybe_user {
         Some(u) => u,
-        None => return format!("User '{}' not found.", username),
+        None => return format!("User '{}' not found.", parsed_id),
     };
 
     // Start an interactive editor
@@ -105,12 +126,11 @@ fn user_edit(username: &str, bot_api: &Arc<dyn BotApi>) -> String {
     println!("(Press ENTER to keep current values.)");
     println!("-------------------------------------");
 
-    // Current is_active
     println!("User is_active={}, set new value? (y/n):", user.is_active);
     print!("> ");
-    let _ = stdout().flush();
+    let _ = std::io::stdout().flush();
     let mut line = String::new();
-    let _ = stdin().read_line(&mut line);
+    let _ = std::io::stdin().read_line(&mut line);
     let trimmed = line.trim();
     let new_is_active = if trimmed.is_empty() {
         user.is_active
@@ -118,11 +138,7 @@ fn user_edit(username: &str, bot_api: &Arc<dyn BotApi>) -> String {
         trimmed.eq_ignore_ascii_case("y")
     };
 
-    // Possibly also edit global_username here if you want:
-    // e.g. prompt => "New username? (current: {user.global_username})"
-
-    // Now do an update
-    let update_res = rt.block_on(bot_api.update_user_active(&user.user_id, new_is_active));
+    let update_res = rt.block_on(bot_api.update_user_active(user.user_id, new_is_active));
     match update_res {
         Ok(_) => format!(
             "Updated user '{}': is_active={} (was {}).",
@@ -135,21 +151,26 @@ fn user_edit(username: &str, bot_api: &Arc<dyn BotApi>) -> String {
 // -----------------------------------------------------------------------------
 // "user info" => fetch from DB and display
 // -----------------------------------------------------------------------------
-fn user_info(username: &str, bot_api: &Arc<dyn BotApi>) -> String {
-    let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
-    match rt.block_on(bot_api.get_user(username)) {
+fn user_info(typed_user_id: &str, bot_api: &Arc<dyn BotApi>) -> String {
+    let parsed_id = match uuid::Uuid::parse_str(typed_user_id) {
+        Ok(u) => u,
+        Err(e) => return format!("Error: not a valid UUID '{}': {e}", typed_user_id),
+    };
+
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    match rt.block_on(bot_api.get_user(parsed_id)) {
         Ok(Some(u)) => format!(
             "user_id='{}', global_username='{:?}', created_at={}, last_seen={}, is_active={}",
-            u.user_id,
-            u.global_username,
-            u.created_at,
-            u.last_seen,
-            u.is_active
+            u.user_id, u.global_username, u.created_at, u.last_seen, u.is_active
         ),
-        Ok(None) => format!("User '{}' not found.", username),
-        Err(e) => format!("Error fetching user '{}': {:?}", username, e),
+        Ok(None) => format!("User '{}' not found.", parsed_id),
+        Err(e) => format!("Error fetching user '{}': {:?}", parsed_id, e),
     }
 }
+
 
 // -----------------------------------------------------------------------------
 // "user search" => partial match or custom query
