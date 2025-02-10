@@ -1,15 +1,15 @@
 use std::sync::Arc;
 use std::io::{Write, stdin, stdout};
+use std::collections::HashMap;
 use std::str::FromStr;
 use open;
 use uuid::Uuid;
 
 use maowbot_core::models::{Platform, User};
-use maowbot_core::plugins::bot_api::BotApi;
 use maowbot_core::auth::callback_server::start_callback_server;
 use maowbot_core::Error;
-
 use crate::tui_module::tui_block_on;
+use maowbot_core::plugins::bot_api::BotApi;
 
 /// Handle "account <add|remove|list|show>" commands.
 pub fn handle_account_command(args: &[&str], bot_api: &Arc<dyn BotApi>) -> String {
@@ -65,9 +65,9 @@ pub fn handle_account_command(args: &[&str], bot_api: &Arc<dyn BotApi>) -> Strin
     }
 }
 
-/// The “account add” flow (OAuth2 or other method):
+/// The “account add” flow (OAuth2 or multiple keys):
 fn account_add_flow(platform: Platform, typed_name: &str, bot_api: &Arc<dyn BotApi>) -> String {
-    // is bot?
+    // Ask if it's a bot or user account
     println!("Is this a bot account? (y/n):");
     print!("> ");
     let _ = stdout().flush();
@@ -75,7 +75,7 @@ fn account_add_flow(platform: Platform, typed_name: &str, bot_api: &Arc<dyn BotA
     let _ = stdin().read_line(&mut line);
     let is_bot = line.trim().eq_ignore_ascii_case("y");
 
-    // global username?
+    // Let them confirm the global username
     println!("Use '{}' for the user’s global_username? (y/n):", typed_name);
     print!("> ");
     let _ = stdout().flush();
@@ -105,7 +105,58 @@ fn account_add_flow(platform: Platform, typed_name: &str, bot_api: &Arc<dyn BotA
         user.global_username.as_deref().unwrap_or("(none)")
     );
 
-    // Step B: start local callback server
+    // Step B: Begin the auth flow
+    let flow_str = match tui_block_on(bot_api.begin_auth_flow(platform.clone(), is_bot)) {
+        Ok(u) => u,
+        Err(e) => return format!("Error => {:?}", e),
+    };
+
+    // If the flow_str is "http..." (Browser) → do our callback approach:
+    if flow_str.starts_with("http://") || flow_str.starts_with("https://") {
+        return handle_oauth_browser_flow(flow_str, platform, &user.user_id, bot_api);
+    }
+
+    // If the flow_str contains "(Multiple keys required)" or "(API key)", we handle differently:
+    if flow_str.contains("(Multiple keys required)") {
+        return handle_multiple_keys_flow(platform, &user.user_id, bot_api);
+    }
+    if flow_str.contains("(API key)") {
+        // Possibly the same approach as multiple keys but with just 1
+        // Example: "Please get a chat token from some site..."
+        return handle_api_key_flow(flow_str, platform, &user.user_id, bot_api);
+    }
+
+    // Otherwise, if the flow is "No prompt needed" or "2FA," etc., you can adapt similarly:
+    if flow_str.contains("(2FA)") {
+        // ...
+        return "(2FA) not yet implemented in TUI example".to_string();
+    }
+    if flow_str.contains("(No prompt needed)") {
+        return "(No prompt needed) Possibly done?".to_string();
+    }
+
+    // Fallback:
+    flow_str
+}
+
+/// If it's a normal OAuth flow requiring a callback:
+fn handle_oauth_browser_flow(
+    auth_url: String,
+    platform: Platform,
+    user_id: &Uuid,
+    bot_api: &Arc<dyn BotApi>
+) -> String {
+    println!("Open this URL to authenticate:\n  {}", auth_url);
+    println!("Open in browser now? (y/n):");
+    print!("> ");
+    let _ = stdout().flush();
+    let mut line3 = String::new();
+    let _ = stdin().read_line(&mut line3);
+    if line3.trim().eq_ignore_ascii_case("y") {
+        let _ = open::that(&auth_url);
+    }
+
+    // start local callback server
     let port = 9876;
     let (done_rx, shutdown_tx) = match tui_block_on(start_callback_server(port)) {
         Ok(pair) => pair,
@@ -114,28 +165,9 @@ fn account_add_flow(platform: Platform, typed_name: &str, bot_api: &Arc<dyn BotA
         }
     };
     println!("OAuth callback server listening on http://127.0.0.1:{}", port);
+    println!("Waiting for the OAuth callback...");
 
-    // Step C: begin auth flow
-    let url_res = tui_block_on(bot_api.begin_auth_flow(platform.clone(), is_bot));
-    let url = match url_res {
-        Ok(u) => u,
-        Err(e) => {
-            let _ = shutdown_tx.send(());
-            return format!("Error => {:?}", e);
-        }
-    };
-    println!("Open this URL to authenticate:\n  {}", url);
-    println!("Open in browser now? (y/n):");
-    print!("> ");
-    let _ = stdout().flush();
-    let mut line3 = String::new();
-    let _ = stdin().read_line(&mut line3);
-    if line3.trim().eq_ignore_ascii_case("y") {
-        let _ = open::that(&url);
-    }
-    println!("Waiting for the OAuth callback on port {}...", port);
-
-    // Step D: wait for callback
+    // wait for callback
     let callback_result = match tui_block_on(async { done_rx.await }) {
         Ok(res) => res,
         Err(e) => {
@@ -145,11 +177,11 @@ fn account_add_flow(platform: Platform, typed_name: &str, bot_api: &Arc<dyn BotA
     };
     let _ = shutdown_tx.send(());
 
-    // Step E: complete
+    // Now pass that code into complete_auth_flow_for_user
     match tui_block_on(bot_api.complete_auth_flow_for_user(
-        platform.clone(),
+        platform,
         callback_result.code,
-        user.user_id,
+        *user_id,
     )) {
         Ok(cred) => {
             format!(
@@ -161,6 +193,108 @@ fn account_add_flow(platform: Platform, typed_name: &str, bot_api: &Arc<dyn BotA
     }
 }
 
+/// If it's "Multiple keys required", e.g. Discord or VRChat:
+fn handle_multiple_keys_flow(
+    platform: Platform,
+    user_id: &Uuid,
+    bot_api: &Arc<dyn BotApi>
+) -> String {
+    // In this example, we only know from the authenticator code that Discord will request:
+    //   fields: ["bot_token"]
+    // but in general, it might be more fields. We'll ask how many keys.
+    // We'll just do a short Q&A example here:
+
+    println!("Enter each required field (example: 'bot_token'):");
+    let mut keys_map = HashMap::new();
+
+    // For a more robust approach, you'd want the AuthManager to *actually*
+    // return the list of fields. But we only got a string. So let's guess:
+    println!("(For Discord, you likely only need 'bot_token'. Type the key name now, or leave blank to finish.)");
+
+    loop {
+        print!("Key name (empty to finish) > ");
+        let _ = stdout().flush();
+        let mut keyname = String::new();
+        if stdin().read_line(&mut keyname).is_err() {
+            return "Error reading key name".to_string();
+        }
+        let keyname = keyname.trim();
+        if keyname.is_empty() {
+            break;
+        }
+
+        print!("Value for '{keyname}'> ");
+        let _ = stdout().flush();
+        let mut val = String::new();
+        if stdin().read_line(&mut val).is_err() {
+            return "Error reading key value".to_string();
+        }
+        let val = val.trim().to_string();
+
+        keys_map.insert(keyname.to_string(), val);
+    }
+
+    if keys_map.is_empty() {
+        return "No keys entered. Aborting.".to_string();
+    }
+
+    // Now call complete_auth_flow_for_user_multi
+    match tui_block_on(bot_api.complete_auth_flow_for_user_multi(
+        platform,
+        *user_id,
+        keys_map,
+    )) {
+        Ok(cred) => {
+            format!(
+                "Success! Stored credentials => platform={:?}, user_id={}, is_bot={}",
+                cred.platform, cred.user_id, cred.is_bot
+            )
+        }
+        Err(e) => format!("Error completing multi-key auth => {:?}", e),
+    }
+}
+
+/// If it's just an "(API key)" single item:
+fn handle_api_key_flow(
+    prompt_msg: String,
+    platform: Platform,
+    user_id: &Uuid,
+    bot_api: &Arc<dyn BotApi>
+) -> String {
+    println!("Auth flow said: {}", prompt_msg);
+
+    // user enters the single key
+    print!("Paste the API key now:\n> ");
+    let _ = stdout().flush();
+    let mut key_line = String::new();
+    let _ = stdin().read_line(&mut key_line);
+    let token_str = key_line.trim().to_string();
+    if token_str.is_empty() {
+        return "No API key entered. Aborting.".to_string();
+    }
+    let mut map = HashMap::new();
+    // We'll guess the key name is "api_key", but it depends on your platform logic
+    map.insert("api_key".into(), token_str);
+
+    // call the multi-keys function
+    match tui_block_on(bot_api.complete_auth_flow_for_user_multi(
+        platform,
+        *user_id,
+        map,
+    )) {
+        Ok(cred) => {
+            format!(
+                "Success! Stored credentials => platform={:?}, user_id={}, is_bot={}",
+                cred.platform, cred.user_id, cred.is_bot
+            )
+        }
+        Err(e) => format!("Error completing single-key flow => {:?}", e),
+    }
+}
+
+// ------------------------------------------------------------------------
+// We re-use the same user creation logic as before
+// ------------------------------------------------------------------------
 async fn find_or_create_user_by_name(
     bot_api: &Arc<dyn BotApi>,
     final_username: &str
@@ -181,7 +315,9 @@ async fn find_or_create_user_by_name(
     }
 }
 
-/// account remove <platform> <usernameOrUUID>
+// ------------------------------------------------------------------------
+// "account remove <platform> <usernameOrUUID>"
+// ------------------------------------------------------------------------
 fn account_remove(platform: Platform, user_id_str: &str, bot_api: &Arc<dyn BotApi>) -> String {
     // interpret user_id_str as either a UUID or a username
     let user_uuid = match Uuid::parse_str(user_id_str) {
@@ -206,6 +342,9 @@ fn account_remove(platform: Platform, user_id_str: &str, bot_api: &Arc<dyn BotAp
     }
 }
 
+// ------------------------------------------------------------------------
+// "account list" => show known credentials
+// ------------------------------------------------------------------------
 fn account_list(maybe_platform: Option<Platform>, bot_api: &Arc<dyn BotApi>) -> String {
     let list_result = tui_block_on(bot_api.list_credentials(maybe_platform));
     match list_result {
@@ -232,7 +371,9 @@ fn account_list(maybe_platform: Option<Platform>, bot_api: &Arc<dyn BotApi>) -> 
     }
 }
 
-/// "account show <platform> <usernameOrUUID>"
+// ------------------------------------------------------------------------
+// "account show <platform> <usernameOrUUID>"
+// ------------------------------------------------------------------------
 fn account_show(platform: Platform, user_id_str: &str, bot_api: &Arc<dyn BotApi>) -> String {
     let user_uuid = match Uuid::parse_str(user_id_str) {
         Ok(u) => u,

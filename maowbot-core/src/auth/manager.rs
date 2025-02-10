@@ -61,7 +61,8 @@ impl AuthManager {
         ))
     }
 
-    /// Step 1 of OAuth: get the redirect URL or instructions
+    /// Step 1 of OAuth or other auth: get the redirect URL or instructions
+    /// Note that for Discord, it returns something like "(Multiple keys required) handle in TUI".
     pub async fn begin_auth_flow(
         &mut self,
         platform: Platform,
@@ -117,7 +118,9 @@ impl AuthManager {
             match auth.start_authentication().await? {
                 AuthenticationPrompt::Browser { url } => Ok(url),
                 AuthenticationPrompt::Code { message } => Err(Error::Auth(message)),
-                AuthenticationPrompt::ApiKey { message } => Ok(format!("(API key) {message}")),
+                AuthenticationPrompt::ApiKey { message } => {
+                    Ok(format!("(API key) {message}"))
+                }
                 AuthenticationPrompt::MultipleKeys { .. } => {
                     Ok("(Multiple keys required) handle in TUI".into())
                 }
@@ -180,6 +183,30 @@ impl AuthManager {
         Ok(cred)
     }
 
+    // -------------------------------------------------------------------------
+    // ADDED: new method to handle "MultipleKeys" usage from the TUI. E.g. Discord bot_token
+    // -------------------------------------------------------------------------
+    pub async fn complete_auth_flow_for_user_multi(
+        &mut self,
+        platform: Platform,
+        user_id: &Uuid,
+        keys: HashMap<String, String>,
+    ) -> Result<PlatformCredential, Error> {
+        let authenticator = self
+            .authenticators
+            .get_mut(&platform)
+            .ok_or_else(|| Error::Platform(format!("No authenticator for {platform:?}")))?;
+
+        let mut cred = authenticator
+            .complete_authentication(AuthenticationResponse::MultipleKeys(keys))
+            .await?;
+
+        cred.user_id = *user_id;
+        self.credentials_repo.store_credentials(&cred).await?;
+        Ok(cred)
+    }
+    // -------------------------------------------------------------------------
+
     /// If an external caller has already built a PlatformCredential, store it
     pub async fn store_credentials(&self, cred: &PlatformCredential) -> Result<(), Error> {
         self.credentials_repo.store_credentials(cred).await
@@ -191,7 +218,9 @@ impl AuthManager {
         platform: &Platform,
         user_id: &str,
     ) -> Result<Option<PlatformCredential>, Error> {
-        self.credentials_repo.get_credentials(platform, user_id.parse().unwrap()).await
+        self.credentials_repo
+            .get_credentials(platform, user_id.parse().unwrap())
+            .await
     }
 
     /// Revoke & remove from DB

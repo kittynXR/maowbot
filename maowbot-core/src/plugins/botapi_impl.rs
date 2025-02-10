@@ -1,5 +1,6 @@
 // File: maowbot-core/src/plugins/botapi_impl.rs
 
+use std::collections::HashMap;
 use async_trait::async_trait;
 use std::sync::Arc;
 use uuid::Uuid;
@@ -173,6 +174,23 @@ impl BotApi for PluginManager {
         } else {
             Err(Error::Auth("No auth manager set in plugin manager".into()))
         }
+    }
+
+    async fn complete_auth_flow_for_user_multi(
+        &self,
+        platform: Platform,
+        user_id: Uuid,
+        keys: HashMap<String, String>,
+    ) -> Result<PlatformCredential, Error> {
+        let mut authmgr = self.auth_manager
+            .as_ref()
+            .expect("auth_manager is None!")
+            .lock()
+            .await;
+
+        authmgr
+            .complete_auth_flow_for_user_multi(platform, &user_id, keys)
+            .await
     }
 
     async fn revoke_credentials(

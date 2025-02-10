@@ -1,5 +1,6 @@
 // File: maowbot-core/src/plugins/bot_api.rs
 
+use std::collections::HashMap;
 use std::format;
 use crate::{Error, models::Platform, models::PlatformCredential, models::User};
 use async_trait::async_trait;
@@ -61,6 +62,13 @@ pub trait BotApi: Send + Sync {
         platform: Platform,
         code: String,
         user_id: Uuid
+    ) -> Result<PlatformCredential, Error>;
+
+    async fn complete_auth_flow_for_user_multi(
+        &self,
+        platform: Platform,
+        user_id: Uuid,
+        keys: HashMap<String, String>,
     ) -> Result<PlatformCredential, Error>;
 
     /// Revoke credentials for a user (by UUID).
