@@ -55,13 +55,11 @@ pub async fn run_biweekly_maintenance(
 
     // 1) Create partitions
     run_partition_maintenance(db).await?;
-    info!("Partition creation done. Sleeping 1s...");
-    sleep(Duration::from_secs(1)).await;
+    info!("Partition creation done...");
 
     // 2) User analysis
     run_analysis(db, user_analysis_repo).await?;
-    info!("Analysis done. Sleeping 1s...");
-    sleep(Duration::from_secs(1)).await;
+    info!("Analysis done...");
 
     info!("Biweekly maintenance is complete.");
     Ok(())

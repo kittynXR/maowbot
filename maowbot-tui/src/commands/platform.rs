@@ -1,7 +1,6 @@
 // =============================================================================
 // maowbot-tui/src/commands/platform.rs
-//   - No label prompt anymore. Single config per platform.
-//   - Adds optional “dev console” opening for known platforms.
+//   - Adds "platform show <platform>" to display the stored client_id/secret.
 // =============================================================================
 
 use std::sync::Arc;
@@ -10,12 +9,15 @@ use maowbot_core::models::Platform;
 use maowbot_core::plugins::bot_api::BotApi;
 use std::str::FromStr;
 
-/// platform add <platform>
-/// platform remove <platform_config_id>
-/// platform list [optional: <platformName>]
+/// platform <add|remove|list|show> ...
+/// Usage examples:
+///   platform add twitch
+///   platform remove
+///   platform list
+///   platform show twitch
 pub fn handle_platform_command(args: &[&str], bot_api: &Arc<dyn BotApi>) -> String {
     if args.is_empty() {
-        return "Usage: platform <add|remove|list> ...".to_string();
+        return "Usage: platform <add|remove|list|show> ...".to_string();
     }
 
     match args[0] {
@@ -60,7 +62,16 @@ pub fn handle_platform_command(args: &[&str], bot_api: &Arc<dyn BotApi>) -> Stri
                 Err(e) => format!("Error listing platform configs => {:?}", e),
             }
         }
-        _ => "Usage: platform <add|remove|list>".to_string(),
+        "show" => {
+            if args.len() < 2 {
+                return "Usage: platform show <platformName>".to_string();
+            }
+            match Platform::from_str(args[1]) {
+                Ok(plat) => platform_show(plat, bot_api),
+                Err(_) => format!("Unknown platform '{}'", args[1]),
+            }
+        }
+        _ => "Usage: platform <add|remove|list|show>".to_string(),
     }
 }
 
@@ -73,7 +84,7 @@ fn handle_platform_add(plat: Platform, bot_api: &Arc<dyn BotApi>) -> String {
         "twitch" => Some("https://dev.twitch.tv/console"),
         "discord" => Some("https://discord.com/developers/applications"),
         "vrchat" => Some("https://dashboard.vrchat.com/"),
-        "twitch-irc" => None, // no official dev console
+        "twitch-irc" => None,
         _ => None,
     };
     if let Some(url) = dev_console_url {
@@ -148,4 +159,29 @@ fn handle_platform_remove(bot_api: &Arc<dyn BotApi>) -> String {
         Ok(_) => format!("Removed platform config with id={}.", chosen_id),
         Err(e) => format!("Error removing => {:?}", e),
     }
+}
+
+/// "platform show <platformName>"
+fn platform_show(plat: Platform, bot_api: &Arc<dyn BotApi>) -> String {
+    let platform_str = plat.to_string();
+    let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+
+    // list_platform_configs(Some("twitch")) => we should get at most 1 row for that platform
+    let result = rt.block_on(bot_api.list_platform_configs(Some(&platform_str)));
+    let list = match result {
+        Ok(lst) => lst,
+        Err(e) => return format!("Error => {:?}", e),
+    };
+    if list.is_empty() {
+        return format!("No platform config found for '{}'.", platform_str);
+    }
+
+    // We expect only one row per platform. Show it.
+    let pc = &list[0];
+    let mut out = String::new();
+    out.push_str(&format!("platform={} (id={})\n", pc.platform, pc.platform_config_id));
+    out.push_str(&format!("client_id='{}'\n", pc.client_id.as_deref().unwrap_or("NONE")));
+    out.push_str(&format!("client_secret='{}'\n",
+                          pc.client_secret.as_deref().unwrap_or("NONE")));
+    out
 }

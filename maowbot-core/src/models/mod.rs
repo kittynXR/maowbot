@@ -23,10 +23,12 @@ pub struct User {
 /// Here we tell SQLx that the enum is stored as TEXT.
 #[derive(Debug, Serialize, Deserialize, Clone, Eq, PartialEq, Hash, sqlx::Type)]
 #[sqlx(type_name = "TEXT")]
+#[sqlx(rename_all = "lowercase")]
 pub enum Platform {
     Twitch,
     Discord,
     VRChat,
+    #[sqlx(rename = "twitch-irc")]
     TwitchIRC,
 }
 

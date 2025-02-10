@@ -29,8 +29,8 @@ Commands:
   list
   status
   plug   <enable|disable|remove> <name>
-  platform <add|remove|list> ...
-  account  <add|remove|list> [platform] [username]
+  platform <add|remove|list|show> ...
+  account  <add|remove|list|show> [platform] [username]
   user     <add|remove|edit|info|search> ...
   quit
 ";
