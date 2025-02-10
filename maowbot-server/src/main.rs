@@ -17,7 +17,8 @@ use tracing::{error, info};
 use tracing_subscriber::{fmt, EnvFilter};
 
 use maowbot_core::Database;
-use maowbot_core::plugins::manager::{PluginManager, PluginServiceGrpc};
+use maowbot_core::plugins::manager::{PluginManager};
+use maowbot_core::plugins::service_grpc::PluginServiceGrpc;
 use maowbot_core::eventbus::{EventBus, BotEvent};
 use maowbot_core::repositories::postgres::{
     PlatformIdentityRepository,
