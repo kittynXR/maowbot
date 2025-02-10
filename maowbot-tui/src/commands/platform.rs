@@ -1,13 +1,14 @@
-// =============================================================================
 // maowbot-tui/src/commands/platform.rs
-//   - Adds "platform show <platform>" to display the stored client_id/secret.
+// =============================================================================
+//   - Removes the local runtime creation and uses tui_block_on(...) instead.
 // =============================================================================
 
 use std::sync::Arc;
 use std::io::{Write, stdin, stdout};
+use std::str::FromStr;
 use maowbot_core::models::Platform;
 use maowbot_core::plugins::bot_api::BotApi;
-use std::str::FromStr;
+use crate::tui_module::tui_block_on;
 
 /// platform <add|remove|list|show> ...
 /// Usage examples:
@@ -34,14 +35,9 @@ pub fn handle_platform_command(args: &[&str], bot_api: &Arc<dyn BotApi>) -> Stri
             handle_platform_remove(bot_api)
         }
         "list" => {
-            let maybe_platform = if args.len() > 1 {
-                Some(args[1])
-            } else {
-                None
-            };
-            let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
-            let list_res = rt.block_on(bot_api.list_platform_configs(maybe_platform));
-            match list_res {
+            // Optional filter: "platform list <somePlatform>"
+            let maybe_platform = if args.len() > 1 { Some(args[1]) } else { None };
+            match tui_block_on(bot_api.list_platform_configs(maybe_platform)) {
                 Ok(list) => {
                     if list.is_empty() {
                         "No platform configs found.\n".to_string()
@@ -81,10 +77,10 @@ fn handle_platform_add(plat: Platform, bot_api: &Arc<dyn BotApi>) -> String {
 
     // Possibly prompt user to open the dev console if we know it:
     let dev_console_url = match platform_str.as_str() {
-        "twitch" => Some("https://dev.twitch.tv/console"),
-        "discord" => Some("https://discord.com/developers/applications"),
-        "vrchat" => Some("https://dashboard.vrchat.com/"),
-        "twitch-irc" => None,
+        "twitch"      => Some("https://dev.twitch.tv/console"),
+        "discord"     => Some("https://discord.com/developers/applications"),
+        "vrchat"      => Some("https://dashboard.vrchat.com/"),
+        "twitch-irc"  => None,
         _ => None,
     };
     if let Some(url) = dev_console_url {
@@ -113,8 +109,7 @@ fn handle_platform_add(plat: Platform, bot_api: &Arc<dyn BotApi>) -> String {
     let client_secret = csec.trim().to_string();
     let secret_opt = if client_secret.is_empty() { None } else { Some(client_secret) };
 
-    let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
-    let result = rt.block_on(bot_api.create_platform_config(
+    let result = tui_block_on(bot_api.create_platform_config(
         plat,
         client_id,
         secret_opt,
@@ -126,8 +121,7 @@ fn handle_platform_add(plat: Platform, bot_api: &Arc<dyn BotApi>) -> String {
 }
 
 fn handle_platform_remove(bot_api: &Arc<dyn BotApi>) -> String {
-    let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
-    let list = match rt.block_on(bot_api.list_platform_configs(None)) {
+    let list = match tui_block_on(bot_api.list_platform_configs(None)) {
         Ok(lst) => lst,
         Err(e) => {
             return format!("Error listing platform configs => {:?}", e);
@@ -139,10 +133,12 @@ fn handle_platform_remove(bot_api: &Arc<dyn BotApi>) -> String {
 
     println!("Existing platform configs:");
     for pc in &list {
-        println!(" - id={} platform={} client_id={}",
-                 pc.platform_config_id,
-                 pc.platform,
-                 pc.client_id.as_deref().unwrap_or("NONE"));
+        println!(
+            " - id={} platform={} client_id={}",
+            pc.platform_config_id,
+            pc.platform,
+            pc.client_id.as_deref().unwrap_or("NONE")
+        );
     }
     println!("Enter the platform_config_id to remove: ");
     print!("> ");
@@ -155,7 +151,7 @@ fn handle_platform_remove(bot_api: &Arc<dyn BotApi>) -> String {
         return "Aborted removal (no input).".to_string();
     }
 
-    match rt.block_on(bot_api.remove_platform_config(&chosen_id)) {
+    match tui_block_on(bot_api.remove_platform_config(&chosen_id)) {
         Ok(_) => format!("Removed platform config with id={}.", chosen_id),
         Err(e) => format!("Error removing => {:?}", e),
     }
@@ -164,24 +160,22 @@ fn handle_platform_remove(bot_api: &Arc<dyn BotApi>) -> String {
 /// "platform show <platformName>"
 fn platform_show(plat: Platform, bot_api: &Arc<dyn BotApi>) -> String {
     let platform_str = plat.to_string();
-    let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
 
-    // list_platform_configs(Some("twitch")) => we should get at most 1 row for that platform
-    let result = rt.block_on(bot_api.list_platform_configs(Some(&platform_str)));
-    let list = match result {
-        Ok(lst) => lst,
-        Err(e) => return format!("Error => {:?}", e),
-    };
-    if list.is_empty() {
-        return format!("No platform config found for '{}'.", platform_str);
+    // list_platform_configs(Some("twitch")) => we expect at most 1 row for that platform
+    match tui_block_on(bot_api.list_platform_configs(Some(&platform_str))) {
+        Ok(list) => {
+            if list.is_empty() {
+                return format!("No platform config found for '{}'.", platform_str);
+            }
+            // We expect only one row per platform. Show it.
+            let pc = &list[0];
+            let mut out = String::new();
+            out.push_str(&format!("platform={} (id={})\n", pc.platform, pc.platform_config_id));
+            out.push_str(&format!("client_id='{}'\n", pc.client_id.as_deref().unwrap_or("NONE")));
+            out.push_str(&format!("client_secret='{}'\n",
+                                  pc.client_secret.as_deref().unwrap_or("NONE")));
+            out
+        }
+        Err(e) => format!("Error => {:?}", e),
     }
-
-    // We expect only one row per platform. Show it.
-    let pc = &list[0];
-    let mut out = String::new();
-    out.push_str(&format!("platform={} (id={})\n", pc.platform, pc.platform_config_id));
-    out.push_str(&format!("client_id='{}'\n", pc.client_id.as_deref().unwrap_or("NONE")));
-    out.push_str(&format!("client_secret='{}'\n",
-                          pc.client_secret.as_deref().unwrap_or("NONE")));
-    out
 }
