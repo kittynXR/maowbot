@@ -43,7 +43,16 @@ pub fn handle_account_command(args: &[&str], bot_api: &Arc<dyn BotApi>) -> Strin
             } else {
                 None
             };
-            let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+
+            // ----------------------------------
+            // FIX: Use a multi-threaded runtime
+            // ----------------------------------
+            let rt = tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(2)
+                .enable_all()
+                .build()
+                .unwrap();
+
             match rt.block_on(bot_api.list_credentials(maybe_platform)) {
                 Ok(list) => {
                     if list.is_empty() {
@@ -90,6 +99,9 @@ fn account_add_flow(platform: Platform, username: &str, bot_api: &Arc<dyn BotApi
     let _ = stdin().read_line(&mut line);
     let is_bot = line.trim().eq_ignore_ascii_case("y");
 
+    // ----------------------------------
+    // FIX: Also multi-threaded here
+    // ----------------------------------
     let rt = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
         .enable_all()
@@ -155,17 +167,33 @@ fn account_add_flow(platform: Platform, username: &str, bot_api: &Arc<dyn BotApi
 
 /// Revoke stored credentials
 fn account_remove(platform: Platform, username: &str, bot_api: &Arc<dyn BotApi>) -> String {
-    let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+    // --------------------------------
+    // Switch from current_thread to multi_thread:
+    // --------------------------------
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()
+        .unwrap();
+
     match rt.block_on(bot_api.revoke_credentials(platform.clone(), username)) {
         Ok(_) => format!("Removed credentials for platform={:?}, user_id={}", platform, username),
         Err(e) => format!("Error removing => {:?}", e),
     }
 }
 
-/// "account show <platform> <username>" => fetch that single credential and display
+/// "account show <platform> <username>"
 fn account_show(platform: Platform, username: &str, bot_api: &Arc<dyn BotApi>) -> String {
-    let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
-    // We'll re-use list_credentials with Some(platform), then filter by user_id:
+    // --------------------------------
+    // Also multi‐threaded
+    // --------------------------------
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()
+        .unwrap();
+
+    // We'll re-use list_credentials(Some(platform)), then filter by user_id:
     let all = match rt.block_on(bot_api.list_credentials(Some(platform.clone()))) {
         Ok(list) => list,
         Err(e) => return format!("Error => {:?}", e),
