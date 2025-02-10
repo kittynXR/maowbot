@@ -1,7 +1,4 @@
-// =============================================================================
 // maowbot-tui/src/tui_module.rs
-//   (Removed references to old 'auth' command. Otherwise mostly unchanged.)
-// =============================================================================
 
 use std::sync::{
     Arc,
@@ -12,6 +9,25 @@ use std::thread;
 use maowbot_core::plugins::bot_api::BotApi;
 
 use crate::commands;
+
+/// We add lazy_static for a single runtime:
+use lazy_static::lazy_static;
+use tokio::runtime::Runtime;
+
+lazy_static! {
+    static ref TUI_RUNTIME: Runtime = {
+        // One single-threaded runtime for the TUI commands
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("Failed building TUI runtime")
+    };
+}
+
+/// Helper so commands can do: `tui_block_on(...)` instead of building new runtimes.
+pub fn tui_block_on<F: std::future::Future>(fut: F) -> F::Output {
+    TUI_RUNTIME.block_on(fut)
+}
 
 pub struct TuiModule {
     pub bot_api: Arc<dyn BotApi>,
@@ -64,7 +80,8 @@ impl TuiModule {
                 }
 
                 if quit_requested {
-                    bot_api.shutdown();
+                    // best effort: signal bot shutdown
+                    tui_block_on(bot_api.shutdown());
                     shutdown_flag.store(true, Ordering::SeqCst);
                     break;
                 }

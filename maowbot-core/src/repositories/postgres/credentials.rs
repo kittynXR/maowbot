@@ -89,7 +89,7 @@ impl CredentialsRepository for PostgresCredentialsRepository {
     }
 
     async fn get_credentials(&self, platform: &Platform, user_id: Uuid) -> Result<Option<PlatformCredential>, Error> {
-        let platform_str = platform.to_string();
+        // We'll do lower(platform) = lower($1) to avoid case-sensitivity
         let row = sqlx::query(
             r#"
             SELECT
@@ -105,11 +105,11 @@ impl CredentialsRepository for PostgresCredentialsRepository {
                 updated_at,
                 is_bot
             FROM platform_credentials
-            WHERE platform = $1
+            WHERE LOWER(platform) = LOWER($1)
               AND user_id = $2
             "#,
         )
-            .bind(&platform_str)
+            .bind(platform.to_string())
             .bind(user_id)
             .fetch_optional(&self.pool)
             .await?;
@@ -172,7 +172,7 @@ impl CredentialsRepository for PostgresCredentialsRepository {
                 expires_at      = $4,
                 updated_at      = $5,
                 is_bot          = $6
-            WHERE platform = $7
+            WHERE LOWER(platform) = LOWER($7)
               AND user_id = $8
             "#,
         )
@@ -182,7 +182,7 @@ impl CredentialsRepository for PostgresCredentialsRepository {
             .bind(creds.expires_at)
             .bind(creds.updated_at)
             .bind(creds.is_bot)
-            .bind(&platform_str)
+            .bind(platform_str)
             .bind(creds.user_id)
             .execute(&self.pool)
             .await?;
@@ -191,15 +191,14 @@ impl CredentialsRepository for PostgresCredentialsRepository {
     }
 
     async fn delete_credentials(&self, platform: &Platform, user_id: Uuid) -> Result<(), Error> {
-        let platform_str = platform.to_string();
         sqlx::query(
             r#"
             DELETE FROM platform_credentials
-            WHERE platform = $1
+            WHERE LOWER(platform) = LOWER($1)
               AND user_id = $2
             "#,
         )
-            .bind(&platform_str)
+            .bind(platform.to_string())
             .bind(user_id)
             .execute(&self.pool)
             .await?;
@@ -285,7 +284,7 @@ impl CredentialsRepository for PostgresCredentialsRepository {
                 updated_at,
                 is_bot
             FROM platform_credentials
-            "#
+            "#,
         )
             .fetch_all(&self.pool)
             .await?;

@@ -1,16 +1,12 @@
-// =============================================================================
-// maowbot-tui/src/commands/mod.rs
-//   (Removed old auth.rs references. Now we have platform.rs, account.rs, user.rs.)
-// =============================================================================
-
 use std::sync::Arc;
 use maowbot_core::plugins::bot_api::BotApi;
 
-mod plugin;
-mod platform;
 mod account;
+mod platform;
+mod plugin;
 mod user;
-// newly added
+
+use crate::tui_module::tui_block_on;
 
 pub fn dispatch(
     line: &str,
@@ -37,12 +33,7 @@ Commands:
             (false, Some(help.to_string()))
         }
         "list" => {
-            // e.g. plugin listing
-            let result = tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-                .unwrap()
-                .block_on(bot_api.list_plugins());
+            let result = tui_block_on(bot_api.list_plugins());
             let mut output = String::new();
             output.push_str("All known plugins:\n");
             for p in result {
@@ -51,11 +42,7 @@ Commands:
             (false, Some(output))
         }
         "status" => {
-            let status_data = tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-                .unwrap()
-                .block_on(bot_api.status());
+            let status_data = tui_block_on(bot_api.status());
             let mut output = format!("Uptime={}s\nConnected Plugins:\n",
                                      status_data.uptime_seconds);
             for c in status_data.connected_plugins {
@@ -80,16 +67,12 @@ Commands:
             (false, Some(message))
         }
         "quit" => {
-            let rt = tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-                .expect("Failed to build mini runtime");
-            rt.block_on(bot_api.shutdown());
+            // We'll shut down in TuiModule after we return (quit_requested = true).
             (true, Some("(TUI) shutting down...".to_string()))
         },
         _ => {
             if cmd.is_empty() {
-                (false, None) // ignore blank
+                (false, None) // ignore blank lines
             } else {
                 let msg = format!("Unknown command '{}'. Type 'help' for usage.", cmd);
                 (false, Some(msg))

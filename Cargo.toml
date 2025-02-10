@@ -73,4 +73,5 @@ tempfile = "^3.16"
 futures-util = "^0.3"
 futures-core = "^0.3"
 
+lazy_static = { version = "^1.5" }
 libloading = "^0.8"

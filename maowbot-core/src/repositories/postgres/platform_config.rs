@@ -149,6 +149,7 @@ impl PlatformConfigRepository for PostgresPlatformConfigRepository {
     }
 
     async fn list_platform_configs(&self, maybe_platform: Option<&str>) -> Result<Vec<PlatformConfig>, Error> {
+        // If a platform filter is provided, do case-insensitive match
         let rows = if let Some(p) = maybe_platform {
             sqlx::query(
                 r#"
@@ -160,7 +161,7 @@ impl PlatformConfigRepository for PostgresPlatformConfigRepository {
                     created_at,
                     updated_at
                 FROM platform_config
-                WHERE platform = $1
+                WHERE LOWER(platform) = LOWER($1)
                 ORDER BY created_at DESC
                 "#
             )
@@ -213,6 +214,7 @@ impl PlatformConfigRepository for PostgresPlatformConfigRepository {
     }
 
     async fn get_by_platform(&self, platform: &str) -> Result<Option<PlatformConfig>, Error> {
+        // case-insensitive
         let row = sqlx::query(
             r#"
             SELECT
@@ -223,7 +225,7 @@ impl PlatformConfigRepository for PostgresPlatformConfigRepository {
                 created_at,
                 updated_at
             FROM platform_config
-            WHERE platform = $1
+            WHERE LOWER(platform) = LOWER($1)
             LIMIT 1
             "#
         )
@@ -251,7 +253,7 @@ impl PlatformConfigRepository for PostgresPlatformConfigRepository {
             r#"
             SELECT COUNT(*) AS count
             FROM platform_config
-            WHERE platform = $1
+            WHERE LOWER(platform) = LOWER($1)
             "#,
         )
             .bind(platform)

@@ -76,7 +76,7 @@ impl UserRepo for UserRepository {
         }
     }
 
-    // ---- NEW METHOD HERE ----
+    // Updated to be case-insensitive:
     async fn get_by_global_username(&self, name: &str) -> Result<Option<User>, Error> {
         let row = sqlx::query(
             r#"
@@ -86,7 +86,7 @@ impl UserRepo for UserRepository {
                    last_seen,
                    is_active
             FROM users
-            WHERE global_username = $1
+            WHERE LOWER(global_username) = LOWER($1)
             "#,
         )
             .bind(name)
