@@ -17,7 +17,7 @@ use crate::platforms::twitch_irc::auth::TwitchIrcAuthenticator;
 /// AuthManager: manages platform authenticators, reading config from DB
 /// and storing credentials in DB once retrieved.
 pub struct AuthManager {
-    pub credentials_repo: Box<dyn CredentialsRepository + Send + Sync>,
+    pub credentials_repo: Arc<dyn CredentialsRepository + Send + Sync>,
     pub platform_config_repo: Arc<dyn PlatformConfigRepository + Send + Sync>,
     pub bot_config_repo: Arc<dyn BotConfigRepository + Send + Sync>,
     pub authenticators: HashMap<Platform, Box<dyn PlatformAuthenticator + Send + Sync>>,
@@ -25,7 +25,7 @@ pub struct AuthManager {
 
 impl AuthManager {
     pub fn new(
-        credentials_repo: Box<dyn CredentialsRepository + Send + Sync>,
+        credentials_repo: Arc<dyn CredentialsRepository + Send + Sync>,
         platform_config_repo: Arc<dyn PlatformConfigRepository + Send + Sync>,
         bot_config_repo: Arc<dyn BotConfigRepository + Send + Sync>,
     ) -> Self {

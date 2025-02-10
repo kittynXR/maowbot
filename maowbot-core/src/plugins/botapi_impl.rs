@@ -283,4 +283,28 @@ impl BotApi for PluginManager {
             Err(Error::Auth("No auth manager set in plugin manager".into()))
         }
     }
+
+    async fn start_platform_runtime(&self, platform: &str, account_name: &str) -> Result<(), Error> {
+        self.platform_manager.start_platform_runtime(platform, account_name).await
+    }
+
+    async fn stop_platform_runtime(&self, platform: &str, account_name: &str) -> Result<(), Error> {
+        self.platform_manager.stop_platform_runtime(platform, account_name).await
+    }
+
+    async fn get_bot_config_value(&self, key: &str) -> Result<Option<String>, Error> {
+        let auth_mgr_arc = self.auth_manager
+            .as_ref()
+            .expect("No auth manager set in plugin manager");
+        let mut auth_manager_locked = auth_mgr_arc.lock().await;
+        auth_manager_locked.bot_config_repo.get_value(key).await
+    }
+
+    async fn set_bot_config_value(&self, key: &str, value: &str) -> Result<(), Error> {
+        let auth_mgr_arc = self.auth_manager
+            .as_ref()
+            .expect("No auth manager set in plugin manager");
+        let mut auth_manager_locked = auth_mgr_arc.lock().await;
+        auth_manager_locked.bot_config_repo.set_value(key, value).await
+    }
 }

@@ -3,6 +3,7 @@ use crate::Error;
 
 use crate::auth::user_manager::{UserManager, DefaultUserManager};
 use crate::models::{User, Platform};
+use crate::repositories::postgres::user::UserRepo;
 
 pub struct UserService {
     user_manager: Arc<DefaultUserManager>,
@@ -36,5 +37,18 @@ impl UserService {
             .await?;
 
         Ok(user)
+    }
+
+    pub async fn find_user_by_global_username(
+        &self,
+        name: &str
+    ) -> Result<User, Error> {
+        let maybe = self.user_manager.user_repo
+            .get_by_global_username(name).await?;
+        if let Some(u) = maybe {
+            Ok(u)
+        } else {
+            Err(Error::Platform(format!("No user with global_username='{}'", name)))
+        }
     }
 }

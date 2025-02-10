@@ -106,4 +106,8 @@ pub trait BotApi: Send + Sync {
         &self,
         platform_config_id: &str
     ) -> Result<(), Error>;
+    async fn start_platform_runtime(&self, platform: &str, account_name: &str) -> Result<(), Error>;
+    async fn stop_platform_runtime(&self, platform: &str, account_name: &str) -> Result<(), Error>;
+    async fn get_bot_config_value(&self, key: &str) -> Result<Option<String>, Error>;
+    async fn set_bot_config_value(&self, key: &str, value: &str) -> Result<(), Error>;
 }

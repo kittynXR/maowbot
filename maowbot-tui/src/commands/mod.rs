@@ -1,12 +1,14 @@
 use std::sync::Arc;
 use maowbot_core::plugins::bot_api::BotApi;
+use crate::tui_module::tui_block_on;
 
 mod account;
 mod platform;
 mod plugin;
 mod user;
 
-use crate::tui_module::tui_block_on;
+// ADDED:
+pub mod connectivity;
 
 pub fn dispatch(
     line: &str,
@@ -28,6 +30,9 @@ Commands:
   platform <add|remove|list|show> ...
   account  <add|remove|list|show> [platform] [username]
   user     <add|remove|edit|info|search> ...
+  autostart <on/off> <platform> <account>
+  start/stop <platform> <account>
+  chat <on/off> [platform] [account]
   quit
 ";
             (false, Some(help.to_string()))
@@ -66,8 +71,12 @@ Commands:
             let message = user::handle_user_command(args, bot_api);
             (false, Some(message))
         }
+        // new commands:
+        "autostart" | "start" | "stop" | "chat" => {
+            let message = connectivity::handle_connectivity_command(&[cmd.as_str()].iter().chain(args.iter()).map(|s| *s).collect::<Vec<_>>(), bot_api);
+            (false, Some(message))
+        }
         "quit" => {
-            // We'll shut down in TuiModule after we return (quit_requested = true).
             (true, Some("(TUI) shutting down...".to_string()))
         },
         _ => {

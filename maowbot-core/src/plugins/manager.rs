@@ -36,6 +36,7 @@ use crate::plugins::types::{
 use crate::repositories::postgres::user::{UserRepo, UserRepository};
 use crate::auth::AuthManager;
 use crate::models::{Platform, PlatformCredential, User};
+use crate::platforms::manager::PlatformManager;
 use crate::repositories::postgres::bot_config::BotConfigRepository;
 use crate::repositories::postgres::credentials::{CredentialsRepository, PostgresCredentialsRepository};
 use crate::repositories::postgres::platform_config::PlatformConfigRepository;
@@ -68,10 +69,12 @@ pub struct PluginManager {
 
     /// A user repository so we can create/remove user rows, etc.
     pub user_repo: Arc<UserRepository>,
+
+    pub platform_manager: Arc<PlatformManager>,
 }
 
 impl PluginManager {
-    pub fn new(passphrase: Option<String>, user_repo: Arc<UserRepository>) -> Self {
+    pub fn new(passphrase: Option<String>, user_repo: Arc<UserRepository>, platform_manager: Arc<PlatformManager>) -> Self {
         let manager = Self {
             plugins: Arc::new(AsyncMutex::new(Vec::new())),
             plugin_records: Arc::new(Mutex::new(Vec::new())),
@@ -81,6 +84,7 @@ impl PluginManager {
             persist_path: PathBuf::from("plugs/plugins_state.json"),
             auth_manager: None,
             user_repo,
+            platform_manager,
         };
         manager.load_plugin_states();
         manager

@@ -4,8 +4,8 @@ use crate::models::PlatformCredential;
 use crate::platforms::{ConnectionStatus, PlatformAuth, PlatformIntegration};
 
 pub struct VRChatPlatform {
-    credentials: Option<PlatformCredential>,
-    connection_status: ConnectionStatus,
+    pub(crate) credentials: Option<PlatformCredential>,
+    pub(crate) connection_status: ConnectionStatus,
 }
 
 impl VRChatPlatform {

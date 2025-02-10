@@ -57,6 +57,7 @@ use tokio::time;
 
 use maowbot_core::Error;
 use maowbot_core::platforms::twitch_helix::TwitchAuthenticator;
+use maowbot_core::repositories::CredentialsRepository;
 
 mod portable_postgres;
 use portable_postgres::*;
@@ -163,36 +164,76 @@ async fn run_server(args: Args) -> Result<(), Error> {
         event_bus.clone(),
     );
 
-    // 4) Auth, Repos, PluginManager
+    // 4) Auth, Repos
     let key = get_master_key()?;
     let encryptor = Encryptor::new(&key)?;
-    let creds_repo = PostgresCredentialsRepository::new(db.pool().clone(), encryptor);
+    // Credentials repository
+    let creds_repo = PostgresCredentialsRepository::new(db.pool().clone(), encryptor.clone());
+    // Wrap in Arc<dyn CredentialsRepository + Send + Sync>
+    let creds_repo_arc: Arc<dyn CredentialsRepository + Send + Sync> =
+        Arc::new(PostgresCredentialsRepository::new(db.pool().clone(), encryptor));
 
     let platform_config_repo = Arc::new(PostgresPlatformConfigRepository::new(db.pool().clone()));
     let bot_config_repo = Arc::new(PostgresBotConfigRepository::new(db.pool().clone()));
     let user_repo = UserRepository::new(db.pool().clone());
+    // We'll also keep an Arc around user_repo if needed
+    let user_repo_arc = Arc::new(user_repo);
 
     let auth_manager = AuthManager::new(
-        Box::new(creds_repo),
+        creds_repo_arc.clone(),
         platform_config_repo,
         bot_config_repo.clone(),
     );
 
+    // Build user manager and user service
+    let identity_repo = PlatformIdentityRepository::new(db.pool().clone());
+    let analysis_repo = PostgresUserAnalysisRepository::new(db.pool().clone());
+    let default_user_mgr = DefaultUserManager::new(user_repo_arc.clone(), identity_repo, analysis_repo);
+    let user_manager = Arc::new(default_user_mgr);
+    let user_service = Arc::new(UserService::new(user_manager.clone()));
+
+    // Build message service
+    let trim_policy = TrimPolicy {
+        max_age_seconds: Some(24 * 3600),
+        spam_score_cutoff: Some(5.0),
+        max_total_messages: Some(10_000),
+        max_messages_per_user: Some(200),
+        min_quality_score: Some(0.2),
+    };
+    let chat_cache = ChatCache::new(
+        PostgresUserAnalysisRepository::new(db.pool().clone()),
+        CacheConfig { trim_policy },
+    );
+    let chat_cache = Arc::new(tokio::sync::Mutex::new(chat_cache));
+    let message_service = Arc::new(MessageService::new(chat_cache, event_bus.clone()));
+
+    // --------------- Create PlatformManager ---------------
+    use maowbot_core::platforms::manager::PlatformManager;
+    let platform_manager = Arc::new(PlatformManager::new(
+        message_service.clone(),
+        user_service.clone(),
+        event_bus.clone(),
+        creds_repo_arc.clone(), // pass credentials
+    ));
+
+    // 5) Create PluginManager (which now needs platform_manager):
     let mut plugin_manager = PluginManager::new(
         args.plugin_passphrase.clone(),
-        Arc::new(user_repo),
+        user_repo_arc.clone(),
+        platform_manager.clone(),
     );
+
+    // Optional: set up plugin_manager further
     plugin_manager.subscribe_to_event_bus(event_bus.clone());
     plugin_manager.set_event_bus(event_bus.clone());
     plugin_manager.set_auth_manager(Arc::new(tokio::sync::Mutex::new(auth_manager)));
 
-    // Load an in-process plugin if requested
+    // 6) Possibly load plugins
     if let Some(path) = args.in_process_plugin.as_ref() {
         if let Err(e) = plugin_manager.load_in_process_plugin(path).await {
             error!("Failed to load in‑process plugin from {}: {:?}", path, e);
         }
     }
-    // Also auto-load from /plugs
     if let Err(e) = plugin_manager.load_plugins_from_folder("plugs").await {
         error!("Failed to load plugins from folder: {:?}", e);
     }
@@ -206,7 +247,7 @@ async fn run_server(args: Args) -> Result<(), Error> {
         tui_module.spawn_tui_thread();
     }
 
-    // Now set BotApi on any loaded plugins:
+    // Set BotApi on loaded plugins
     {
         let lock = plugin_manager.plugins.lock().await;
         for p in lock.iter() {
@@ -214,38 +255,7 @@ async fn run_server(args: Args) -> Result<(), Error> {
         }
     }
 
-    // build user manager
-    let user_repo = UserRepository::new(db.pool().clone());
-    let identity_repo = PlatformIdentityRepository::new(db.pool().clone());
-    let analysis_repo = PostgresUserAnalysisRepository::new(db.pool().clone());
-    let default_user_mgr = DefaultUserManager::new(user_repo, identity_repo, analysis_repo);
-    let user_manager = Arc::new(default_user_mgr);
-    let user_service = Arc::new(UserService::new(user_manager.clone()));
-
-    // message service
-    let trim_policy = TrimPolicy {
-        max_age_seconds: Some(24 * 3600),
-        spam_score_cutoff: Some(5.0),
-        max_total_messages: Some(10_000),
-        max_messages_per_user: Some(200),
-        min_quality_score: Some(0.2),
-    };
-    let chat_cache = ChatCache::new(
-        PostgresUserAnalysisRepository::new(db.pool().clone()),
-        CacheConfig { trim_policy },
-    );
-    let chat_cache = Arc::new(Mutex::new(chat_cache));
-    let message_service = Arc::new(MessageService::new(chat_cache, event_bus.clone()));
-
-    // platform manager
-    let platform_manager = maowbot_core::platforms::manager::PlatformManager::new(
-        message_service.clone(),
-        user_service.clone(),
-        event_bus.clone(),
-    );
-    platform_manager.start_all_platforms().await?;
-
-    // 5) gRPC server
+    // 7) gRPC server
     let identity = load_or_generate_certs()?;
     let tls_config = ServerTlsConfig::new().identity(identity);
     let addr: SocketAddr = args.server_addr.parse()?;
@@ -263,7 +273,7 @@ async fn run_server(args: Args) -> Result<(), Error> {
         }
     });
 
-    // 6) Handle Ctrl-C
+    // 8) Handle Ctrl-C
     let _ctrlc_handle = tokio::spawn(async move {
         if let Err(e) = tokio::signal::ctrl_c().await {
             error!("Failed to listen for Ctrl‑C: {:?}", e);
@@ -272,7 +282,7 @@ async fn run_server(args: Args) -> Result<(), Error> {
         eb_clone.shutdown();
     });
 
-    // 7) Main event loop
+    // 9) Main event loop
     let mut shutdown_rx = event_bus.shutdown_rx.clone();
     loop {
         tokio::select! {
@@ -288,15 +298,16 @@ async fn run_server(args: Args) -> Result<(), Error> {
         }
     }
 
-    // 8) Stop gRPC
+    // 10) Stop gRPC
     info!("Stopping gRPC server...");
     srv_handle.abort();
 
-    // 9) Stop Postgres
+    // 11) Stop Postgres
     stop_postgres(pg_bin_dir, pg_data_dir).map_err(|e| Error::Io(e))?;
 
     Ok(())
 }
+
 
 /// Helper that checks if `users` table is empty; if so, prompt for an "owner" username.
 async fn maybe_create_owner_user(db: &Database) -> Result<(), Error> {

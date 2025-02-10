@@ -36,7 +36,7 @@ aes-gcm = { workspace = true }
 base64 = { workspace = true }
 rand = { workspace = true }
 rand_core = { workspace = true }
-serenity = { workspace = true }
+serenity = { workspace = true, features = ["framework", "standard_framework"] }
 url = { workspace = true }
 http = { workspace = true }
 
