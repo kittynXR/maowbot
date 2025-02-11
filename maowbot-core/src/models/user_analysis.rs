@@ -23,7 +23,7 @@ impl UserAnalysis {
         let now = Utc::now();
         Self {
             user_analysis_id: Uuid::new_v4(),
-            user_id: Uuid::new_v4(),
+            user_id,
             spam_score: 0.0,
             intelligibility_score: 0.0,
             quality_score: 0.0,

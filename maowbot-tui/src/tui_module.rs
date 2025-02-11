@@ -1,5 +1,3 @@
-// maowbot-tui/src/tui_module.rs
-
 use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering}
@@ -10,14 +8,17 @@ use maowbot_core::plugins::bot_api::BotApi;
 
 use crate::commands;
 
-/// We add lazy_static for a single runtime:
+/// We add lazy_static for the runtime:
 use lazy_static::lazy_static;
 use tokio::runtime::Runtime;
 
+/// Replaces the single‐threaded runtime with a multi‐thread runtime so
+/// that our `tokio::spawn` tasks (e.g. Discord shards) can actually run
+/// in parallel with the TUI’s blocking input reading.
 lazy_static! {
     static ref TUI_RUNTIME: Runtime = {
-        // One single-threaded runtime for the TUI commands
-        tokio::runtime::Builder::new_current_thread()
+        tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)  // or more if you prefer
             .enable_all()
             .build()
             .expect("Failed building TUI runtime")
@@ -25,6 +26,7 @@ lazy_static! {
 }
 
 /// Helper so commands can do: `tui_block_on(...)` instead of building new runtimes.
+/// Now that this is a multi‐thread runtime, spawned tasks won't be blocked by TUI input.
 pub fn tui_block_on<F: std::future::Future>(fut: F) -> F::Output {
     TUI_RUNTIME.block_on(fut)
 }
@@ -73,7 +75,7 @@ impl TuiModule {
                     continue;
                 }
 
-                let (quit_requested, msg) = commands::dispatch(line, &bot_api);
+                let (quit_requested, msg) = crate::commands::dispatch(line, &bot_api);
 
                 if let Some(output) = msg {
                     println!("{}", output);
