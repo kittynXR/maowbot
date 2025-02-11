@@ -9,7 +9,7 @@ use maowbot_core::plugins::bot_api::BotApi;
 
 use crate::commands;
 
-use maowbot_core::eventbus::BotEvent;
+use maowbot_core::eventbus::{BotEvent, EventBus};
 use tokio::sync::mpsc::Receiver;
 
 // We store these as simple statics for demonstration. In a real app, consider
@@ -30,13 +30,15 @@ pub fn set_chat_state(on: bool, platform: Option<String>, account: Option<String
 /// TuiModule is no longer building its own runtime:
 pub struct TuiModule {
     pub bot_api: Arc<dyn BotApi>,
+    pub event_bus: Arc<EventBus>,
     shutdown_flag: Arc<AtomicBool>,
 }
 
 impl TuiModule {
-    pub fn new(bot_api: Arc<dyn BotApi>) -> Self {
+    pub fn new(bot_api: Arc<dyn BotApi>, event_bus: Arc<EventBus>) -> Self {
         Self {
             bot_api,
+            event_bus,
             shutdown_flag: Arc::new(AtomicBool::new(false)),
         }
     }
@@ -46,6 +48,7 @@ impl TuiModule {
     pub async fn spawn_tui_thread(&self) {
         let shutdown_flag = self.shutdown_flag.clone();
         let bot_api_for_input = self.bot_api.clone();
+        let event_bus_for_input = self.event_bus.clone();
 
         // 1) Synchronous TUI input in a spawn_blocking
         tokio::spawn(async move {
@@ -84,10 +87,7 @@ impl TuiModule {
                     }
 
                     if quit_requested {
-                        // Instead of block_on(bot_api.shutdown()), we can just do:
-                        // bot_api_for_input.shutdown().await; // but that needs an async scope
-                        // or we can set a shutdown flag to signal the rest of the app:
-                        shutdown_flag.store(true, Ordering::SeqCst);
+                        event_bus_for_input.shutdown();
                         break;
                     }
                 }
