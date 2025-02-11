@@ -3,6 +3,7 @@
 use std::collections::HashMap;
 use async_trait::async_trait;
 use std::sync::Arc;
+use tokio::sync::mpsc;
 use uuid::Uuid;
 
 use crate::plugins::manager::PluginManager;
@@ -306,5 +307,15 @@ impl BotApi for PluginManager {
             .expect("No auth manager set in plugin manager");
         let mut auth_manager_locked = auth_mgr_arc.lock().await;
         auth_manager_locked.bot_config_repo.set_value(key, value).await
+    }
+
+    async fn subscribe_chat_events(&self, buffer_size: Option<usize>) -> mpsc::Receiver<BotEvent> {
+        // If we have an event bus, subscribe to it. If not, return a dummy empty receiver.
+        if let Some(bus) = &self.event_bus {
+            bus.subscribe(buffer_size).await
+        } else {
+            let (_tx, rx) = mpsc::channel(1);
+            rx
+        }
     }
 }

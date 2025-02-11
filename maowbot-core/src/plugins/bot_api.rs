@@ -7,6 +7,9 @@ use async_trait::async_trait;
 use uuid::Uuid;
 use crate::repositories::postgres::UserRepository;
 
+use tokio::sync::mpsc;
+use crate::eventbus::BotEvent;
+
 /// Status data reported by the bot to the plugin(s).
 #[derive(Debug)]
 pub struct StatusData {
@@ -110,4 +113,6 @@ pub trait BotApi: Send + Sync {
     async fn stop_platform_runtime(&self, platform: &str, account_name: &str) -> Result<(), Error>;
     async fn get_bot_config_value(&self, key: &str) -> Result<Option<String>, Error>;
     async fn set_bot_config_value(&self, key: &str, value: &str) -> Result<(), Error>;
+
+    async fn subscribe_chat_events(&self, buffer_size: Option<usize>) -> mpsc::Receiver<BotEvent>;
 }

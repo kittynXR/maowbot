@@ -1,11 +1,9 @@
-// maowbot-tui/src/commands/plugin.rs
-// =============================================================================
-//   - Removes the local runtime creation and uses tui_block_on(...) instead.
-// =============================================================================
+// File: maowbot-tui/src/commands/plugin.rs
 
 use std::sync::Arc;
 use maowbot_core::plugins::bot_api::BotApi;
-use crate::tui_module::tui_block_on;
+use maowbot_core::Error;
+use tokio::runtime::Handle;
 
 pub fn handle_plugin_command(args: &[&str], bot_api: &Arc<dyn BotApi>) -> String {
     if args.len() < 2 {
@@ -17,7 +15,9 @@ pub fn handle_plugin_command(args: &[&str], bot_api: &Arc<dyn BotApi>) -> String
     match subcmd {
         "enable" | "disable" => {
             let enable = subcmd == "enable";
-            let result = tui_block_on(bot_api.toggle_plugin(plugin_name, enable));
+            let result = Handle::current().block_on(async {
+                bot_api.toggle_plugin(plugin_name, enable).await
+            });
             match result {
                 Ok(_) => format!(
                     "Plugin '{}' is now {}",
@@ -28,7 +28,9 @@ pub fn handle_plugin_command(args: &[&str], bot_api: &Arc<dyn BotApi>) -> String
             }
         }
         "remove" => {
-            let result = tui_block_on(bot_api.remove_plugin(plugin_name));
+            let result = Handle::current().block_on(async {
+                bot_api.remove_plugin(plugin_name).await
+            });
             match result {
                 Ok(_) => format!("Plugin '{}' removed.", plugin_name),
                 Err(e) => format!("Error removing '{}': {:?}", plugin_name, e),

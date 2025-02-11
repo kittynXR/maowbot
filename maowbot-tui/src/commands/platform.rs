@@ -1,21 +1,12 @@
-// maowbot-tui/src/commands/platform.rs
-// =============================================================================
-//   - Removes the local runtime creation and uses tui_block_on(...) instead.
-// =============================================================================
+// File: maowbot-tui/src/commands/platform.rs
 
 use std::sync::Arc;
 use std::io::{Write, stdin, stdout};
 use std::str::FromStr;
 use maowbot_core::models::Platform;
 use maowbot_core::plugins::bot_api::BotApi;
-use crate::tui_module::tui_block_on;
+use tokio::runtime::Handle;
 
-/// platform <add|remove|list|show> ...
-/// Usage examples:
-///   platform add twitch
-///   platform remove
-///   platform list
-///   platform show twitch
 pub fn handle_platform_command(args: &[&str], bot_api: &Arc<dyn BotApi>) -> String {
     if args.is_empty() {
         return "Usage: platform <add|remove|list|show> ...".to_string();
@@ -35,9 +26,9 @@ pub fn handle_platform_command(args: &[&str], bot_api: &Arc<dyn BotApi>) -> Stri
             handle_platform_remove(bot_api)
         }
         "list" => {
-            // Optional filter: "platform list <somePlatform>"
             let maybe_platform = if args.len() > 1 { Some(args[1]) } else { None };
-            match tui_block_on(bot_api.list_platform_configs(maybe_platform)) {
+            let configs = Handle::current().block_on(bot_api.list_platform_configs(maybe_platform));
+            match configs {
                 Ok(list) => {
                     if list.is_empty() {
                         "No platform configs found.\n".to_string()
@@ -75,7 +66,6 @@ fn handle_platform_add(plat: Platform, bot_api: &Arc<dyn BotApi>) -> String {
     let platform_str = plat.to_string();
     println!("You are adding or updating the single platform config for '{}'.", platform_str);
 
-    // Possibly prompt user to open the dev console if we know it:
     let dev_console_url = match platform_str.as_str() {
         "twitch"      => Some("https://dev.twitch.tv/console"),
         "discord"     => Some("https://discord.com/developers/applications"),
@@ -109,11 +99,9 @@ fn handle_platform_add(plat: Platform, bot_api: &Arc<dyn BotApi>) -> String {
     let client_secret = csec.trim().to_string();
     let secret_opt = if client_secret.is_empty() { None } else { Some(client_secret) };
 
-    let result = tui_block_on(bot_api.create_platform_config(
-        plat,
-        client_id,
-        secret_opt,
-    ));
+    let result = Handle::current().block_on(async {
+        bot_api.create_platform_config(plat, client_id, secret_opt).await
+    });
     match result {
         Ok(_) => format!("Platform config upserted for platform='{}'.", platform_str),
         Err(e) => format!("Error => {:?}", e),
@@ -121,7 +109,7 @@ fn handle_platform_add(plat: Platform, bot_api: &Arc<dyn BotApi>) -> String {
 }
 
 fn handle_platform_remove(bot_api: &Arc<dyn BotApi>) -> String {
-    let list = match tui_block_on(bot_api.list_platform_configs(None)) {
+    let list = match Handle::current().block_on(bot_api.list_platform_configs(None)) {
         Ok(lst) => lst,
         Err(e) => {
             return format!("Error listing platform configs => {:?}", e);
@@ -151,23 +139,21 @@ fn handle_platform_remove(bot_api: &Arc<dyn BotApi>) -> String {
         return "Aborted removal (no input).".to_string();
     }
 
-    match tui_block_on(bot_api.remove_platform_config(&chosen_id)) {
+    let rm_res = Handle::current().block_on(bot_api.remove_platform_config(&chosen_id));
+    match rm_res {
         Ok(_) => format!("Removed platform config with id={}.", chosen_id),
         Err(e) => format!("Error removing => {:?}", e),
     }
 }
 
-/// "platform show <platformName>"
 fn platform_show(plat: Platform, bot_api: &Arc<dyn BotApi>) -> String {
     let platform_str = plat.to_string();
-
-    // list_platform_configs(Some("twitch")) => we expect at most 1 row for that platform
-    match tui_block_on(bot_api.list_platform_configs(Some(&platform_str))) {
+    let confs = Handle::current().block_on(bot_api.list_platform_configs(Some(&platform_str)));
+    match confs {
         Ok(list) => {
             if list.is_empty() {
                 return format!("No platform config found for '{}'.", platform_str);
             }
-            // We expect only one row per platform. Show it.
             let pc = &list[0];
             let mut out = String::new();
             out.push_str(&format!("platform={} (id={})\n", pc.platform, pc.platform_config_id));

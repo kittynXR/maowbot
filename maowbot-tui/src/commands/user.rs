@@ -1,14 +1,12 @@
-// maowbot-tui/src/commands/user.rs
-// =============================================================================
-//   - Removes the local runtime creation and uses tui_block_on(...) instead.
-// =============================================================================
+// File: maowbot-tui/src/commands/user.rs
 
 use std::sync::Arc;
 use std::io::{stdin, stdout, Write};
+use uuid::Uuid;
 use maowbot_core::plugins::bot_api::BotApi;
-use crate::tui_module::tui_block_on;
+use maowbot_core::Error;
+use tokio::runtime::Handle;
 
-/// Handle top-level "user" commands: add/remove/edit/info/search.
 pub fn handle_user_command(args: &[&str], bot_api: &Arc<dyn BotApi>) -> String {
     if args.is_empty() {
         return "Usage: user <add|remove|edit|info|search> [username]".to_string();
@@ -54,14 +52,12 @@ pub fn handle_user_command(args: &[&str], bot_api: &Arc<dyn BotApi>) -> String {
     }
 }
 
-// -----------------------------------------------------------------------------
-// "user add" => create a user row in DB
-// -----------------------------------------------------------------------------
 fn user_add(display_name: &str, bot_api: &Arc<dyn BotApi>) -> String {
-    use uuid::Uuid;
     let new_user_id = Uuid::new_v4();
-
-    match tui_block_on(bot_api.create_user(new_user_id, display_name)) {
+    let res = Handle::current().block_on(async {
+        bot_api.create_user(new_user_id, display_name).await
+    });
+    match res {
         Ok(_) => format!(
             "Created user with user_id={} (display_name='{}').",
             new_user_id, display_name
@@ -70,26 +66,20 @@ fn user_add(display_name: &str, bot_api: &Arc<dyn BotApi>) -> String {
     }
 }
 
-// -----------------------------------------------------------------------------
-// "user remove" => delete the user row
-// -----------------------------------------------------------------------------
 fn user_remove(typed_name_or_id: &str, bot_api: &Arc<dyn BotApi>) -> String {
-    use uuid::Uuid;
-
-    // 1) Attempt to parse as UUID
     let parsed = Uuid::parse_str(typed_name_or_id);
-
     if let Ok(uuid_val) = parsed {
-        // remove by direct ID
-        match tui_block_on(bot_api.remove_user(uuid_val)) {
+        let del_res = Handle::current().block_on(bot_api.remove_user(uuid_val));
+        match del_res {
             Ok(_) => format!("Removed user by user_id='{}'.", uuid_val),
             Err(e) => format!("Error removing user_id='{}': {:?}", uuid_val, e),
         }
     } else {
-        // 2) treat as a username, then find user
-        match tui_block_on(bot_api.find_user_by_name(typed_name_or_id)) {
+        let found = Handle::current().block_on(bot_api.find_user_by_name(typed_name_or_id));
+        match found {
             Ok(user) => {
-                match tui_block_on(bot_api.remove_user(user.user_id)) {
+                let del_res = Handle::current().block_on(bot_api.remove_user(user.user_id));
+                match del_res {
                     Ok(_) => format!("Removed user '{}'.", typed_name_or_id),
                     Err(e) => format!("Error removing '{}': {:?}", typed_name_or_id, e),
                 }
@@ -99,29 +89,18 @@ fn user_remove(typed_name_or_id: &str, bot_api: &Arc<dyn BotApi>) -> String {
     }
 }
 
-// -----------------------------------------------------------------------------
-// "user edit" => fetch user from DB and allow interactive changes
-// -----------------------------------------------------------------------------
 fn user_edit(typed_user_id: &str, bot_api: &Arc<dyn BotApi>) -> String {
-    use uuid::Uuid;
     let parsed_id = match Uuid::parse_str(typed_user_id) {
         Ok(u) => u,
         Err(e) => return format!("Error: not a valid UUID '{}': {e}", typed_user_id),
     };
-
-    let maybe_user = match tui_block_on(bot_api.get_user(parsed_id)) {
-        Ok(u) => u,
-        Err(e) => {
-            return format!("Error fetching user '{}': {:?}", parsed_id, e);
-        }
-    };
-
+    let maybe_user = Handle::current().block_on(bot_api.get_user(parsed_id));
     let user = match maybe_user {
-        Some(u) => u,
-        None => return format!("User '{}' not found.", parsed_id),
+        Ok(Some(u)) => u,
+        Ok(None) => return format!("User '{}' not found.", parsed_id),
+        Err(e) => return format!("Error fetching user '{}': {:?}", parsed_id, e),
     };
 
-    // Start an interactive editor
     println!("Editing user '{}':", user.user_id);
     println!("(Press ENTER to keep current values.)");
     println!("-------------------------------------");
@@ -138,8 +117,10 @@ fn user_edit(typed_user_id: &str, bot_api: &Arc<dyn BotApi>) -> String {
         trimmed.eq_ignore_ascii_case("y")
     };
 
-    let update_res = tui_block_on(bot_api.update_user_active(user.user_id, new_is_active));
-    match update_res {
+    let up_res = Handle::current().block_on(async {
+        bot_api.update_user_active(user.user_id, new_is_active).await
+    });
+    match up_res {
         Ok(_) => format!(
             "Updated user '{}': is_active={} (was {}).",
             user.user_id, new_is_active, user.is_active
@@ -148,17 +129,13 @@ fn user_edit(typed_user_id: &str, bot_api: &Arc<dyn BotApi>) -> String {
     }
 }
 
-// -----------------------------------------------------------------------------
-// "user info" => fetch from DB and display
-// -----------------------------------------------------------------------------
 fn user_info(typed_user_id: &str, bot_api: &Arc<dyn BotApi>) -> String {
-    use uuid::Uuid;
     let parsed_id = match Uuid::parse_str(typed_user_id) {
         Ok(u) => u,
         Err(e) => return format!("Error: not a valid UUID '{}': {e}", typed_user_id),
     };
-
-    match tui_block_on(bot_api.get_user(parsed_id)) {
+    let found = Handle::current().block_on(bot_api.get_user(parsed_id));
+    match found {
         Ok(Some(u)) => format!(
             "user_id='{}', global_username='{:?}', created_at={}, last_seen={}, is_active={}",
             u.user_id, u.global_username, u.created_at, u.last_seen, u.is_active
@@ -168,17 +145,14 @@ fn user_info(typed_user_id: &str, bot_api: &Arc<dyn BotApi>) -> String {
     }
 }
 
-// -----------------------------------------------------------------------------
-// "user search" => partial match or custom query
-// -----------------------------------------------------------------------------
 fn user_search(query: &str, bot_api: &Arc<dyn BotApi>) -> String {
-    match tui_block_on(bot_api.search_users(query)) {
+    let res = Handle::current().block_on(bot_api.search_users(query));
+    match res {
         Ok(list) => {
             if list.is_empty() {
                 format!("No users matched '{}'.", query)
             } else {
-                let mut out = String::new();
-                out.push_str(&format!("Found {} user(s):\n", list.len()));
+                let mut out = format!("Found {} user(s):\n", list.len());
                 for u in list {
                     out.push_str(&format!(
                         " - user_id='{}' username='{:?}' last_seen={}\n",
