@@ -17,7 +17,7 @@ use tracing::{error, info};
 use tracing_subscriber::{fmt, EnvFilter};
 
 use maowbot_core::Database;
-use maowbot_core::plugins::manager::{PluginManager};
+use maowbot_core::plugins::manager::PluginManager;
 use maowbot_core::plugins::service_grpc::PluginServiceGrpc;
 use maowbot_core::eventbus::{EventBus, BotEvent};
 use maowbot_core::repositories::postgres::{
@@ -98,20 +98,30 @@ struct Args {
 
     #[arg(long, default_value = "false")]
     auth: bool,
+
+    /// Logging level: "info", "warn", "debug", "error", or "trace"
+    #[arg(long = "log-level", short = 'L', default_value = "info", value_parser = ["info", "warn", "debug", "error", "trace"])]
+    log_level: String,
 }
 
-fn init_tracing() {
-    let filter = EnvFilter::from_default_env()
-        .add_directive("maowbot=info".parse().unwrap_or_default());
+/// Initialize tracing (logging) at the specified log level.
+fn init_tracing(level: &str) {
+    let filter_string = format!("maowbot={}", level);
+    let filter = EnvFilter::new(filter_string);
     let sub = fmt().with_env_filter(filter).finish();
+
     tracing::subscriber::set_global_default(sub)
         .expect("Failed to set global subscriber");
 }
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    init_tracing();
+    // Parse CLI arguments first
     let args = Args::parse();
+
+    // Initialize tracing with the specified log level
+    init_tracing(&args.log_level);
+
     info!("MaowBot starting. mode={}, headless={}, tui={}, auth={}",
           args.mode, args.headless, args.tui, args.auth);
 
@@ -176,7 +186,6 @@ async fn run_server(args: Args) -> Result<(), Error> {
     let platform_config_repo = Arc::new(PostgresPlatformConfigRepository::new(db.pool().clone()));
     let bot_config_repo = Arc::new(PostgresBotConfigRepository::new(db.pool().clone()));
     let user_repo = UserRepository::new(db.pool().clone());
-    // We'll also keep an Arc around user_repo if needed
     let user_repo_arc = Arc::new(user_repo);
 
     let auth_manager = AuthManager::new(
@@ -307,7 +316,6 @@ async fn run_server(args: Args) -> Result<(), Error> {
 
     Ok(())
 }
-
 
 /// Helper that checks if `users` table is empty; if so, prompt for an "owner" username.
 async fn maybe_create_owner_user(db: &Database) -> Result<(), Error> {
