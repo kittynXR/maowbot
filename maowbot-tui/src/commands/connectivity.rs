@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use maowbot_core::plugins::bot_api::BotApi;
 use tokio::runtime::Handle;
-
+use maowbot_core::tasks::autostart::AutostartConfig;
 use crate::tui_module::TuiModule;
 
 /// The main function that handles "autostart", "start", "stop", "chat" commands.
@@ -152,25 +152,5 @@ fn handle_chat_cmd(args: &[&str], tui_module: &Arc<TuiModule>) -> String {
         }
     } else {
         "Chat OFF".to_string()
-    }
-}
-
-/// Example “autostart” config object (abbreviated here).
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
-pub struct AutostartConfig {
-    pub accounts: Vec<(String, String)>,
-}
-impl AutostartConfig {
-    pub fn new() -> Self {
-        Self { accounts: vec![] }
-    }
-    pub fn set_platform_account(&mut self, platform: &str, acct: &str, on: bool) {
-        if on {
-            if !self.accounts.iter().any(|(p, a)| p == platform && a == acct) {
-                self.accounts.push((platform.to_string(), acct.to_string()));
-            }
-        } else {
-            self.accounts.retain(|(p, a)| !(p == platform && a == acct));
-        }
     }
 }
