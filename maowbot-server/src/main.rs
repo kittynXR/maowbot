@@ -55,6 +55,7 @@ use tokio::time;
 use maowbot_core::Error;
 use maowbot_core::platforms::twitch_helix::TwitchAuthenticator;
 use maowbot_core::repositories::CredentialsRepository;
+use maowbot_core::tasks::autostart::run_autostart;
 
 mod portable_postgres;
 use portable_postgres::*;
@@ -244,6 +245,11 @@ async fn run_server(args: Args) -> Result<(), Error> {
 
     // Expose BotApi
     let bot_api: Arc<dyn BotApi> = Arc::new(plugin_manager.clone());
+
+    // (1) -- Call run_autostart so that "discord, cutecat_chat" actually starts up
+    if let Err(e) = run_autostart(bot_config_repo.as_ref(), bot_api.clone()).await {
+        error!("Autostart error => {:?}", e);
+    }
 
     // If TUI was requested => spawn the TuiModule
     if args.tui {
