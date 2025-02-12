@@ -16,6 +16,7 @@ pub trait BotConfigRepository: Send + Sync {
     async fn set_autostart(&self, json_str: &str) -> Result<(), Error> {
         self.set_value("autostart", json_str).await
     }
+    async fn list_all(&self) -> Result<Vec<(String, String)>, Error>;
 }
 
 #[derive(Clone)]
@@ -93,5 +94,19 @@ impl BotConfigRepository for PostgresBotConfigRepository {
         } else {
             Ok(None)
         }
+    }
+
+    async fn list_all(&self) -> Result<Vec<(String, String)>, Error> {
+        let rows = sqlx::query(r#"SELECT config_key, config_value FROM bot_config"#)
+            .fetch_all(&self.pool)
+            .await?;
+
+        let mut out = Vec::with_capacity(rows.len());
+        for row in rows {
+            let k: String = row.try_get("config_key")?;
+            let v: String = row.try_get("config_value")?;
+            out.push((k, v));
+        }
+        Ok(out)
     }
 }

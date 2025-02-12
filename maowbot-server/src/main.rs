@@ -247,7 +247,7 @@ async fn run_server(args: Args) -> Result<(), Error> {
 
     // If TUI was requested => spawn the TuiModule
     if args.tui {
-        let raw_tui = TuiModule::new(bot_api.clone(), event_bus.clone());
+        let raw_tui = Arc::new(TuiModule::new(bot_api.clone(), event_bus.clone()));
         raw_tui.spawn_tui_thread().await;
     }
 

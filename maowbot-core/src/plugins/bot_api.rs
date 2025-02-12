@@ -115,4 +115,5 @@ pub trait BotApi: Send + Sync {
     async fn set_bot_config_value(&self, key: &str, value: &str) -> Result<(), Error>;
 
     async fn subscribe_chat_events(&self, buffer_size: Option<usize>) -> mpsc::Receiver<BotEvent>;
+    async fn list_config(&self) -> Result<Vec<(String, String)>, Error>;
 }

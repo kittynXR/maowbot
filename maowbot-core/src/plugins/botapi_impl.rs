@@ -318,4 +318,13 @@ impl BotApi for PluginManager {
             rx
         }
     }
+
+    async fn list_config(&self) -> Result<Vec<(String, String)>, Error> {
+        if let Some(am) = &self.auth_manager {
+            let lock = am.lock().await;
+            lock.bot_config_repo.list_all().await
+        } else {
+            Err(Error::Auth("No auth manager set in plugin manager".into()))
+        }
+    }
 }

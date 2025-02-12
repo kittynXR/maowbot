@@ -1,37 +1,35 @@
-// File: maowbot-tui/src/tui_module.rs
-
 use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering}
 };
 use std::io::{BufRead, BufReader, Write};
-use maowbot_core::plugins::bot_api::BotApi;
-
-use crate::commands;
+use tokio::sync::{mpsc::Receiver, Mutex};
 
 use maowbot_core::eventbus::{BotEvent, EventBus};
-use tokio::sync::mpsc::Receiver;
+use maowbot_core::plugins::bot_api::BotApi;
 
-// We store these as simple statics for demonstration. In a real app, consider
-// using a Mutex or storing them in TuiModule fields for concurrency safety.
-static mut CHAT_ENABLED: bool = false;
-static mut CHAT_PLATFORM_FILTER: Option<String> = None;
-static mut CHAT_ACCOUNT_FILTER: Option<String> = None;
 
-/// Let other code set chat on/off state:
-pub fn set_chat_state(on: bool, platform: Option<String>, account: Option<String>) {
-    unsafe {
-        CHAT_ENABLED = on;
-        CHAT_PLATFORM_FILTER = platform;
-        CHAT_ACCOUNT_FILTER = account;
-    }
+/// Holds current chat on/off state and optional filters.
+/// Stored in a Mutex inside TuiModule so we can safely mutate it.
+#[derive(Debug, Default)]
+pub struct ChatState {
+    pub enabled: bool,
+    pub platform_filter: Option<String>,
+    pub account_filter: Option<String>,
 }
 
-/// TuiModule is no longer building its own runtime:
+/// The main TUI module, which spawns:
+/// 1) A blocking thread to read user input
+/// 2) A background task to print chat messages
 pub struct TuiModule {
     pub bot_api: Arc<dyn BotApi>,
     pub event_bus: Arc<EventBus>,
+
+    /// Local shutdown flag for the TUI input loop
     shutdown_flag: Arc<AtomicBool>,
+
+    /// Our shared chat-state
+    pub chat_state: Arc<Mutex<ChatState>>,
 }
 
 impl TuiModule {
@@ -40,20 +38,36 @@ impl TuiModule {
             bot_api,
             event_bus,
             shutdown_flag: Arc::new(AtomicBool::new(false)),
+            chat_state: Arc::new(Mutex::new(ChatState::default())),
         }
     }
 
-    /// Spawns the TUI in the same tokio runtime used by main,
-    /// using spawn_blocking for input reading + spawn for chat printing
-    pub async fn spawn_tui_thread(&self) {
+    /// Set the chat state (on/off) and optional platform/account filters.
+    /// Called by the “chat on/off” command in connectivity.rs
+    pub async fn set_chat_state(
+        &self,
+        enabled: bool,
+        platform: Option<String>,
+        account: Option<String>,
+    ) {
+        let mut st = self.chat_state.lock().await;
+        st.enabled = enabled;
+        st.platform_filter = platform;
+        st.account_filter = account;
+    }
+
+    /// Spawns the TUI:
+    ///  - A blocking thread (spawn_blocking) to read user input
+    ///  - A normal async task for printing chat messages
+    pub async fn spawn_tui_thread(self: &Arc<Self>) {
         let shutdown_flag = self.shutdown_flag.clone();
         let bot_api_for_input = self.bot_api.clone();
         let event_bus_for_input = self.event_bus.clone();
 
+        let tui_module_for_input = self.clone();
+
         // 1) Synchronous TUI input in a spawn_blocking
         tokio::spawn(async move {
-            // We nest spawn_blocking so that we do all blocking I/O off
-            // the main async threads.
             let _ = tokio::task::spawn_blocking(move || {
                 println!("Local TUI enabled. Type 'help' for commands.\n");
 
@@ -80,7 +94,10 @@ impl TuiModule {
                         continue;
                     }
 
-                    let (quit_requested, msg) = crate::commands::dispatch(line, &bot_api_for_input);
+                    // Instead of the old dispatch(...) that only had bot_api,
+                    // we now pass &tui_module_for_input so commands can set chat state
+                    let (quit_requested, msg) =
+                        crate::commands::dispatch(line, &bot_api_for_input, &tui_module_for_input);
 
                     if let Some(output) = msg {
                         println!("{}", output);
@@ -98,28 +115,30 @@ impl TuiModule {
 
         // 2) Chat printing loop in a normal tokio::spawn
         let bot_api_for_chat = self.bot_api.clone();
+        let module_for_chat = self.clone();
+
         tokio::spawn(async move {
-            // subscribe to all chat events
             let mut rx = bot_api_for_chat.subscribe_chat_events(Some(10000)).await;
             while let Some(event) = rx.recv().await {
                 if let BotEvent::ChatMessage { platform, channel, user, text, .. } = event {
-                    let (enabled, pfilt, afilt) = unsafe {
-                        (CHAT_ENABLED, CHAT_PLATFORM_FILTER.clone(), CHAT_ACCOUNT_FILTER.clone())
-                    };
-                    if !enabled {
+                    // Acquire the current chat state
+                    let st = module_for_chat.chat_state.lock().await;
+                    if !st.enabled {
                         continue;
                     }
-                    if let Some(ref p) = pfilt {
-                        if !platform.eq_ignore_ascii_case(p) {
+                    if let Some(ref pf) = st.platform_filter {
+                        if !platform.eq_ignore_ascii_case(pf) {
                             continue;
                         }
                     }
-                    if let Some(ref a) = afilt {
-                        if !channel.eq_ignore_ascii_case(a) {
+                    if let Some(ref af) = st.account_filter {
+                        if !channel.eq_ignore_ascii_case(af) {
                             continue;
                         }
                     }
-                    println!("{} {} {} {}", platform, channel, user, text);
+
+                    println!("[CHAT] platform={} channel={} user={} => {}",
+                             platform, channel, user, text);
                 }
             }
         });
@@ -127,5 +146,16 @@ impl TuiModule {
 
     pub fn stop_tui(&self) {
         self.shutdown_flag.store(true, Ordering::SeqCst);
+    }
+}
+
+impl std::clone::Clone for TuiModule {
+    fn clone(&self) -> Self {
+        Self {
+            bot_api: self.bot_api.clone(),
+            event_bus: self.event_bus.clone(),
+            shutdown_flag: self.shutdown_flag.clone(),
+            chat_state: self.chat_state.clone(),
+        }
     }
 }
