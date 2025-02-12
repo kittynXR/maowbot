@@ -74,6 +74,7 @@ axum-server = "^0.7"
 tower = "^0.5"
 tower-http = {  version = "^0.6", features = ["trace"] }
 bytes = "1.9.0"
+once_cell = "^1.20"
 
 [dev-dependencies]
 tokio-test = { workspace = true }
