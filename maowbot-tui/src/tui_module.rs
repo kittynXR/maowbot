@@ -8,9 +8,7 @@ use tokio::sync::{mpsc::Receiver, Mutex};
 use maowbot_core::eventbus::{BotEvent, EventBus};
 use maowbot_core::plugins::bot_api::BotApi;
 
-
 /// Holds current chat on/off state and optional filters.
-/// Stored in a Mutex inside TuiModule so we can safely mutate it.
 #[derive(Debug, Default)]
 pub struct ChatState {
     pub enabled: bool,
@@ -43,7 +41,6 @@ impl TuiModule {
     }
 
     /// Set the chat state (on/off) and optional platform/account filters.
-    /// Called by the “chat on/off” command in connectivity.rs
     pub async fn set_chat_state(
         &self,
         enabled: bool,
@@ -63,7 +60,6 @@ impl TuiModule {
         let shutdown_flag = self.shutdown_flag.clone();
         let bot_api_for_input = self.bot_api.clone();
         let event_bus_for_input = self.event_bus.clone();
-
         let tui_module_for_input = self.clone();
 
         // 1) Synchronous TUI input in a spawn_blocking
@@ -94,8 +90,6 @@ impl TuiModule {
                         continue;
                     }
 
-                    // Instead of the old dispatch(...) that only had bot_api,
-                    // we now pass &tui_module_for_input so commands can set chat state
                     let (quit_requested, msg) =
                         crate::commands::dispatch(line, &bot_api_for_input, &tui_module_for_input);
 
@@ -120,12 +114,13 @@ impl TuiModule {
         tokio::spawn(async move {
             let mut rx = bot_api_for_chat.subscribe_chat_events(Some(10000)).await;
             while let Some(event) = rx.recv().await {
-                if let BotEvent::ChatMessage { platform, channel, user, text, .. } = event {
+                if let BotEvent::ChatMessage { platform, channel, user, text, timestamp } = event {
                     // Acquire the current chat state
                     let st = module_for_chat.chat_state.lock().await;
                     if !st.enabled {
                         continue;
                     }
+                    // optional filtering
                     if let Some(ref pf) = st.platform_filter {
                         if !platform.eq_ignore_ascii_case(pf) {
                             continue;
@@ -137,8 +132,12 @@ impl TuiModule {
                         }
                     }
 
-                    println!("[CHAT] platform={} channel={} user={} => {}",
-                             platform, channel, user, text);
+                    // Format: "<mm:ss>:<platform>:<#channel> <chatter>: <message>"
+                    let time_str = timestamp.format("%M:%S").to_string();
+                    println!(
+                        "{}:{}:#{} {}: {}",
+                        time_str, platform, channel, user, text
+                    );
                 }
             }
         });

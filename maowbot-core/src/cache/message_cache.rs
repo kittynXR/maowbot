@@ -11,7 +11,8 @@ use crate::repositories::postgres::user_analysis::UserAnalysisRepository;
 pub struct CachedMessage {
     pub platform: String,
     pub channel: String,
-    pub user_id: String,
+    /// Now renamed to reflect actual chatter username (not DB UUID).
+    pub user_name: String,
     pub text: String,
     pub timestamp: DateTime<Utc>,
     pub token_count: usize,
@@ -125,10 +126,11 @@ impl GlobalRingBuffer {
 /// In-memory ChatCache with concurrency-friendly data structures.
 ///
 /// - A `tokio::sync::RwLock<GlobalRingBuffer>` for the global ring of messages (fixed capacity).
-/// - A `DashMap<user_id, VecDeque<usize>>` storing ring indices for each user.
+/// - A `DashMap<user_name, VecDeque<usize>>` storing ring indices for each user.
 /// - The `UserAnalysisRepository` for spam checks if you want to do that asynchronously.
 pub struct ChatCache<R: UserAnalysisRepository> {
     global: RwLock<GlobalRingBuffer>,
+    /// The key is now the `user_name`, so we can limit messages per "username".
     user_map: DashMap<String, VecDeque<usize>>,
     total_in_buffer: AtomicUsize,
     user_analysis_repo: R,
@@ -137,7 +139,6 @@ pub struct ChatCache<R: UserAnalysisRepository> {
 
 impl<R: UserAnalysisRepository> ChatCache<R> {
     /// Construct a new ChatCache, using `max_total_messages` as the ring's capacity.
-    /// (If `max_total_messages` is None, default to something like 10,000.)
     pub fn new(user_analysis_repo: R, config: CacheConfig) -> Self {
         let capacity = config
             .trim_policy
@@ -167,7 +168,7 @@ impl<R: UserAnalysisRepository> ChatCache<R> {
 
         // -- 2) DASHMAP lock:
         {
-            let mut user_q = self.user_map.entry(msg.user_id.clone()).or_default();
+            let mut user_q = self.user_map.entry(msg.user_name.clone()).or_default();
             user_q.push_back(idx);
             if let Some(max_per_user) = self.config.trim_policy.max_messages_per_user {
                 while user_q.len() > max_per_user {
@@ -203,13 +204,18 @@ impl<R: UserAnalysisRepository> ChatCache<R> {
         let spam_cut = policy.spam_score_cutoff.unwrap_or(f32::MAX);
         let quality_min = policy.min_quality_score.unwrap_or(-9999.0);
 
-        // 1) Gather user_ids to purge (do async calls *without* holding the ring).
+        // 1) Gather user_names to purge
         let mut purge_list = Vec::new();
-        for user_id in self.user_map.iter().map(|e| e.key().clone()) {
-            if let Ok(Some(analysis)) = self.user_analysis_repo.get_analysis(user_id.parse().unwrap()).await {
-                if analysis.spam_score >= spam_cut || analysis.quality_score < quality_min {
-                    purge_list.push(user_id);
-                }
+        // We do not actually have a user_id in the DB sense here, just chat usernames.
+        // You could optionally do a user analysis lookup by name if your system supports that.
+        for user_name in self.user_map.iter().map(|e| e.key().clone()) {
+            // If you had a DB mapping from name -> user_id, you'd do that here.
+            // Example: skip for demonstration (or do some logic).
+            // We won't do anything for now. This is just an example:
+            let dummy_spam_score = 0.0;
+            let dummy_quality_score = 1.0;
+            if dummy_spam_score >= spam_cut || dummy_quality_score < quality_min {
+                purge_list.push(user_name);
             }
         }
         if purge_list.is_empty() {
@@ -217,34 +223,25 @@ impl<R: UserAnalysisRepository> ChatCache<R> {
         }
 
         // 2) Now do a quick synchronous pass to remove those users' messages from user_map
-        //    and remove from the ring if needed. Actually removing from the ring is optional:
-        //    you can just let them age out. But let's do it for completeness.
-        for uid in purge_list {
-            if let Some(mut q) = self.user_map.get_mut(&uid) {
+        for uname in purge_list {
+            if let Some(mut q) = self.user_map.get_mut(&uname) {
                 q.clear();
             }
         }
 
-        // Because the ring is a circular buffer, physically “removing” messages from the middle
-        // is complicated. Typically you’d just let them get overwritten eventually, or you can
-        // mark them as “deleted”. Below we do a quick pass to drop them:
+        // 3) Because the ring is a circular buffer, physically removing them is tricky. We'll do:
         {
             let mut guard = self.global.write().await;
             let capacity = guard.capacity;
             let start_idx = guard.start_idx;
             let total_count = guard.total_count;
-            // We'll do a naive pass: for each slot in the ring's window, if it belongs
-            // to a spammy user, remove it. Then we compact from the front.
-            // If you want to skip, you can remove this step.
 
-            // We'll gather all valid slots into a new Vec, skipping spammy messages.
             let mut keep = Vec::with_capacity(total_count);
             for i in 0..total_count {
                 let pos = (start_idx + i) % capacity;
                 if let Some(msg) = guard.messages[pos].as_ref() {
-                    // Check if it was in the purge list
-                    if let Some(mut q) = self.user_map.get_mut(&msg.user_id) {
-                        // If the user's queue is empty, they were purged
+                    // If the user_map for this name is empty, skip it
+                    if let Some(q) = self.user_map.get(&msg.user_name) {
                         if q.is_empty() {
                             // skip
                             continue;
@@ -253,7 +250,7 @@ impl<R: UserAnalysisRepository> ChatCache<R> {
                     keep.push(guard.messages[pos].take());
                 }
             }
-            // Now we re-insert them from scratch in chronological order
+            // re-insert them
             guard.messages.fill(None);
             guard.start_idx = 0;
             guard.end_idx = 0;
@@ -266,13 +263,12 @@ impl<R: UserAnalysisRepository> ChatCache<R> {
             self.total_in_buffer.store(guard.total_count, Ordering::Release);
         }
 
-        // 3) Remove any stale ring indices from user_map after that re-pack
+        // remove stale indices
         self.remove_stale_indices();
     }
 
     /// Remove from each user's queue those ring indices that have been overwritten or trimmed.
     fn remove_stale_indices(&self) {
-        // The ring is only needed to figure out which indices are valid, so:
         let (start_idx, total_count, cap) = {
             if let Ok(g) = self.global.try_read() {
                 (g.start_idx, g.total_count, g.capacity)
@@ -300,30 +296,21 @@ impl<R: UserAnalysisRepository> ChatCache<R> {
             }
         };
 
-        // Now lock the DashMap:
         for mut entry in self.user_map.iter_mut() {
             entry.retain(|&idx| in_range(idx));
         }
 
-        // Optionally update total_in_buffer from a second ring read:
         if let Ok(g2) = self.global.try_read() {
             self.total_in_buffer.store(g2.total_count, Ordering::Release);
         }
     }
-    // ----------------------------------------------------------------
-    // Provide a get_recent_messages(...) method matching your old usage
-    // signature, so message_service doesn't break:
-    //   get_recent_messages(since, token_limit, filter_user_id)
-    // ----------------------------------------------------------------
 
-    /// Equivalent to your old `get_recent_messages`, returning messages
-    /// with timestamp >= `since` (ascending by timestamp), optionally
-    /// filtered by user_id, and stopping if `token_limit` is exceeded.
+    /// Provide a get_recent_messages(...) method for retrieving messages with optional token_limit
     pub async fn get_recent_messages(
         &self,
         since: DateTime<Utc>,
         token_limit: Option<usize>,
-        filter_user_id: Option<&str>,
+        filter_user_name: Option<&str>,
     ) -> Vec<CachedMessage> {
         let mut results = Vec::new();
         let global_guard = self.global.read().await; // Async lock
@@ -337,9 +324,8 @@ impl<R: UserAnalysisRepository> ChatCache<R> {
 
         let mut tokens_used = 0usize;
 
-        if let Some(u) = filter_user_id {
-            // Per-user mode
-            if let Some(q) = self.user_map.get(u) {
+        if let Some(uname) = filter_user_name {
+            if let Some(q) = self.user_map.get(uname) {
                 for &idx in q.iter() {
                     if let Some(m) = global_guard.get(idx) {
                         if m.timestamp < since {

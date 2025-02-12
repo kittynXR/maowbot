@@ -150,8 +150,6 @@ impl PlatformManager {
         let message_svc = Arc::clone(&self.message_svc);
         let user_svc = Arc::clone(&self.user_svc);
 
-        // We'll unify the 'platform_str' so it matches the user’s original parse: "discord"
-        // Then pass that to process_incoming_message(...) as well.
         let platform_str = "discord".to_string();
         let plat = platform_str.clone();
         let user_id_str = credential.user_id.to_string();
@@ -167,11 +165,11 @@ impl PlatformManager {
 
             while let Some(msg_event) = discord.next_message_event().await {
                 let channel = msg_event.channel;
-                let user_platform_id = msg_event.user_id;
+                let user_platform_id = msg_event.user_id; // ephemeral ID from platform
                 let text = msg_event.text;
-                let username = msg_event.username;
+                let username = msg_event.username.clone();
 
-                // 1) get/create user
+                // 1) get/create user in DB
                 let user = match user_svc
                     .get_or_create_user("discord", &user_platform_id, Some(&username))
                     .await
@@ -183,9 +181,9 @@ impl PlatformManager {
                     }
                 };
 
-                // 2) pass to message_svc
+                // 2) pass ephemeral username to message_svc (not the DB user_id)
                 if let Err(e) = message_svc
-                    .process_incoming_message(&platform_str.clone(), &channel, &user.user_id, &text)
+                    .process_incoming_message(&platform_str, &channel, &username, &text)
                     .await
                 {
                     error!("[Discord] process_incoming_message failed: {:?}", e);
@@ -210,7 +208,6 @@ impl PlatformManager {
         let message_svc = Arc::clone(&self.message_svc);
         let user_svc = Arc::clone(&self.user_svc);
 
-        // Instead of “twitch_helix”, unify to "twitch"
         let platform_str = "twitch".to_string();
         let plat = platform_str.clone();
         let user_id_str = credential.user_id.to_string();
@@ -232,7 +229,7 @@ impl PlatformManager {
                 let channel = msg_event.channel;
                 let user_platform_id = msg_event.user_id;
                 let text = msg_event.text;
-                let display_name = msg_event.display_name;
+                let display_name = msg_event.display_name.clone();
 
                 let user = match user_svc
                     .get_or_create_user("twitch", &user_platform_id, Some(&display_name))
@@ -246,7 +243,7 @@ impl PlatformManager {
                 };
 
                 if let Err(e) = message_svc
-                    .process_incoming_message(&platform_str.clone(), &channel, &user.user_id, &text)
+                    .process_incoming_message(&platform_str, &channel, &display_name, &text)
                     .await
                 {
                     error!("[TwitchHelix] process_incoming_message failed: {:?}", e);
@@ -289,7 +286,7 @@ impl PlatformManager {
             while let Some(evt) = vrc.next_message_event().await {
                 let user_platform_id = evt.user_id;
                 let text = evt.text;
-                let display_name = evt.vrchat_display_name;
+                let display_name = evt.vrchat_display_name.clone();
 
                 let user = match user_svc
                     .get_or_create_user("vrchat", &user_platform_id, Some(&display_name))
@@ -302,8 +299,9 @@ impl PlatformManager {
                     }
                 };
 
+                // For VRChat, we have no real concept of "channel", so pass something like a room?
                 if let Err(e) = message_svc
-                    .process_incoming_message(&platform_str.clone(), "roomOrWorldId", &user.user_id, &text)
+                    .process_incoming_message(&platform_str, "roomOrWorldId", &display_name, &text)
                     .await
                 {
                     error!("[VRChat] process_incoming_message failed: {:?}", e);
@@ -327,7 +325,6 @@ impl PlatformManager {
         let message_svc = Arc::clone(&self.message_svc);
         let user_svc = Arc::clone(&self.user_svc);
 
-        // We'll unify to “twitch-irc” for both the manager handle and the published event.
         let platform_str = "twitch-irc".to_string();
         let plat = platform_str.clone();
         let user_id_str = credential.user_id.to_string();
@@ -348,7 +345,7 @@ impl PlatformManager {
                 let channel = evt.channel;
                 let user_platform_id = evt.user_id;
                 let text = evt.text;
-                let user_name = evt.user_name;
+                let user_name = evt.user_name.clone();
 
                 let user = match user_svc
                     .get_or_create_user("twitch-irc", &user_platform_id, Some(&user_name))
@@ -361,9 +358,8 @@ impl PlatformManager {
                     }
                 };
 
-                // Now publish the same platform_str = "twitch-irc" here
                 if let Err(e) = message_svc
-                    .process_incoming_message(&platform_str, &channel, &user.user_id, &text)
+                    .process_incoming_message(&platform_str, &channel, &user_name, &text)
                     .await
                 {
                     error!("[TwitchIRC] process_incoming_message failed: {:?}", e);

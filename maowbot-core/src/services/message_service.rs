@@ -1,5 +1,3 @@
-// File: src/services/message_service.rs
-
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use chrono::{DateTime, Utc};
@@ -26,11 +24,12 @@ impl MessageService {
         }
     }
 
+    /// Note: user_name is the ephemeral chatter name, not the DB user_id.
     pub async fn process_incoming_message(
         &self,
         platform: &str,
         channel: &str,
-        user_id: &Uuid,
+        user_name: &str,
         text: &str,
     ) -> Result<(), Error> {
 
@@ -39,7 +38,7 @@ impl MessageService {
         let msg = CachedMessage {
             platform: platform.to_string(),
             channel: channel.to_string(),
-            user_id: user_id.to_string(),
+            user_name: user_name.to_string(), // store ephemeral chatter name
             text: text.to_string(),
             timestamp: Utc::now(),
             token_count,
@@ -53,7 +52,7 @@ impl MessageService {
         let event = BotEvent::ChatMessage {
             platform: platform.to_string(),
             channel: channel.to_string(),
-            user: user_id.to_string(),
+            user: user_name.to_string(),  // for the eventbus, we also carry the ephemeral username
             text: text.to_string(),
             timestamp: Utc::now(),
         };
@@ -66,9 +65,9 @@ impl MessageService {
         &self,
         since: DateTime<Utc>,
         token_limit: Option<usize>,
-        filter_user_id: Option<&str>,
+        filter_user_name: Option<&str>,
     ) -> Vec<CachedMessage> {
         let cache_lock = self.chat_cache.lock().await;
-        cache_lock.get_recent_messages(since, token_limit, filter_user_id).await
+        cache_lock.get_recent_messages(since, token_limit, filter_user_name).await
     }
 }
