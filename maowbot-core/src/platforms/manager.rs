@@ -98,6 +98,7 @@ impl PlatformManager {
             Platform::Twitch => self.spawn_twitch_helix(creds).await?,
             Platform::VRChat => self.spawn_vrchat(creds).await?,
             Platform::TwitchIRC => self.spawn_twitch_irc(creds).await?,
+            Platform::TwitchEventSub => self.spawn_twitch_eventsub(creds).await?
         };
 
         // 5) store handle
@@ -330,11 +331,11 @@ impl PlatformManager {
         let user_id_str = credential.user_id.to_string();
         let user_id_str_clone = user_id_str.clone();
 
+        let mut irc = TwitchIrcPlatform::new();
+        // 2) Set the credentials we just retrieved from the DB
+        irc.set_credentials(credential.clone());
+
         let join_handle = tokio::spawn(async move {
-            let mut irc = TwitchIrcPlatform {
-                credentials: Some(credential.clone()),
-                connection_status: crate::platforms::ConnectionStatus::Disconnected,
-            };
             if let Err(err) = irc.connect().await {
                 error!("[TwitchIRC] connect error: {:?}", err);
                 return;
@@ -367,6 +368,46 @@ impl PlatformManager {
             }
 
             info!("[TwitchIRC] Task ended for user_id={}", user_id_str_clone);
+        });
+
+        Ok(PlatformRuntimeHandle {
+            join_handle,
+            platform: plat,
+            user_id: user_id_str,
+        })
+    }
+
+    async fn spawn_twitch_eventsub(
+        &self,
+        credential: PlatformCredential
+    ) -> Result<PlatformRuntimeHandle, Error> {
+        let message_svc = Arc::clone(&self.message_svc);
+        let user_svc = Arc::clone(&self.user_svc);
+
+        let platform_str = "twitch-eventsub".to_string();
+        let plat = platform_str.clone();
+        let user_id_str = credential.user_id.to_string();
+        let user_id_str_clone = user_id_str.clone();
+
+        let join_handle = tokio::spawn(async move {
+            // Create a new instance of our EventSub stub.
+            let mut eventsub = crate::platforms::twitch_eventsub::runtime::TwitchEventSubPlatform::new();
+            eventsub.credentials = Some(credential.clone());
+
+            // Attempt to connect.
+            if let Err(err) = eventsub.connect().await {
+                error!("[TwitchEventSub] connect error: {:?}", err);
+                return;
+            }
+            info!("[TwitchEventSub] Connected for user_id={}", user_id_str_clone);
+
+            // Main loop: poll for incoming EventSub events (stubbed for now)
+            while let Some(evt) = eventsub.next_message_event().await {
+                // In a full implementation you might forward this event
+                // to your message service or event bus.
+                info!("[TwitchEventSub] Received event: {:?}", evt);
+            }
+            info!("[TwitchEventSub] Task ended for user_id={}", user_id_str_clone);
         });
 
         Ok(PlatformRuntimeHandle {

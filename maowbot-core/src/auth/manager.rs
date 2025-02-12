@@ -10,6 +10,7 @@ use crate::repositories::{BotConfigRepository, CredentialsRepository};
 use crate::repositories::postgres::platform_config::PlatformConfigRepository;
 
 use crate::platforms::discord::auth::DiscordAuthenticator;
+use crate::platforms::twitch_eventsub::TwitchEventSubAuthenticator;
 use crate::platforms::twitch_helix::auth::TwitchAuthenticator;
 use crate::platforms::vrchat::auth::VRChatAuthenticator;
 use crate::platforms::twitch_irc::auth::TwitchIrcAuthenticator;
@@ -73,6 +74,7 @@ impl AuthManager {
             Platform::Discord => "discord",
             Platform::VRChat => "vrchat",
             Platform::TwitchIRC => "twitch-irc",
+            Platform::TwitchEventSub => "twitch-eventsub",
         };
 
         // get config from DB
@@ -106,7 +108,16 @@ impl AuthManager {
                 Box::new(VRChatAuthenticator::new())
             }
             Platform::TwitchIRC => {
-                Box::new(TwitchIrcAuthenticator::new())
+                Box::new(TwitchIrcAuthenticator::new(
+                    client_id,
+                    client_secret,
+                ))
+            }
+            Platform::TwitchEventSub => {
+                Box::new(TwitchEventSubAuthenticator::new(
+                    client_id,
+                    client_secret,
+                ))
             }
         };
         self.authenticators.insert(platform.clone(), authenticator);

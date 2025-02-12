@@ -31,6 +31,7 @@ pub enum Platform {
     VRChat,
     #[sqlx(rename = "twitch-irc")]
     TwitchIRC,
+    TwitchEventSub
 }
 
 impl fmt::Display for Platform {
@@ -40,6 +41,7 @@ impl fmt::Display for Platform {
             Platform::Discord => write!(f, "discord"),
             Platform::VRChat => write!(f, "vrchat"),
             Platform::TwitchIRC => write!(f, "twitch-irc"),
+            Platform::TwitchEventSub => write!(f, "twitch-eventsub"),
         }
     }
 }
@@ -52,6 +54,7 @@ impl FromStr for Platform {
             "discord" => Ok(Platform::Discord),
             "vrchat" => Ok(Platform::VRChat),
             "twitch-irc" => Ok(Platform::TwitchIRC),
+            "twitch-eventsub" => Ok(Platform::TwitchEventSub),
             _ => Err(format!("Unknown platform: {}", s)),
         }
     }
