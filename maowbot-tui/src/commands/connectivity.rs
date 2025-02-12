@@ -15,9 +15,9 @@ pub fn handle_connectivity_command(
     }
     match args[0] {
         "autostart" => handle_autostart_cmd(&args[1..], bot_api),
-        "start" => handle_start_cmd(&args[1..], bot_api),
-        "stop"  => handle_stop_cmd(&args[1..], bot_api),
-        "chat"  => handle_chat_cmd(&args[1..], tui_module),
+        "start"     => handle_start_cmd(&args[1..], bot_api),
+        "stop"      => handle_stop_cmd(&args[1..], bot_api),
+        "chat"      => handle_chat_cmd(&args[1..], tui_module),
         _ => "Unknown connectivity command. See usage:\n  autostart\n  start\n  stop\n  chat\n".to_string(),
     }
 }
@@ -45,7 +45,6 @@ fn handle_autostart_cmd(args: &[&str], bot_api: &Arc<dyn BotApi>) -> String {
         _ => String::new(),
     };
 
-    // parse or create default
     let mut config_obj: AutostartConfig = if config_json.is_empty() {
         AutostartConfig::new()
     } else {
@@ -108,39 +107,55 @@ fn handle_stop_cmd(args: &[&str], bot_api: &Arc<dyn BotApi>) -> String {
     }
 }
 
-/// "chat on/off" now updates the TuiModule's ChatState rather than a static global.
+/// Adjusted logic so:
+///   chat <on/off>
+///     => If *no further arguments*, turns chat feed on/off for *all* platforms+accounts.
+///   chat <on/off> <platform>
+///     => Limit feed to that one platform (any account).
+///   chat <on/off> <platform> <account>
+///     => Limit feed to that one platform+account.
 fn handle_chat_cmd(args: &[&str], tui_module: &Arc<TuiModule>) -> String {
     if args.is_empty() {
         return "Usage: chat <on/off> [platform] [account]".to_string();
     }
 
     let on_off = args[0].to_lowercase();
-    let on = on_off.eq("on");
+    let on = on_off == "on";
 
-    let (pf, af) = match args.len() {
-        1 => (None, None),
-        2 => (Some(args[1].to_string()), None),
-        _ => (Some(args[1].to_string()), Some(args[2].to_string())),
+    // Because `args.len()` can be 1, 2, or 3, we interpret accordingly:
+    let (platform_filter, account_filter) = match args.len() {
+        1 => {
+            // e.g. user typed "chat on" => no filters => all platforms
+            (None, None)
+        }
+        2 => {
+            // e.g. user typed "chat on twitch" => filter only that platform
+            (Some(args[1].to_string()), None)
+        }
+        _ => {
+            // e.g. "chat on twitch myChannel"
+            (Some(args[1].to_string()), Some(args[2].to_string()))
+        }
     };
 
     // Update the TUI’s chat_state asynchronously
     Handle::current().block_on(async {
-        tui_module.set_chat_state(on, pf.clone(), af.clone()).await;
+        tui_module.set_chat_state(on, platform_filter.clone(), account_filter.clone()).await;
     });
 
     if on {
-        match (pf, af) {
-            (Some(p), Some(a)) => format!("Chat ON for platform='{}' account='{}'", p, a),
-            (Some(p), None) => format!("Chat ON for platform='{}'", p),
-            _ => "Chat ON (no filter)".to_string(),
+        match (platform_filter, account_filter) {
+            (None, None) => "Chat ON for ALL platforms/accounts".to_string(),
+            (Some(p), None) => format!("Chat ON for platform='{}' (any account)", p),
+            (Some(p), Some(a)) => format!("Chat ON for platform='{}', account='{}'", p, a),
+            _ => unreachable!(),
         }
     } else {
         "Chat OFF".to_string()
     }
 }
 
-
-/// Example “autostart” config for demonstration
+/// Example “autostart” config object (abbreviated here).
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub struct AutostartConfig {
     pub accounts: Vec<(String, String)>,

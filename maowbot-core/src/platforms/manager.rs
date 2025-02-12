@@ -29,7 +29,6 @@ pub struct PlatformRuntimeHandle {
 pub struct PlatformManager {
     message_svc: Arc<MessageService>,
     user_svc: Arc<UserService>,
-    // If you do need the event bus for publishing, keep it. Otherwise it can be removed:
     event_bus: Arc<EventBus>,
     credentials_repo: Arc<dyn CredentialsRepository + Send + Sync>,
 
@@ -61,7 +60,7 @@ impl PlatformManager {
         // 1) find user by global username
         let user = self.user_svc
             .find_user_by_global_username(account_name)
-            .await?;  // must implement in user_service or adapt
+            .await?;
 
         let platform = platform_str.parse::<Platform>()
             .map_err(|_| Error::Platform(format!("Unknown platform '{}'", platform_str)))?;
@@ -118,7 +117,7 @@ impl PlatformManager {
     ) -> Result<(), Error> {
         let user = self.user_svc
             .find_user_by_global_username(account_name)
-            .await?; // must implement
+            .await?;
 
         let key = (platform_str.to_string(), user.user_id.to_string());
 
@@ -151,10 +150,11 @@ impl PlatformManager {
         let message_svc = Arc::clone(&self.message_svc);
         let user_svc = Arc::clone(&self.user_svc);
 
+        // We'll unify the 'platform_str' so it matches the user’s original parse: "discord"
+        // Then pass that to process_incoming_message(...) as well.
         let platform_str = "discord".to_string();
+        let plat = platform_str.clone();
         let user_id_str = credential.user_id.to_string();
-
-        // We'll store a clone for usage inside the task:
         let user_id_str_clone = user_id_str.clone();
 
         let join_handle = tokio::spawn(async move {
@@ -185,7 +185,7 @@ impl PlatformManager {
 
                 // 2) pass to message_svc
                 if let Err(e) = message_svc
-                    .process_incoming_message("discord", &channel, &user.user_id, &text)
+                    .process_incoming_message(&platform_str.clone(), &channel, &user.user_id, &text)
                     .await
                 {
                     error!("[Discord] process_incoming_message failed: {:?}", e);
@@ -197,7 +197,7 @@ impl PlatformManager {
 
         let rh = PlatformRuntimeHandle {
             join_handle,
-            platform: platform_str,
+            platform: plat,
             user_id: user_id_str,
         };
         Ok(rh)
@@ -210,7 +210,9 @@ impl PlatformManager {
         let message_svc = Arc::clone(&self.message_svc);
         let user_svc = Arc::clone(&self.user_svc);
 
-        let platform_str = "twitch_helix".to_string();
+        // Instead of “twitch_helix”, unify to "twitch"
+        let platform_str = "twitch".to_string();
+        let plat = platform_str.clone();
         let user_id_str = credential.user_id.to_string();
         let user_id_str_clone = user_id_str.clone();
 
@@ -233,7 +235,7 @@ impl PlatformManager {
                 let display_name = msg_event.display_name;
 
                 let user = match user_svc
-                    .get_or_create_user("twitch_helix", &user_platform_id, Some(&display_name))
+                    .get_or_create_user("twitch", &user_platform_id, Some(&display_name))
                     .await
                 {
                     Ok(u) => u,
@@ -244,7 +246,7 @@ impl PlatformManager {
                 };
 
                 if let Err(e) = message_svc
-                    .process_incoming_message("twitch_helix", &channel, &user.user_id, &text)
+                    .process_incoming_message(&platform_str.clone(), &channel, &user.user_id, &text)
                     .await
                 {
                     error!("[TwitchHelix] process_incoming_message failed: {:?}", e);
@@ -256,7 +258,7 @@ impl PlatformManager {
 
         Ok(PlatformRuntimeHandle {
             join_handle,
-            platform: platform_str,
+            platform: plat,
             user_id: user_id_str,
         })
     }
@@ -269,6 +271,7 @@ impl PlatformManager {
         let user_svc = Arc::clone(&self.user_svc);
 
         let platform_str = "vrchat".to_string();
+        let plat = platform_str.clone();
         let user_id_str = credential.user_id.to_string();
         let user_id_str_clone = user_id_str.clone();
 
@@ -300,7 +303,7 @@ impl PlatformManager {
                 };
 
                 if let Err(e) = message_svc
-                    .process_incoming_message("vrchat", "roomOrWorldId", &user.user_id, &text)
+                    .process_incoming_message(&platform_str.clone(), "roomOrWorldId", &user.user_id, &text)
                     .await
                 {
                     error!("[VRChat] process_incoming_message failed: {:?}", e);
@@ -312,7 +315,7 @@ impl PlatformManager {
 
         Ok(PlatformRuntimeHandle {
             join_handle,
-            platform: platform_str,
+            platform: plat,
             user_id: user_id_str,
         })
     }
@@ -324,7 +327,9 @@ impl PlatformManager {
         let message_svc = Arc::clone(&self.message_svc);
         let user_svc = Arc::clone(&self.user_svc);
 
+        // We'll unify to “twitch-irc” for both the manager handle and the published event.
         let platform_str = "twitch-irc".to_string();
+        let plat = platform_str.clone();
         let user_id_str = credential.user_id.to_string();
         let user_id_str_clone = user_id_str.clone();
 
@@ -346,7 +351,7 @@ impl PlatformManager {
                 let user_name = evt.user_name;
 
                 let user = match user_svc
-                    .get_or_create_user("twitch_irc", &user_platform_id, Some(&user_name))
+                    .get_or_create_user("twitch-irc", &user_platform_id, Some(&user_name))
                     .await
                 {
                     Ok(u) => u,
@@ -356,8 +361,9 @@ impl PlatformManager {
                     }
                 };
 
+                // Now publish the same platform_str = "twitch-irc" here
                 if let Err(e) = message_svc
-                    .process_incoming_message("twitch_irc", &channel, &user.user_id, &text)
+                    .process_incoming_message(&platform_str, &channel, &user.user_id, &text)
                     .await
                 {
                     error!("[TwitchIRC] process_incoming_message failed: {:?}", e);
@@ -369,7 +375,7 @@ impl PlatformManager {
 
         Ok(PlatformRuntimeHandle {
             join_handle,
-            platform: platform_str,
+            platform: plat,
             user_id: user_id_str,
         })
     }
