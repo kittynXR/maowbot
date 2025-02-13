@@ -10,13 +10,13 @@ mod connectivity;
 mod platform;
 mod plugin;
 mod user;
-
-// New help folder:
 pub mod help;
 
-/// The main function that dispatches typed commands from the TUI.
-/// We’ve removed the old "help" block here and now forward all "help" commands
-/// to the new help system in `commands/help/mod.rs`.
+// === NEW: import our new TTV module:
+mod ttv;
+
+use ttv::handle_ttv_command;
+
 pub fn dispatch(
     line: &str,
     bot_api: &Arc<dyn BotApi>,
@@ -28,14 +28,12 @@ pub fn dispatch(
 
     match cmd.as_str() {
         "help" => {
-            // Send to the new help system
             let subcmd = args.get(0).map(|s| *s).unwrap_or("");
             let msg = help::show_command_help(subcmd);
             (false, Some(msg))
         }
 
         "list" => {
-            // “list” is just listing all loaded plugins
             let result = Handle::current().block_on(bot_api.list_plugins());
             let mut output = String::new();
             output.push_str("All known plugins:\n");
@@ -46,7 +44,6 @@ pub fn dispatch(
         }
 
         "status" => {
-            // Show status; optionally “status config” shows config table
             let subcmd = args.get(0).map(|s| s.to_lowercase());
             let status_data = Handle::current().block_on(bot_api.status());
 
@@ -102,7 +99,7 @@ pub fn dispatch(
             (false, Some(message))
         }
 
-        // Connectivity commands (autostart, start, stop, chat)
+        // Connectivity: autostart, start, stop, chat
         "autostart" | "start" | "stop" | "chat" => {
             let message = connectivity::handle_connectivity_command(
                 &[cmd.as_str()].iter().chain(args.iter()).map(|s| *s).collect::<Vec<_>>(),
@@ -110,6 +107,12 @@ pub fn dispatch(
                 tui_module
             );
             (false, Some(message))
+        }
+
+        // === NEW: TTV subcommands
+        "ttv" => {
+            let msg = handle_ttv_command(args, bot_api, tui_module);
+            (false, Some(msg))
         }
 
         "quit" => {
@@ -121,7 +124,6 @@ pub fn dispatch(
             if cmd.is_empty() {
                 (false, None)
             } else {
-                // If unknown, mention help
                 let msg = format!("Unknown command '{}'. Type 'help' for usage.", cmd);
                 (false, Some(msg))
             }

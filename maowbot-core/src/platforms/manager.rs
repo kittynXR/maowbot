@@ -416,4 +416,35 @@ impl PlatformManager {
             user_id: user_id_str,
         })
     }
+
+    pub async fn join_twitch_irc_channel(&self, account_name: &str, channel: &str) -> Result<(), Error> {
+        // 1) find user by global_username
+        let user = self.user_svc.find_user_by_global_username(account_name).await?;
+        // 2) find the active runtime for (platform="twitch-irc", user_id)
+        let key = ("twitch-irc".to_string(), user.user_id.to_string());
+        let guard = self.active_runtimes.lock().await;
+        let handle_opt = guard.get(&key);
+        if handle_opt.is_none() {
+            return Err(Error::Platform(
+                format!("No active twitch-irc runtime for account='{}'", account_name)));
+        }
+        // 3) We need to get a reference to the underlying TwitchIrcPlatform object.
+        // If you store them in a map, you'd do something like handle_opt.platform_instance.join_channel(...).
+        // *Pseudo-code*, depends on your actual structure:
+        //
+        // handle_opt.instance_ref.join_channel(channel).await?;
+        //
+        // For demonstration:
+        Ok(())
+    }
+
+    pub async fn part_twitch_irc_channel(&self, account_name: &str, channel: &str) -> Result<(), Error> {
+        // Similar pattern...
+        Ok(())
+    }
+
+    pub async fn send_twitch_irc_message(&self, account_name: &str, channel: &str, text: &str) -> Result<(), Error> {
+        // Similar pattern...
+        Ok(())
+    }
 }

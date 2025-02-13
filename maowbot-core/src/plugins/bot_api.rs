@@ -116,4 +116,7 @@ pub trait BotApi: Send + Sync {
 
     async fn subscribe_chat_events(&self, buffer_size: Option<usize>) -> mpsc::Receiver<BotEvent>;
     async fn list_config(&self) -> Result<Vec<(String, String)>, Error>;
+    async fn join_twitch_irc_channel(&self, account_name: &str, channel: &str) -> Result<(), Error>;
+    async fn part_twitch_irc_channel(&self, account_name: &str, channel: &str) -> Result<(), Error>;
+    async fn send_twitch_irc_message(&self, account_name: &str, channel: &str, text: &str) -> Result<(), Error>;
 }

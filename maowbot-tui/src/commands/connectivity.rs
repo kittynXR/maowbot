@@ -40,7 +40,7 @@ fn handle_autostart_cmd(args: &[&str], bot_api: &Arc<dyn BotApi>) -> String {
         bot_api.get_bot_config_value("autostart").await
     });
 
-    let mut config_json = match cur_val {
+    let config_json = match cur_val {
         Ok(Some(s)) => s,
         _ => String::new(),
     };
