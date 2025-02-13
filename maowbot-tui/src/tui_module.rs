@@ -65,17 +65,10 @@ pub struct TuiModule {
 }
 
 impl TuiModule {
-    pub fn new(bot_api: Arc<dyn BotApi>, event_bus: Arc<EventBus>) -> Self {
-        // Attempt to read from bot_config the "ttv_default_channel" if present:
-        let default_channel = {
-            // We do a quick block_on here since new() is sync.
-            let maybe_val = tokio::runtime::Handle::current().block_on(async {
-                bot_api.get_bot_config_value("ttv_default_channel").await
-            });
-            match maybe_val {
-                Ok(Some(ch)) if !ch.is_empty() => Some(ch),
-                _ => None,
-            }
+    pub async fn new(bot_api: Arc<dyn BotApi>, event_bus: Arc<EventBus>) -> Self {
+        let default_channel = match bot_api.get_bot_config_value("ttv_default_channel").await {
+            Ok(Some(ch)) if !ch.is_empty() => Some(ch),
+            _ => None,
         };
 
         let mut initial_state = TtvState::new();
