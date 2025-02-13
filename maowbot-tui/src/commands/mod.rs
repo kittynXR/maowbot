@@ -4,14 +4,19 @@ use maowbot_core::plugins::bot_api::BotApi;
 
 use crate::tui_module::TuiModule;
 
+// Submodules for actual command logic:
 mod account;
 mod connectivity;
 mod platform;
 mod plugin;
 mod user;
 
-/// We pass `&TuiModule` so that certain commands (like “chat on/off”)
-/// can update the shared chat state.
+// New help folder:
+pub mod help;
+
+/// The main function that dispatches typed commands from the TUI.
+/// We’ve removed the old "help" block here and now forward all "help" commands
+/// to the new help system in `commands/help/mod.rs`.
 pub fn dispatch(
     line: &str,
     bot_api: &Arc<dyn BotApi>,
@@ -23,25 +28,15 @@ pub fn dispatch(
 
     match cmd.as_str() {
         "help" => {
-            let help = "\
-                Commands:
-                  help
-                  list
-                  status <config>
-                  plug   <enable|disable|remove> <name>
-                  platform <add|remove|list|show> ...
-                  account  <add|remove|list|show> [platform] [username]
-                  user     <add|remove|edit|info|search> ...
-                  autostart <on/off> <platform> <account>
-                  start/stop <platform> <account>
-                  chat <on/off> [platform] [account]
-                  quit
-                ";
-            (false, Some(help.to_string()))
+            // Send to the new help system
+            let subcmd = args.get(0).map(|s| *s).unwrap_or("");
+            let msg = help::show_command_help(subcmd);
+            (false, Some(msg))
         }
 
         "list" => {
-            let result = tokio::runtime::Handle::current().block_on(bot_api.list_plugins());
+            // “list” is just listing all loaded plugins
+            let result = Handle::current().block_on(bot_api.list_plugins());
             let mut output = String::new();
             output.push_str("All known plugins:\n");
             for p in result {
@@ -51,9 +46,9 @@ pub fn dispatch(
         }
 
         "status" => {
+            // Show status; optionally “status config” shows config table
             let subcmd = args.get(0).map(|s| s.to_lowercase());
-            // 1) Always show normal status
-            let status_data = tokio::runtime::Handle::current().block_on(bot_api.status());
+            let status_data = Handle::current().block_on(bot_api.status());
 
             let mut output = format!("Uptime={}s\nConnected Plugins:\n",
                                      status_data.uptime_seconds);
@@ -61,9 +56,8 @@ pub fn dispatch(
                 output.push_str(&format!("  {}\n", c));
             }
 
-            // 2) If the user typed "status config", also list all config
             if subcmd.as_deref() == Some("config") {
-                let config_entries = tokio::runtime::Handle::current().block_on(bot_api.list_config());
+                let config_entries = Handle::current().block_on(bot_api.list_config());
                 match config_entries {
                     Ok(list) => {
                         output.push_str("\n--- bot_config table ---\n");
@@ -84,32 +78,31 @@ pub fn dispatch(
             (false, Some(output))
         }
 
-
+        // Plugin management
         "plug" => {
-            // same as before
             let message = plugin::handle_plugin_command(args, bot_api);
             (false, Some(message))
         }
 
+        // Platform config
         "platform" => {
-            // same as before
             let message = platform::handle_platform_command(args, bot_api);
             (false, Some(message))
         }
 
+        // Account
         "account" => {
-            // same as before
             let message = account::handle_account_command(args, bot_api);
             (false, Some(message))
         }
 
+        // User
         "user" => {
-            // same as before
             let message = user::handle_user_command(args, bot_api);
             (false, Some(message))
         }
 
-        // Connect commands
+        // Connectivity commands (autostart, start, stop, chat)
         "autostart" | "start" | "stop" | "chat" => {
             let message = connectivity::handle_connectivity_command(
                 &[cmd.as_str()].iter().chain(args.iter()).map(|s| *s).collect::<Vec<_>>(),
@@ -123,10 +116,12 @@ pub fn dispatch(
             (true, Some("(TUI) shutting down...".to_string()))
         }
 
+        // unrecognized
         _ => {
             if cmd.is_empty() {
                 (false, None)
             } else {
+                // If unknown, mention help
                 let msg = format!("Unknown command '{}'. Type 'help' for usage.", cmd);
                 (false, Some(msg))
             }
