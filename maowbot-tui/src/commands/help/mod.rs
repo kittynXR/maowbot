@@ -7,7 +7,9 @@ pub mod help_platform;
 pub mod help_plugin;
 pub mod help_user;
 
-/// If the user types just `help` (with no subcommand), show a general usage overview.
+// NEW: import our new TTV help
+pub mod help_ttv;
+
 fn show_general_help() -> String {
     let text = r#"MaowBot TUI - Available Commands:
 
@@ -45,13 +47,15 @@ fn show_general_help() -> String {
   chat <on/off> [platform] [account]
     Enable/disable live chat display in the TUI, optionally filtered.
 
+  ttv <subcommand> ...
+    Twitch IRC–specific commands (active, join, part, msg, chat, default).
+
   quit
     Shut down the TUI (and the whole bot system).
 "#;
     text.to_owned()
 }
 
-/// Show help for a specific command. If unknown, we just return a short message.
 pub fn show_command_help(command: &str) -> String {
     match command {
         "" => show_general_help(),
@@ -61,6 +65,9 @@ pub fn show_command_help(command: &str) -> String {
         "platform" => help_platform::PLATFORM_HELP_TEXT.to_owned(),
         "plug" => help_plugin::PLUGIN_HELP_TEXT.to_owned(),
         "user" => help_user::USER_HELP_TEXT.to_owned(),
+
+        // NEW: TTV
+        "ttv" => help_ttv::TTV_HELP_TEXT.to_owned(),
 
         // fallback for recognized top-level commands that don't have big subcommands:
         "list" => {
