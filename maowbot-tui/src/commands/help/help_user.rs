@@ -10,11 +10,13 @@ Subcommands:
   user remove <usernameOrUUID>
       Deletes the user from DB. You can pass either the global_username or the user's UUID.
 
-  user edit <UUID>
+  user edit <usernameOrUUID>
       Prompts to update certain fields (e.g., is_active) for that user.
+      Accepts either a UUID or a username.
 
-  user info <UUID>
+  user info <usernameOrUUID>
       Displays details for that user (created_at, last_seen, etc.).
+      Accepts either a UUID or a username.
 
   user search <query>
       Finds all users whose username or UUID partially matches <query>.
@@ -22,6 +24,8 @@ Subcommands:
 Usage Examples:
   user add MyCoolUser
   user remove MyCoolUser
+  user edit MyCoolUser
+  user info MyCoolUser
   user edit 11111111-2222-3333-4444-555555555555
   user info 11111111-2222-3333-4444-555555555555
   user search cat
