@@ -2,13 +2,13 @@
 
 use std::sync::Arc;
 use maowbot_core::plugins::bot_api::BotApi;
-
+use crate::help;
 use crate::tui_module::TuiModule;
 
 // Submodules for actual command logic:
 mod account;
 mod connectivity;
-pub mod help; // unchanged
+// unchanged
 mod platform;
 mod plugin;
 mod ttv;
