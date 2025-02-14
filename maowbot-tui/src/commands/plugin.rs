@@ -2,10 +2,9 @@
 
 use std::sync::Arc;
 use maowbot_core::plugins::bot_api::BotApi;
-use maowbot_core::Error;
-use tokio::runtime::Handle;
 
-pub fn handle_plugin_command(args: &[&str], bot_api: &Arc<dyn BotApi>) -> String {
+/// Asynchronously handle "plug <enable|disable|remove> <pluginName>"
+pub async fn handle_plugin_command(args: &[&str], bot_api: &Arc<dyn BotApi>) -> String {
     if args.len() < 2 {
         return "Usage: plug <enable|disable|remove> <pluginName>".to_string();
     }
@@ -13,25 +12,20 @@ pub fn handle_plugin_command(args: &[&str], bot_api: &Arc<dyn BotApi>) -> String
     let plugin_name = args[1];
 
     match subcmd {
-        "enable" | "disable" => {
-            let enable = subcmd == "enable";
-            let result = Handle::current().block_on(async {
-                bot_api.toggle_plugin(plugin_name, enable).await
-            });
-            match result {
-                Ok(_) => format!(
-                    "Plugin '{}' is now {}",
-                    plugin_name,
-                    if enable { "ENABLED" } else { "DISABLED" }
-                ),
-                Err(e) => format!("Error toggling plugin '{}': {:?}", plugin_name, e),
+        "enable" => {
+            match bot_api.toggle_plugin(plugin_name, true).await {
+                Ok(_) => format!("Plugin '{}' is now ENABLED", plugin_name),
+                Err(e) => format!("Error enabling plugin '{}': {:?}", plugin_name, e),
+            }
+        }
+        "disable" => {
+            match bot_api.toggle_plugin(plugin_name, false).await {
+                Ok(_) => format!("Plugin '{}' is now DISABLED", plugin_name),
+                Err(e) => format!("Error disabling plugin '{}': {:?}", plugin_name, e),
             }
         }
         "remove" => {
-            let result = Handle::current().block_on(async {
-                bot_api.remove_plugin(plugin_name).await
-            });
-            match result {
+            match bot_api.remove_plugin(plugin_name).await {
                 Ok(_) => format!("Plugin '{}' removed.", plugin_name),
                 Err(e) => format!("Error removing '{}': {:?}", plugin_name, e),
             }

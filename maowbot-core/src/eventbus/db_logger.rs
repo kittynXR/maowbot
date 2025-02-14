@@ -1,6 +1,6 @@
 //! src/eventbus/db_logger.rs
 //!
-//! Spawns a task that subscribes to the EventBus, buffers BotEvent::ChatMessage,
+//! Spawns a task that subscribes to the EventBus, buffers `BotEvent::ChatMessage`,
 //! and flushes them to the DB. Drains the queue on shutdown, then does a final flush.
 
 use std::time::Duration;
@@ -14,7 +14,6 @@ use crate::Error;
 use crate::eventbus::{EventBus, BotEvent};
 use crate::repositories::postgres::analytics::{AnalyticsRepo, ChatMessage};
 
-
 /// Spawns an asynchronous task to receive events from the bus
 /// and batch-write them to the database. Returns a `JoinHandle<()>`
 /// so the caller can `.await` the final flush in tests or shutdown logic.
@@ -27,11 +26,15 @@ pub fn spawn_db_logger_task<T>(
 where
     T: AnalyticsRepo + 'static,
 {
-    // Now await the subscription so that rx is a Receiver<BotEvent>
-    let mut rx = futures_lite::future::block_on(event_bus.subscribe(Some(buffer_size)));
+    // IMPORTANT: do not call block_on here
+    let event_bus_cloned = event_bus.clone();
     let mut shutdown_rx = event_bus.shutdown_rx.clone();
 
     let handle = tokio::spawn(async move {
+        // Previously was `futures_lite::future::block_on(...);`
+        // Replaced with a normal async .await:
+        let mut rx = event_bus_cloned.subscribe(Some(buffer_size)).await;
+
         let mut buffer = Vec::with_capacity(buffer_size);
         let flush_interval = Duration::from_secs(flush_interval_sec);
         let mut last_flush = Instant::now();
@@ -45,6 +48,7 @@ where
         loop {
             tokio::select! {
                 biased;
+
                 maybe_event = rx.recv() => {
                     match maybe_event {
                         Some(event) => {
@@ -106,7 +110,7 @@ fn convert_to_chat_message(event: &BotEvent) -> Option<ChatMessage> {
             message_id: uuid::Uuid::new_v4(),
             platform: platform.clone(),
             channel: channel.clone(),
-            user_id: user.parse().unwrap(),
+            user_id: user.parse().unwrap_or_else(|_| uuid::Uuid::nil()),
             message_text: text.clone(),
             timestamp: timestamp.to_utc(),
             metadata: None,

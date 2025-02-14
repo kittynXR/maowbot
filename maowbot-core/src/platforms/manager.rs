@@ -337,80 +337,68 @@ impl PlatformManager {
         })
     }
 
-    async fn spawn_twitch_irc(
-        &self,
-        credential: PlatformCredential
-    ) -> Result<PlatformRuntimeHandle, Error> {
+    async fn spawn_twitch_irc(&self, credential: PlatformCredential) -> Result<PlatformRuntimeHandle, Error> {
         let message_svc = Arc::clone(&self.message_svc);
         let user_svc = Arc::clone(&self.user_svc);
 
-        let platform_str = "twitch-irc".to_string();
-        let plat = platform_str.clone();
-        let user_id_str = credential.user_id.to_string();
-        let user_id_str_clone = user_id_str.clone();
-
-        // Create the IRC platform instance and store it in an Arc<Mutex<...>>
+        // 1) create the TwitchIrcPlatform
         let mut irc = TwitchIrcPlatform::new();
-        irc.set_credentials(credential);
+        irc.set_credentials(credential.clone());
 
-        let arc_irc = Arc::new(Mutex::new(irc));
+        // 2) connect it once, storing all needed fields
+        irc.connect().await?;
+        // That sets up self.rx, self.tx, self.client, etc.
+
+        // 3) Now extract the `rx` from inside the platform,
+        //    so the read loop doesn't keep the entire `Mutex`.
+        //    We'll keep the rest of the data in `irc`, but the channel is separate.
+        let rx_opt = irc.rx.take(); // or some function "irc.take_rx()"
+        let rx = match rx_opt {
+            Some(r) => r,
+            None => {
+                return Err(Error::Platform("No IRC receiver found".into()));
+            }
+        };
+
+        // 4) wrap the *remaining* platform in Arc<Mutex<...>> so we can do join_channel, etc.
+        let arc_irc = Arc::new(tokio::sync::Mutex::new(irc));
+
+        // 5) spawn the read loop, which just uses `rx` without locking arc_irc
         let arc_irc_for_task = arc_irc.clone();
-
         let join_handle = tokio::spawn(async move {
-            // Connect once
-            {
-                let mut locked_irc = arc_irc_for_task.lock().await;
-                if let Err(err) = locked_irc.connect().await {
-                    error!("[TwitchIRC] connect error: {:?}", err);
-                    return;
-                }
-            }
-            info!("[TwitchIRC] Connected for user_id={}", user_id_str_clone);
+            info!("[TwitchIRC] connected ... starting read loop");
+            let mut msg_rx = rx;
+            while let Some(evt) = msg_rx.recv().await {
+                let channel = evt.channel;
+                let user_platform_id = evt.user_id;
+                let text = evt.text;
+                let user_name = evt.user_name.clone();
 
-            // Event loop
-            loop {
-                let evt_opt = {
-                    let mut locked_irc = arc_irc_for_task.lock().await;
-                    locked_irc.next_message_event().await
+                // we only lock the platform if we truly need something from it,
+                // e.g. arc_irc_for_task.lock().await.connection_status = ...
+                // But typically, we might not need it.
+
+                // proceed with user_svc etc.
+                let user = match user_svc.get_or_create_user("twitch-irc", &user_platform_id, Some(&user_name)).await {
+                    Ok(u) => u,
+                    Err(e) => {
+                        error!("[TwitchIRC] user_svc error: {:?}", e);
+                        continue;
+                    }
                 };
-                match evt_opt {
-                    Some(evt) => {
-                        let channel = evt.channel;
-                        let user_platform_id = evt.user_id;
-                        let text = evt.text;
-                        let user_name = evt.user_name.clone();
-
-                        let user = match user_svc
-                            .get_or_create_user("twitch-irc", &user_platform_id, Some(&user_name))
-                            .await
-                        {
-                            Ok(u) => u,
-                            Err(e) => {
-                                error!("[TwitchIRC] user_svc error: {:?}", e);
-                                continue;
-                            }
-                        };
-
-                        if let Err(e) = message_svc
-                            .process_incoming_message(&platform_str, &channel, &user_name, &text)
-                            .await
-                        {
-                            error!("[TwitchIRC] process_incoming_message failed: {:?}", e);
-                        }
-                    }
-                    None => {
-                        // The underlying read task ended or disconnected
-                        info!("[TwitchIRC] No more messages; ending task for user_id={}", user_id_str_clone);
-                        break;
-                    }
+                // message_svc
+                if let Err(e) = message_svc.process_incoming_message("twitch-irc", &channel, &user_name, &text).await {
+                    error!("[TwitchIRC] process_incoming_message => {:?}", e);
                 }
             }
+            info!("[TwitchIRC] read loop ended for ???");
         });
 
+        // 6) Return the handle
         Ok(PlatformRuntimeHandle {
             join_handle,
-            platform: plat,
-            user_id: user_id_str,
+            platform: "twitch-irc".to_string(),
+            user_id: credential.user_id.to_string(),
             twitch_irc_instance: Some(arc_irc),
         })
     }
