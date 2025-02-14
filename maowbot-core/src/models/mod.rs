@@ -128,8 +128,10 @@ pub struct PlatformIdentity {
 pub struct PlatformCredential {
     pub credential_id: Uuid,
     pub platform: Platform,
+    pub platform_id: Option<String>,
     pub credential_type: CredentialType,
-    pub user_id: Uuid,   // <---- now UUID
+    pub user_id: Uuid,
+    pub user_name: String,
     pub primary_token: String,
     pub refresh_token: Option<String>,
     pub additional_data: Option<Value>,

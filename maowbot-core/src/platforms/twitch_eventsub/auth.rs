@@ -1,5 +1,3 @@
-// File: maowbot-core/src/platforms/eventsub/auth.rs
-
 use async_trait::async_trait;
 use chrono::Utc;
 use uuid::Uuid;
@@ -10,7 +8,6 @@ use crate::models::{Platform, PlatformCredential, CredentialType};
 
 /// TwitchEventSubAuthenticator is a stub for handling EventSub authentication.
 /// In this simple implementation we re-use the Twitch Helix OAuth token.
-/// In a full implementation you might have a dedicated OAuth flow if needed.
 pub struct TwitchEventSubAuthenticator {
     pub client_id: String,
     pub client_secret: Option<String>,
@@ -37,9 +34,9 @@ impl PlatformAuthenticator for TwitchEventSubAuthenticator {
     }
 
     async fn start_authentication(&mut self) -> Result<AuthenticationPrompt, Error> {
-        // For EventSub we assume the user should supply the same helix token.
+        // For EventSub we assume the user should supply the same Helix token.
         Ok(AuthenticationPrompt::ApiKey {
-            message: "Please enter your Twitch Helix OAuth token (this will be re-used for EventSub)".into(),
+            message: "This was supposed to be removed, but it's harmless.  Why are you here?".into(),
         })
     }
 
@@ -57,8 +54,8 @@ impl PlatformAuthenticator for TwitchEventSubAuthenticator {
             credential_id: Uuid::new_v4(),
             platform: Platform::TwitchEventSub,
             credential_type: CredentialType::OAuth2,
-            user_id: Uuid::new_v4(), // This will be updated later
-            primary_token: token,    // Re-use the helix token
+            user_id: Uuid::new_v4(), // To be updated later by AuthManager
+            primary_token: token,    // Re-use the Helix token
             refresh_token: None,
             additional_data: Some(json!({
                 "note": "EventSub uses the same token as Twitch Helix"
@@ -67,11 +64,14 @@ impl PlatformAuthenticator for TwitchEventSubAuthenticator {
             created_at: now,
             updated_at: now,
             is_bot: self.is_bot,
+            // NEW fields: set placeholders for now
+            platform_id: None,
+            user_name: "twitch_eventsub_bot".to_string(),
         })
     }
 
     async fn refresh(&mut self, credential: &PlatformCredential) -> Result<PlatformCredential, Error> {
-        // For this stub, assume the token never expires or does not need refreshing.
+        // For this stub, assume the token never expires.
         Ok(credential.clone())
     }
 

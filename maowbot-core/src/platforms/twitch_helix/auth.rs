@@ -1,41 +1,66 @@
 use async_trait::async_trait;
-use chrono::{DateTime, Utc};
+use chrono::{Utc};
 use reqwest::Client as ReqwestClient;
 use serde::Deserialize;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use tracing::error;
+use tracing::{error, debug};
 use uuid::Uuid;
 
 use twitch_oauth2::{
-    AccessToken, ClientId, ClientSecret, RefreshToken, Scope, TwitchToken,
+    AccessToken, ClientId,
 };
 
 use crate::Error;
 use crate::auth::{AuthenticationPrompt, AuthenticationResponse, PlatformAuthenticator};
 use crate::models::{CredentialType, Platform, PlatformCredential};
 
-/// Matches Twitch's JSON from the token endpoint
 #[derive(Deserialize)]
 struct TwitchTokenResponse {
     access_token: String,
     refresh_token: Option<String>,
     expires_in: u64,
     scope: Option<Vec<String>>,
-    token_type: String, // e.g. "bearer"
+    token_type: String,
 }
 
-/// Twitch code flow with client_secret, no PKCE, for twitch_oauth2 v0.15.1
+/// New structure for the /validate response
+#[derive(Deserialize)]
+struct TwitchValidateResponse {
+    client_id: String,
+    login: String,
+    user_id: String,
+    expires_in: u64,
+}
+
+static STATE_COUNTER: AtomicUsize = AtomicUsize::new(0);
+
+impl TwitchAuthenticator {
+    async fn fetch_user_login_and_id(&self, access_token: &str) -> Result<(String, String), Error> {
+        let http_client = ReqwestClient::new();
+        let response = http_client
+            .get("https://id.twitch.tv/oauth2/validate")
+            .header("Authorization", format!("OAuth {}", access_token))
+            .send()
+            .await
+            .map_err(|e| Error::Auth(format!("Error calling /validate: {e}")))?;
+        if !response.status().is_success() {
+            return Err(Error::Auth(format!("Failed to validate token: HTTP {}", response.status())));
+        }
+        let validate: TwitchValidateResponse = response
+            .json()
+            .await
+            .map_err(|e| Error::Auth(format!("Error parsing /validate response: {e}")))?;
+        debug!("TwitchAuthenticator /validate returned login={} user_id={}", validate.login, validate.user_id);
+        Ok((validate.login, validate.user_id))
+    }
+}
+
 pub struct TwitchAuthenticator {
     pub client_id: String,
     pub client_secret: Option<String>,
     pub is_bot: bool,
-
-    /// We'll store 'state' from `start_authentication` if you want to do a state-check
     pending_state: Option<String>,
 }
-
-/// Simple static for unique state each time
-static STATE_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
 impl TwitchAuthenticator {
     pub fn new(client_id: String, client_secret: Option<String>) -> Self {
@@ -48,18 +73,16 @@ impl TwitchAuthenticator {
     }
 
     fn build_auth_url(&self, state: &str) -> String {
-        // Example scopes
         let scopes = vec!["chat:read", "chat:edit", "channel:read:subscriptions"];
         let scope_str = scopes.join(" ");
         let redirect_uri = "http://localhost:9876/callback";
 
         format!(
-            "https://id.twitch.tv/oauth2/authorize?response_type=code&client_id={cid}\
-             &redirect_uri={redir}&scope={scope}&state={st}",
-            cid   = urlencoding::encode(&self.client_id),
-            redir = urlencoding::encode(redirect_uri),
-            scope = urlencoding::encode(&scope_str),
-            st    = urlencoding::encode(state),
+            "https://id.twitch.tv/oauth2/authorize?response_type=code&client_id={}&redirect_uri={}&scope={}&state={}",
+            urlencoding::encode(&self.client_id),
+            urlencoding::encode(redirect_uri),
+            urlencoding::encode(&scope_str),
+            urlencoding::encode(state),
         )
     }
 }
@@ -71,17 +94,10 @@ impl PlatformAuthenticator for TwitchAuthenticator {
     }
 
     async fn start_authentication(&mut self) -> Result<AuthenticationPrompt, Error> {
-        // Generate a "state"
         let c = STATE_COUNTER.fetch_add(1, Ordering::SeqCst);
         let state = format!("tw-state-{}", c);
-
-        // Build auth URL
         let auth_url = self.build_auth_url(&state);
-
-        // Save it if you want to do state-check
         self.pending_state = Some(state);
-
-        // Return a prompt for TUI
         Ok(AuthenticationPrompt::Browser { url: auth_url })
     }
 
@@ -94,9 +110,6 @@ impl PlatformAuthenticator for TwitchAuthenticator {
             _ => return Err(Error::Auth("Expected code in complete_authentication".into())),
         };
 
-        // (Optional) If you want to do `?state=` check from the callback, do it here
-
-        // Exchange code -> access_token
         let http_client = ReqwestClient::new();
         let token_url = "https://id.twitch.tv/oauth2/token";
         let redirect_uri = "http://localhost:9876/callback";
@@ -122,13 +135,16 @@ impl PlatformAuthenticator for TwitchAuthenticator {
             .map_err(|e| Error::Auth(format!("Parse error on token JSON: {e}")))?;
 
         let now = Utc::now();
-        let expires_at = Some(now + chrono::Duration::seconds(resp.expires_in as i64));
+        let expires_at = Some(Utc::now() + chrono::Duration::seconds(resp.expires_in as i64));
+
+        // Fetch external Twitch user login and id via /validate.
+        let (login, external_user_id) = self.fetch_user_login_and_id(&resp.access_token).await?;
 
         let credential = PlatformCredential {
             credential_id: Uuid::new_v4(),
             platform: Platform::Twitch,
             credential_type: CredentialType::OAuth2,
-            user_id: Uuid::new_v4(),
+            user_id: Uuid::new_v4(), // Will be updated later via complete_auth_flow_for_user.
             primary_token: resp.access_token,
             refresh_token: resp.refresh_token,
             additional_data: Some(serde_json::json!({
@@ -138,15 +154,16 @@ impl PlatformAuthenticator for TwitchAuthenticator {
             created_at: now,
             updated_at: now,
             is_bot: self.is_bot,
+            // NEW fields populated from /validate:
+            platform_id: Some(external_user_id),
+            user_name: login,
         };
 
-        // Clear the stored state
         self.pending_state = None;
         Ok(credential)
     }
 
     async fn refresh(&mut self, credential: &PlatformCredential) -> Result<PlatformCredential, Error> {
-        // If we have a refresh token, do same approach
         let refresh_token = match credential.refresh_token.as_ref() {
             Some(r) => r.clone(),
             None => return Err(Error::Auth("No refresh token available.".into())),
@@ -171,16 +188,18 @@ impl PlatformAuthenticator for TwitchAuthenticator {
             .map_err(|e| Error::Auth(format!("Twitch token endpoint error: {e}")))?
             .json::<TwitchTokenResponse>()
             .await
-            .map_err(|e| Error::Auth(format!("Parse error on refresh JSON: {e}")))?;
+            .map_err(|e| Error::Auth(format!("Parse error on token JSON: {e}")))?;
 
         let now = Utc::now();
         let expires_at = Some(now + chrono::Duration::seconds(resp.expires_in as i64));
 
+        let (login, external_user_id) = self.fetch_user_login_and_id(&resp.access_token).await?;
+
         let updated = PlatformCredential {
-            credential_id: credential.credential_id.clone(),
+            credential_id: credential.credential_id,
             platform: credential.platform.clone(),
             credential_type: credential.credential_type.clone(),
-            user_id: credential.user_id.clone(),
+            user_id: credential.user_id,
             primary_token: resp.access_token,
             refresh_token: resp.refresh_token,
             additional_data: Some(serde_json::json!({
@@ -190,16 +209,15 @@ impl PlatformAuthenticator for TwitchAuthenticator {
             created_at: credential.created_at,
             updated_at: now,
             is_bot: credential.is_bot,
+            platform_id: Some(external_user_id),
+            user_name: login,
         };
-
         Ok(updated)
     }
 
     async fn validate(&self, credential: &PlatformCredential) -> Result<bool, Error> {
-        // `validate_token(&self, client: &impl Client)` in 0.15.1 has only 1 param
         let http_client = ReqwestClient::new();
         let access_token = AccessToken::new(credential.primary_token.clone());
-
         match access_token.validate_token(&http_client).await {
             Ok(_valid) => Ok(true),
             Err(e) => {
@@ -210,14 +228,9 @@ impl PlatformAuthenticator for TwitchAuthenticator {
     }
 
     async fn revoke(&mut self, credential: &PlatformCredential) -> Result<(), Error> {
-        // In v0.15.1, `revoke_token` is `fn revoke_token(self, client: &impl Client, client_id: &ClientId)`
-        // It does not accept client_secret. So:
         let http_client = ReqwestClient::new();
         let access_token = AccessToken::new(credential.primary_token.clone());
-
-        // We'll pass just &ClientId:
         let cid = ClientId::new(self.client_id.clone());
-
         match access_token.revoke_token(&http_client, &cid).await {
             Ok(_) => Ok(()),
             Err(e) => {

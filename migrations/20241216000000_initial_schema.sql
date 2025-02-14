@@ -57,8 +57,10 @@ DROP TABLE IF EXISTS platform_credentials CASCADE;
 CREATE TABLE platform_credentials (
 credential_id   UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
 platform        TEXT NOT NULL,
+platform_id     TEXT,
 credential_type TEXT NOT NULL,
 user_id         UUID NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+user_name       TEXT NOT NULL,
 primary_token   TEXT NOT NULL,
 refresh_token   TEXT,
 additional_data TEXT,

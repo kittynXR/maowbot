@@ -3,7 +3,7 @@ use std::sync::Arc;
 use futures_util::TryFutureExt;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tokio::task::JoinHandle;
-use tracing::{error, info, warn};
+use tracing::{error, info, warn, debug};
 
 use twitch_irc::login::StaticLoginCredentials;
 use twitch_irc::message::ServerMessage;
@@ -15,32 +15,23 @@ use crate::platforms::{
     ConnectionStatus, PlatformAuth, PlatformIntegration, ChatPlatform,
 };
 
-/// Example “message event” from Twitch IRC
 #[derive(Debug, Clone)]
 pub struct TwitchIrcMessageEvent {
     pub channel: String,
     pub user_name: String,
-    pub user_id: String,   // (Might just be user’s numeric ID from Twitch.)
+    pub user_id: String,
     pub text: String,
 }
 
-/// Our platform struct for Twitch IRC.
 pub struct TwitchIrcPlatform {
-    /// The chat token, etc.
     pub credentials: Option<PlatformCredential>,
-
-    /// Current connection status (Connected/Disconnected/Reconnecting/etc.)
     pub connection_status: ConnectionStatus,
 
-    /// A background read task handle that receives ServerMessage from the client
     pub read_task_handle: Option<JoinHandle<()>>,
 
-    /// For piping message events out of the read loop
     pub rx: Option<UnboundedReceiver<TwitchIrcMessageEvent>>,
     pub tx: Option<UnboundedSender<TwitchIrcMessageEvent>>,
 
-    /// A reference to the actual IRC client so we can join/part channels.
-    /// We wrap it in `Arc` because we might share it with the read task.
     pub client: Option<Arc<TwitchIRCClient<SecureTCPTransport, StaticLoginCredentials>>>,
 }
 
@@ -56,22 +47,20 @@ impl TwitchIrcPlatform {
         }
     }
 
-    /// If your manager wants to poll for messages, it calls `next_message_event()`.
-    /// Returns `None` if we’re disconnected or the channel is closed.
-    pub async fn next_message_event(&mut self) -> Option<TwitchIrcMessageEvent> {
-        if let Some(rx) = &mut self.rx {
-            rx.recv().await
-        } else {
-            None
-        }
-    }
-
     pub fn set_credentials(&mut self, creds: PlatformCredential) {
         self.credentials = Some(creds);
     }
 
     pub fn credentials(&self) -> Option<&PlatformCredential> {
         self.credentials.as_ref()
+    }
+
+    pub async fn next_message_event(&mut self) -> Option<TwitchIrcMessageEvent> {
+        if let Some(rx) = &mut self.rx {
+            rx.recv().await
+        } else {
+            None
+        }
     }
 }
 
@@ -85,7 +74,6 @@ impl PlatformAuth for TwitchIrcPlatform {
     }
 
     async fn refresh_auth(&mut self) -> Result<(), Error> {
-        // e.g. manager calls into an AuthManager if needed
         Ok(())
     }
 
@@ -106,41 +94,39 @@ impl PlatformIntegration for TwitchIrcPlatform {
             warn!("(TwitchIrcPlatform) Already connected; skipping.");
             return Ok(());
         }
-
         let creds = match &self.credentials {
             Some(c) => c,
             None => return Err(Error::Auth("No credentials in TwitchIrcPlatform".into())),
         };
 
-        // The token in DB might be "oauth:XXXXX", library expects just "XXXXX".
+        // Example debug lines for diagnosing chat messages not appearing:
+        debug!("TwitchIrcPlatform connecting with user_name='{}', credential_id={}", creds.user_name, creds.credential_id);
+        debug!("TwitchIrcPlatform is_bot={}, platform_id={:?}", creds.is_bot, creds.platform_id);
+
         let raw_token = creds
             .primary_token
             .strip_prefix("oauth:")
             .unwrap_or(&creds.primary_token)
             .to_string();
 
-        // Some nickname for the bot. If your credential has more data (like the actual login),
-        // you can store it in the credential’s `additional_data`.
-        let user_login_name = "someNickName";
+        // The actual Twitch login name for the PASS line must match `credentials.user_name`.
+        // If user_name is incorrect, you won't receive messages from Twitch.
+        let user_login_name = creds.user_name.clone();
 
         let config = ClientConfig::new_simple(
-            StaticLoginCredentials::new(user_login_name.to_string(), Some(raw_token))
+            StaticLoginCredentials::new(user_login_name, Some(raw_token))
         );
 
-        // Create the client
         let (mut incoming_messages, client) = TwitchIRCClient::<SecureTCPTransport, _>::new(config);
 
-        // Store the client in self
         self.client = Some(Arc::new(client));
-
-        // Create an unbounded channel for parsed message events
         let (tx, rx) = unbounded_channel();
         self.tx = Some(tx);
         self.rx = Some(rx);
 
-        // Start a background task reading from `incoming_messages`:
         let tx_for_task = self.tx.clone();
         let read_handle = tokio::spawn(async move {
+            info!("(TwitchIrcPlatform) starting read loop...");
             while let Some(msg) = incoming_messages.recv().await {
                 match msg {
                     ServerMessage::Privmsg(privmsg) => {
@@ -154,11 +140,12 @@ impl PlatformIntegration for TwitchIrcPlatform {
                             let _ = sender.send(evt);
                         }
                     }
-                    // handle other messages if you want
-                    _ => {}
+                    other => {
+                        debug!("(TwitchIrcPlatform) Non-PRIVMSG: {:?}", other);
+                    }
                 }
             }
-            info!("(TwitchIrcPlatform) IRC read task ended.");
+            info!("(TwitchIrcPlatform) IRC read loop ended.");
         });
         self.read_task_handle = Some(read_handle);
 
@@ -174,35 +161,28 @@ impl PlatformIntegration for TwitchIrcPlatform {
         }
         self.rx = None;
         self.tx = None;
-        // Optionally do more cleanup
         Ok(())
     }
 
     async fn send_message(&self, channel: &str, message: &str) -> Result<(), Error> {
-        // If you want to do `.say(channel, message)`, you need the actual client:
         if let Some(ref client) = self.client {
-            // The library’s `join(...)` is for channel joining.
-            // The method to send chat is `.say(channel, message).await`.
-            client.say(channel.to_owned(), message.to_owned()).unwrap_or_else(|err| {
+            client.say(channel.to_string(), message.to_string()).unwrap_or_else(|err| {
                 error!("Error sending message to Twitch IRC: {:?}", err);
             });
         }
         Ok(())
     }
 
-    async fn get_connection_status(&self) -> Result<crate::platforms::ConnectionStatus, Error> {
+    async fn get_connection_status(&self) -> Result<ConnectionStatus, Error> {
         Ok(self.connection_status.clone())
     }
 }
 
-//
-// *******  HERE IS THE KEY PART: ChatPlatform for join_channel/leave_channel  *******
-//
 #[async_trait]
-impl crate::platforms::ChatPlatform for TwitchIrcPlatform {
+impl ChatPlatform for TwitchIrcPlatform {
     async fn join_channel(&self, channel: &str) -> Result<(), Error> {
         if let Some(ref client) = self.client {
-            client.join(channel.to_owned());
+            client.join(channel.to_string());
             Ok(())
         } else {
             Err(Error::Platform("No IRC client found in TwitchIrcPlatform".to_string()))
@@ -211,7 +191,7 @@ impl crate::platforms::ChatPlatform for TwitchIrcPlatform {
 
     async fn leave_channel(&self, channel: &str) -> Result<(), Error> {
         if let Some(ref client) = self.client {
-            client.part(channel.to_owned());
+            client.part(channel.to_string());
             Ok(())
         } else {
             Err(Error::Platform("No IRC client found in TwitchIrcPlatform".to_string()))
@@ -219,8 +199,6 @@ impl crate::platforms::ChatPlatform for TwitchIrcPlatform {
     }
 
     async fn get_channel_users(&self, _channel: &str) -> Result<Vec<String>, Error> {
-        // The twitch-irc crate doesn’t natively provide a "who’s in channel" list,
-        // so you might implement something custom or just return empty.
         Ok(Vec::new())
     }
 }

@@ -1,5 +1,3 @@
-// File: src/platforms/vrchat/auth.rs
-
 use async_trait::async_trait;
 use chrono::Utc;
 use serde_json::json;
@@ -58,8 +56,7 @@ impl PlatformAuthenticator for VRChatAuthenticator {
             AuthenticationResponse::MultipleKeys(creds) => {
                 self.username = creds.get("username").cloned();
                 self.password = creds.get("password").cloned();
-
-                // Potentially call VRChat here to see if 2FA is needed
+                // For this example, we require 2FA.
                 Err(Error::Auth("2FA required".into()))
             }
             AuthenticationResponse::TwoFactor(code) => {
@@ -68,7 +65,7 @@ impl PlatformAuthenticator for VRChatAuthenticator {
                 let password = self.password.as_ref()
                     .ok_or_else(|| Error::Auth("Password not provided".into()))?;
 
-                // Real VRChat API call would happen here
+                // In a real implementation, you would now call VRChat's API to validate 2FA.
                 Ok(PlatformCredential {
                     credential_id: Uuid::new_v4(),
                     platform: Platform::VRChat,
@@ -84,6 +81,9 @@ impl PlatformAuthenticator for VRChatAuthenticator {
                     created_at: Utc::now(),
                     updated_at: Utc::now(),
                     is_bot: false,
+                    // NEW: set platform_id and user_name based on provided username
+                    platform_id: Some(username.clone()),
+                    user_name: username.clone(),
                 })
             }
             _ => Err(Error::Auth("Invalid authentication response".into()))
@@ -95,13 +95,11 @@ impl PlatformAuthenticator for VRChatAuthenticator {
     }
 
     async fn validate(&self, credential: &PlatformCredential) -> Result<bool, Error> {
-        // Example call to VRChat
         let client = reqwest::Client::new();
         let response = client.get("https://api.vrchat.cloud/api/1/auth/user")
             .header("Cookie", format!("auth={}", credential.primary_token))
             .send()
             .await?;
-
         Ok(response.status().is_success())
     }
 
@@ -111,7 +109,6 @@ impl PlatformAuthenticator for VRChatAuthenticator {
             .header("Cookie", format!("auth={}", credential.primary_token))
             .send()
             .await?;
-
         if response.status().is_success() {
             Ok(())
         } else {
