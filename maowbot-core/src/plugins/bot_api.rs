@@ -10,11 +10,22 @@ use crate::repositories::postgres::UserRepository;
 use tokio::sync::mpsc;
 use crate::eventbus::BotEvent;
 
+#[derive(Debug)]
+pub struct AccountStatus {
+    /// The underlying platform name (e.g. "twitch", "discord", "vrchat", etc.)
+    pub platform: String,
+    /// A display string for the user. Typically the global_username if available, otherwise user_id.
+    pub account_name: String,
+    /// Whether the bot’s runtime for this platform+account is currently running/connected.
+    pub is_connected: bool,
+}
+
 /// Status data reported by the bot to the plugin(s).
 #[derive(Debug)]
 pub struct StatusData {
     pub connected_plugins: Vec<String>,
     pub uptime_seconds: u64,
+    pub account_statuses: Vec<AccountStatus>,
 }
 
 /// Represents one platform config row. Usually only one per platform.

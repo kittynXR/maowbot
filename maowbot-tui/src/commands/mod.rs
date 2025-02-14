@@ -8,7 +8,6 @@ use crate::tui_module::TuiModule;
 // Submodules for actual command logic:
 mod account;
 mod connectivity;
-// unchanged
 mod platform;
 mod plugin;
 mod ttv;
@@ -46,6 +45,7 @@ pub async fn dispatch_async(
         }
 
         "status" => {
+            // Existing logic
             let subcmd = args.get(0).map(|s| s.to_lowercase());
             let status_data = bot_api.status().await;
 
@@ -57,6 +57,31 @@ pub async fn dispatch_async(
                 output.push_str(&format!("  {}\n", c));
             }
 
+            // NEW CODE BLOCK: show all platforms + accounts + connectedness
+            output.push_str("\n--- Platforms & Accounts ---\n");
+            if status_data.account_statuses.is_empty() {
+                output.push_str("(No platform credentials found.)\n");
+            } else {
+                // Group them by platform
+                use std::collections::BTreeMap;
+                let mut by_platform: BTreeMap<String, Vec<(String, bool)>> = BTreeMap::new();
+                for acc in &status_data.account_statuses {
+                    by_platform
+                        .entry(acc.platform.clone())
+                        .or_default()
+                        .push((acc.account_name.clone(), acc.is_connected));
+                }
+
+                for (plat, accs) in by_platform {
+                    output.push_str(&format!("Platform: {}\n", plat));
+                    for (acct, conn) in accs {
+                        let marker = if conn { "[connected]" } else { "[disconnected]" };
+                        output.push_str(&format!("  - {} {}\n", marker, acct));
+                    }
+                }
+            }
+
+            // If subcommand was "status config" => show config
             if subcmd.as_deref() == Some("config") {
                 match bot_api.list_config().await {
                     Ok(list) => {

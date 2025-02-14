@@ -12,7 +12,7 @@ use crate::plugins::plugin_connection::PluginConnection;
 use crate::plugins::types::PluginType;
 use crate::Error;
 use crate::eventbus::{BotEvent, EventBus};
-use crate::plugins::bot_api::{BotApi, StatusData, PlatformConfigData};
+use crate::plugins::bot_api::{BotApi, StatusData, PlatformConfigData, AccountStatus};
 use crate::models::{Platform, PlatformCredential, User};
 
 use crate::repositories::postgres::bot_config::BotConfigRepository;
@@ -43,9 +43,41 @@ impl BotApi for PluginManager {
             })
             .collect();
 
+        // 1) Gather every stored credential from DB
+        let creds_result = self.list_credentials(None).await;
+        let mut account_statuses = Vec::new();
+
+        if let Ok(all_creds) = creds_result {
+            // 2) For each credential, see if there's a matching active runtime
+            //    The PlatformManager stores them as key = (platform_str, user_id_str).
+            let guard = self.platform_manager.active_runtimes.lock().await;
+            for c in all_creds {
+                // Attempt to map c.user_id => global username (for display)
+                let user_display = match self.user_repo.get(c.user_id).await {
+                    Ok(Some(u)) => u
+                        .global_username
+                        .unwrap_or_else(|| c.user_id.to_string()),
+                    _ => c.user_id.to_string(),
+                };
+
+                // Convert the platform to a string key
+                let platform_key = c.platform.to_string().to_lowercase();
+                let user_key = c.user_id.to_string();
+
+                let is_connected = guard.contains_key(&(platform_key.clone(), user_key));
+                // We'll fill out an AccountStatus
+                account_statuses.push(AccountStatus {
+                    platform: platform_key,
+                    account_name: user_display,
+                    is_connected,
+                });
+            }
+        }
+
         StatusData {
             connected_plugins: connected_names,
             uptime_seconds: self.start_time.elapsed().as_secs(),
+            account_statuses,
         }
     }
 
