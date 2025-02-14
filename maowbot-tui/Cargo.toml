@@ -8,6 +8,8 @@ tokio = { workspace = true }
 reqwest = { workspace = true }
 
 open = "5.3"
+
+chrono = { workspace = true }
 uuid = { workspace = true }
 sqlx = { workspace = true }
 lazy_static = { workspace = true }

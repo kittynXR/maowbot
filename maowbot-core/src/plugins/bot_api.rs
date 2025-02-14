@@ -130,4 +130,5 @@ pub trait BotApi: Send + Sync {
     async fn join_twitch_irc_channel(&self, account_name: &str, channel: &str) -> Result<(), Error>;
     async fn part_twitch_irc_channel(&self, account_name: &str, channel: &str) -> Result<(), Error>;
     async fn send_twitch_irc_message(&self, account_name: &str, channel: &str, text: &str) -> Result<(), Error>;
+    async fn store_credential(&self, cred: PlatformCredential) -> Result<(), Error>;
 }

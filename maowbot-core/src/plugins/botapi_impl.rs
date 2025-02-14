@@ -371,4 +371,13 @@ impl BotApi for PluginManager {
     async fn send_twitch_irc_message(&self, account_name: &str, channel: &str, text: &str) -> Result<(), Error> {
         self.platform_manager.send_twitch_irc_message(account_name, channel, text).await
     }
+
+    async fn store_credential(&self, cred: PlatformCredential) -> Result<(), Error> {
+        if let Some(am) = &self.auth_manager {
+            let lock = am.lock().await;
+            lock.store_credentials(&cred).await
+        } else {
+            Err(Error::Auth("No auth manager set in plugin manager".into()))
+        }
+    }
 }
