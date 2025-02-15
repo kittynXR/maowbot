@@ -189,7 +189,7 @@ impl BotApi for PluginManager {
     ) -> Result<PlatformCredential, Error> {
         if let Some(am) = &self.auth_manager {
             let mut lock = am.lock().await;
-            lock.complete_auth_flow(platform, code).await
+            lock.complete_auth_flow_for_user(platform, code, "00000000-0000-0000-0000-000000000000").await
         } else {
             Err(Error::Auth("No auth manager set in plugin manager".into()))
         }
@@ -234,6 +234,24 @@ impl BotApi for PluginManager {
         if let Some(am) = &self.auth_manager {
             let mut lock = am.lock().await;
             lock.revoke_credentials(&platform, &user_id.to_string()).await
+        } else {
+            Err(Error::Auth("No auth manager set in plugin manager".into()))
+        }
+    }
+
+    async fn refresh_credentials(
+        &self,
+        platform: Platform,
+        user_id: String
+    ) -> Result<PlatformCredential, Error> {
+        let user_uuid = match Uuid::parse_str(&user_id) {
+            Ok(u) => u,
+            Err(e) => return Err(Error::Auth(format!("Bad UUID: {e}"))),
+        };
+
+        if let Some(am) = &self.auth_manager {
+            let mut lock = am.lock().await;
+            lock.refresh_platform_credentials(&platform, &user_uuid).await
         } else {
             Err(Error::Auth("No auth manager set in plugin manager".into()))
         }

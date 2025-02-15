@@ -1,5 +1,3 @@
-// File: maowbot-tui/src/commands/platform.rs
-
 use std::sync::Arc;
 use std::io::{Write, stdin, stdout};
 use std::str::FromStr;
@@ -8,7 +6,7 @@ use maowbot_core::plugins::bot_api::BotApi;
 
 pub async fn handle_platform_command(args: &[&str], bot_api: &Arc<dyn BotApi>) -> String {
     if args.is_empty() {
-        return "Usage: platform <add|remove|list|show> ...".to_string();
+        return "Usage: platform <add|remove|list|show>".to_string();
     }
 
     match args[0] {
@@ -105,22 +103,20 @@ async fn handle_platform_add(plat: Platform, bot_api: &Arc<dyn BotApi>) -> Strin
     let client_secret = csec.trim().to_string();
     let secret_opt = if client_secret.is_empty() { None } else { Some(client_secret) };
 
-    // Now store the main platform config:
     if let Err(e) = bot_api.create_platform_config(plat.clone(), client_id.clone(), secret_opt.clone()).await {
         return format!("Error storing config for '{}': {:?}", platform_str, e);
     }
 
-    // If "twitch", also do "twitch-irc" and "twitch-eventsub"
     if also_add_irc_and_eventsub {
         let _ = bot_api
             .create_platform_config(Platform::TwitchIRC, client_id.clone(), secret_opt.clone())
             .await
-            .map_err(|e| println!("Warning: could not create 'twitch-irc' config => {:?}", e));
+            .map_err(|e| println!("(Warning) could not create 'twitch-irc': {:?}", e));
 
         let _ = bot_api
             .create_platform_config(Platform::TwitchEventSub, client_id.clone(), secret_opt.clone())
             .await
-            .map_err(|e| println!("Warning: could not create 'twitch-eventsub' config => {:?}", e));
+            .map_err(|e| println!("(Warning) could not create 'twitch-eventsub': {:?}", e));
     }
 
     format!("Platform config upserted for '{}'.", platform_str)
@@ -132,7 +128,6 @@ async fn handle_platform_remove(plat: Platform, bot_api: &Arc<dyn BotApi>) -> St
 
     let also_remove_irc_and_eventsub = matches!(plat, Platform::Twitch);
 
-    // List existing
     let list = match bot_api.list_platform_configs(None).await {
         Ok(lst) => lst,
         Err(e) => {
@@ -143,10 +138,13 @@ async fn handle_platform_remove(plat: Platform, bot_api: &Arc<dyn BotApi>) -> St
         return "No platform configs found in the database.".to_string();
     }
 
-    // Remove the config row(s) matching `plat`
+    // remove the main platform's row(s)
     let remove_main = remove_platform_config_by_name(&list, &platform_str, bot_api).await;
+
     if also_remove_irc_and_eventsub {
+        // Attempt to remove twitch-irc
         let _ = remove_platform_config_by_name(&list, "twitch-irc", bot_api).await;
+        // Attempt to remove twitch-eventsub
         let _ = remove_platform_config_by_name(&list, "twitch-eventsub", bot_api).await;
     }
 
@@ -156,7 +154,6 @@ async fn handle_platform_remove(plat: Platform, bot_api: &Arc<dyn BotApi>) -> St
     }
 }
 
-/// Helper
 async fn remove_platform_config_by_name(
     list: &[maowbot_core::plugins::bot_api::PlatformConfigData],
     target_platform_str: &str,
@@ -170,8 +167,38 @@ async fn remove_platform_config_by_name(
         return None;
     }
 
+    // **Check if there are any credentials for this platform**:
+    let maybe_plat = Platform::from_str(target_platform_str).ok();
+    if let Some(plat) = maybe_plat {
+        let creds = match bot_api.list_credentials(Some(plat.clone())).await {
+            Ok(c) => c,
+            Err(e) => {
+                return Some(format!("Error checking credentials => {:?}", e));
+            }
+        };
+        if !creds.is_empty() {
+            let mut msg = String::new();
+            msg.push_str(&format!(
+                "Cannot remove '{}' because these accounts still exist:\n",
+                target_platform_str
+            ));
+            for c in creds {
+                let name = match bot_api.get_user(c.user_id).await {
+                    Ok(Some(u)) => u.global_username.unwrap_or_else(|| c.user_id.to_string()),
+                    _ => c.user_id.to_string(),
+                };
+                msg.push_str(&format!(
+                    " - user='{}' platform={:?} credential_id={}\n",
+                    name, c.platform, c.credential_id
+                ));
+            }
+            msg.push_str("All accounts must be removed before the platform can be deleted.\n");
+            return Some(msg);
+        }
+    }
+
     println!("\nExisting config(s) for '{}':", target_platform_str);
-    for pc in &matching {
+    for pc in matching.iter() {
         println!(
             " - id={} platform={} client_id={}",
             pc.platform_config_id,

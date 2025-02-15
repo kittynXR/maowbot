@@ -92,6 +92,12 @@ pub trait BotApi: Send + Sync {
         user_id: String
     ) -> Result<(), Error>;
 
+    async fn refresh_credentials(
+        &self,
+        platform: Platform,
+        user_id: String
+    ) -> Result<PlatformCredential, Error>;
+
     /// List all credentials (optionally filtered by platform).
     async fn list_credentials(
         &self,
