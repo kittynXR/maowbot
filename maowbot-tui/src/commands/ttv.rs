@@ -108,7 +108,7 @@ async fn do_join_channel(
     };
 
     if already_joined {
-        return format!("Already joined channel '{}'.", chname);
+        println!("(TUI) We already have '{}' in our list, but sending join request again...", chname);
     }
 
     // If no active account set, bail out

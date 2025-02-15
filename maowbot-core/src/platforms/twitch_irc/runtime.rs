@@ -229,6 +229,7 @@ impl PlatformIntegration for TwitchIrcPlatform {
 #[async_trait]
 impl ChatPlatform for TwitchIrcPlatform {
     async fn join_channel(&self, channel: &str) -> Result<(), Error> {
+        info!("(TwitchIrcPlatform) join_channel => '{}'", channel);
         if let Some(ref client) = self.client {
             client.join(channel.to_string());
             Ok(())
