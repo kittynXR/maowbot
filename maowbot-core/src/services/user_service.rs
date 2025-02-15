@@ -24,6 +24,8 @@ impl UserService {
             "discord" => Platform::Discord,
             "twitch_helix" => Platform::Twitch,
             "vrchat" => Platform::VRChat,
+            "twitch-irc" => Platform::TwitchIRC,
+            "twitch-eventsub" => Platform::TwitchEventSub,
             other => return Err(Error::Platform(format!("Unknown platform: {}", other))),
         };
 
