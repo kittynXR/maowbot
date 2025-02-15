@@ -3,7 +3,7 @@ use std::sync::Arc;
 use futures_util::TryFutureExt;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tokio::task::JoinHandle;
-use tracing::{error, info, warn, debug};
+use tracing::{error, info, warn, debug};  // <- using debug, warn, etc.
 
 use twitch_irc::login::StaticLoginCredentials;
 use twitch_irc::message::ServerMessage;
@@ -103,14 +103,62 @@ impl PlatformIntegration for TwitchIrcPlatform {
         debug!("TwitchIrcPlatform connecting with user_name='{}', credential_id={}", creds.user_name, creds.credential_id);
         debug!("TwitchIrcPlatform is_bot={}, platform_id={:?}", creds.is_bot, creds.platform_id);
 
+        // -------------------------------------------------------------------
+        // NEW: Validate the token to confirm the actual login from Twitch
+        //      If it differs from creds.user_name, we at least warn about it.
+        // -------------------------------------------------------------------
+        {
+            let raw_token = creds.primary_token.trim_start_matches("oauth:");
+            let validate_url = "https://id.twitch.tv/oauth2/validate";
+            let client = reqwest::Client::new();
+            match client
+                .get(validate_url)
+                .header("Authorization", format!("OAuth {}", raw_token))
+                .send()
+                .await
+            {
+                Ok(resp) if resp.status().is_success() => {
+                    #[derive(serde::Deserialize)]
+                    struct ValidateResp {
+                        client_id: String,
+                        login: String,
+                        user_id: String,
+                        expires_in: u64,
+                    }
+                    match resp.json::<ValidateResp>().await {
+                        Ok(data) => {
+                            if !data.login.eq_ignore_ascii_case(&creds.user_name) {
+                                warn!(
+                                    "Twitch credential mismatch: DB user_name='{}' but /validate returned login='{}'. \
+                                     You may never receive chat messages unless these match!",
+                                    creds.user_name, data.login
+                                );
+                            } else {
+                                debug!("Validated token => login='{}', user_id='{}'", data.login, data.user_id);
+                            }
+                        }
+                        Err(e) => {
+                            warn!("Could not parse Twitch /validate JSON => {}", e);
+                        }
+                    }
+                }
+                Ok(resp) => {
+                    warn!("Twitch /validate returned HTTP {} => invalid or expired token?", resp.status());
+                }
+                Err(e) => {
+                    warn!("Failed calling /validate => {}", e);
+                }
+            }
+        }
+        // End of new validation snippet
+
         let raw_token = creds
             .primary_token
             .strip_prefix("oauth:")
             .unwrap_or(&creds.primary_token)
             .to_string();
 
-        // The actual Twitch login name for the PASS line must match `credentials.user_name`.
-        // If user_name is incorrect, you won't receive messages from Twitch.
+        // The actual Twitch login name for the PASS line must match `creds.user_name`.
         let user_login_name = creds.user_name.clone();
 
         let config = ClientConfig::new_simple(
