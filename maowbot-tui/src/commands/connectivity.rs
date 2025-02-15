@@ -28,7 +28,7 @@ pub async fn handle_connectivity_command(
 
     match args[0] {
         "autostart" => handle_autostart_cmd(&args[1..], bot_api).await,
-        "start"     => handle_start_cmd(&args[1..], bot_api).await,
+        "start"     => handle_start_cmd(&args[1..], bot_api, tui_module).await,
         "stop"      => handle_stop_cmd(&args[1..], bot_api).await,
         "chat"      => handle_chat_cmd(&args[1..], tui_module).await,
         _ => r#"Unknown connectivity command. See usage:
@@ -89,7 +89,12 @@ async fn handle_autostart_cmd(args: &[&str], bot_api: &Arc<dyn BotApi>) -> Strin
 }
 
 /// If the user provided no account, try to auto‐resolve which account to use for the given platform.
-async fn handle_start_cmd(args: &[&str], bot_api: &Arc<dyn BotApi>) -> String {
+/// After starting a twitch-irc runtime, automatically set it as active and join #<account>.
+async fn handle_start_cmd(
+    args: &[&str],
+    bot_api: &Arc<dyn BotApi>,
+    tui_module: &Arc<TuiModule>,
+) -> String {
     // Usage: start <platform> [account]
     if args.is_empty() {
         return "Usage: start <platform> [account]".to_string();
@@ -101,16 +106,33 @@ async fn handle_start_cmd(args: &[&str], bot_api: &Arc<dyn BotApi>) -> String {
         Err(_) => return format!("Unknown platform '{}'", platform_str),
     };
 
-    // If user provided an account, just do the old direct logic.
+    // If user provided an account, we use it directly.
     if args.len() >= 2 {
         let account = args[1];
-        return match bot_api.start_platform_runtime(platform_str, account).await {
-            Ok(_) => format!("Started platform='{}', account='{}'", platform_str, account),
-            Err(e) => format!("Error => {:?}", e),
-        };
+        let start_res = bot_api.start_platform_runtime(platform_str, account).await;
+        if start_res.is_err() {
+            return format!("Error => {:?}", start_res.err().unwrap());
+        }
+
+        // If this is twitch-irc, also set as active and auto-join #<account>
+        if platform_str.eq_ignore_ascii_case("twitch-irc") {
+            let channel = format!("#{}", account.to_lowercase());
+            {
+                let mut st = tui_module.ttv_state.lock().unwrap();
+                st.active_account = Some(account.to_string());
+                if !st.joined_channels.contains(&channel) {
+                    st.joined_channels.push(channel.clone());
+                }
+            }
+            if let Err(e) = bot_api.join_twitch_irc_channel(account, &channel).await {
+                eprintln!("Warning: could not auto-join '{}': {:?}", channel, e);
+            }
+        }
+
+        return format!("Started platform='{}', account='{}'", platform_str, account);
     }
 
-    // Otherwise, user did NOT provide an account => auto-detect
+    // Otherwise, user did NOT provide an account => auto-detect:
     let all_creds = match bot_api.list_credentials(Some(platform_enum)).await {
         Ok(list) => list,
         Err(e) => return format!("Error listing credentials => {:?}", e),
@@ -124,13 +146,30 @@ async fn handle_start_cmd(args: &[&str], bot_api: &Arc<dyn BotApi>) -> String {
             Ok(Some(u)) => u.global_username.unwrap_or_else(|| c.user_id.to_string()),
             _ => c.user_id.to_string(),
         };
-        return match bot_api.start_platform_runtime(platform_str, &user_display).await {
-            Ok(_) => format!(
-                "Started platform='{}' with the only account='{}'",
-                platform_str, user_display
-            ),
-            Err(e) => format!("Error => {:?}", e),
-        };
+        let start_res = bot_api.start_platform_runtime(platform_str, &user_display).await;
+        if let Err(e) = start_res {
+            return format!("Error => {:?}", e);
+        }
+
+        // If twitch-irc => also set as active & join #<account>
+        if platform_str.eq_ignore_ascii_case("twitch-irc") {
+            let channel = format!("#{}", user_display.to_lowercase());
+            {
+                let mut st = tui_module.ttv_state.lock().unwrap();
+                st.active_account = Some(user_display.clone());
+                if !st.joined_channels.contains(&channel) {
+                    st.joined_channels.push(channel.clone());
+                }
+            }
+            if let Err(e) = bot_api.join_twitch_irc_channel(&user_display, &channel).await {
+                eprintln!("Warning: could not auto-join '{}': {:?}", channel, e);
+            }
+        }
+
+        return format!(
+            "Started platform='{}' with the only account='{}'",
+            platform_str, user_display
+        );
     }
 
     // If multiple, prompt user to pick from a list:
@@ -157,13 +196,30 @@ async fn handle_start_cmd(args: &[&str], bot_api: &Arc<dyn BotApi>) -> String {
         _ => return "Invalid choice. Aborting.".to_string(),
     };
     let chosen_account = &display_list[choice - 1];
-    match bot_api.start_platform_runtime(platform_str, chosen_account).await {
-        Ok(_) => format!("Started platform='{}', account='{}'", platform_str, chosen_account),
-        Err(e) => format!("Error => {:?}", e),
+
+    let start_res = bot_api.start_platform_runtime(platform_str, chosen_account).await;
+    if let Err(e) = start_res {
+        return format!("Error => {:?}", e);
     }
+
+    // If twitch-irc => set active & auto-join #<account>
+    if platform_str.eq_ignore_ascii_case("twitch-irc") {
+        let channel = format!("#{}", chosen_account.to_lowercase());
+        {
+            let mut st = tui_module.ttv_state.lock().unwrap();
+            st.active_account = Some(chosen_account.clone());
+            if !st.joined_channels.contains(&channel) {
+                st.joined_channels.push(channel.clone());
+            }
+        }
+        if let Err(e) = bot_api.join_twitch_irc_channel(chosen_account, &channel).await {
+            eprintln!("Warning: could not auto-join '{}': {:?}", channel, e);
+        }
+    }
+
+    format!("Started platform='{}', account='{}'", platform_str, chosen_account)
 }
 
-/// If the user provided no account, try to auto‐resolve which account to use for the given platform.
 async fn handle_stop_cmd(args: &[&str], bot_api: &Arc<dyn BotApi>) -> String {
     // Usage: stop <platform> [account]
     if args.is_empty() {
@@ -176,7 +232,7 @@ async fn handle_stop_cmd(args: &[&str], bot_api: &Arc<dyn BotApi>) -> String {
         Err(_) => return format!("Unknown platform '{}'", platform_str),
     };
 
-    // If user provided an account, just do the old direct logic.
+    // If user provided an account, just do the direct logic.
     if args.len() >= 2 {
         let account = args[1];
         return match bot_api.stop_platform_runtime(platform_str, account).await {
@@ -185,7 +241,7 @@ async fn handle_stop_cmd(args: &[&str], bot_api: &Arc<dyn BotApi>) -> String {
         };
     }
 
-    // Otherwise, user did NOT provide an account => auto-detect
+    // Otherwise, no account => auto-detect
     let all_creds = match bot_api.list_credentials(Some(platform_enum)).await {
         Ok(list) => list,
         Err(e) => return format!("Error listing credentials => {:?}", e),
@@ -208,7 +264,7 @@ async fn handle_stop_cmd(args: &[&str], bot_api: &Arc<dyn BotApi>) -> String {
         };
     }
 
-    // If multiple, prompt user to pick from a list:
+    // If multiple, prompt user:
     println!("Multiple accounts found for platform '{}':", platform_str);
     let mut display_list = Vec::new();
     for (idx, cred) in all_creds.iter().enumerate() {
