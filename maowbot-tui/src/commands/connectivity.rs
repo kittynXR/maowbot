@@ -1,5 +1,3 @@
-// File: maowbot-tui/src/commands/connectivity.rs
-
 use std::sync::Arc;
 use std::io::{stdin, stdout, Write};
 use std::str::FromStr;
@@ -88,14 +86,11 @@ async fn handle_autostart_cmd(args: &[&str], bot_api: &Arc<dyn BotApi>) -> Strin
     }
 }
 
-/// If the user provided no account, try to auto‐resolve which account to use for the given platform.
-/// After starting a twitch-irc runtime, automatically set it as active and join #<account>.
 async fn handle_start_cmd(
     args: &[&str],
     bot_api: &Arc<dyn BotApi>,
     tui_module: &Arc<TuiModule>,
 ) -> String {
-    // Usage: start <platform> [account]
     if args.is_empty() {
         return "Usage: start <platform> [account]".to_string();
     }
@@ -106,15 +101,15 @@ async fn handle_start_cmd(
         Err(_) => return format!("Unknown platform '{}'", platform_str),
     };
 
-    // If user provided an account, we use it directly.
+    // If user provided an account
     if args.len() >= 2 {
         let account = args[1];
         let start_res = bot_api.start_platform_runtime(platform_str, account).await;
-        if start_res.is_err() {
-            return format!("Error => {:?}", start_res.err().unwrap());
+        if let Err(e) = start_res {
+            return format!("Error => {:?}", e);
         }
 
-        // If this is twitch-irc, also set as active and auto-join #<account>
+        // If Twitch IRC, auto-add #<account> to joined_channels and do join
         if platform_str.eq_ignore_ascii_case("twitch-irc") {
             let channel = format!("#{}", account.to_lowercase());
             {
@@ -132,7 +127,7 @@ async fn handle_start_cmd(
         return format!("Started platform='{}', account='{}'", platform_str, account);
     }
 
-    // Otherwise, user did NOT provide an account => auto-detect:
+    // Otherwise, no account => auto-detect
     let all_creds = match bot_api.list_credentials(Some(platform_enum)).await {
         Ok(list) => list,
         Err(e) => return format!("Error listing credentials => {:?}", e),
@@ -172,7 +167,7 @@ async fn handle_start_cmd(
         );
     }
 
-    // If multiple, prompt user to pick from a list:
+    // If multiple, prompt user
     println!("Multiple accounts found for platform '{}':", platform_str);
     let mut display_list = Vec::new();
     for (idx, cred) in all_creds.iter().enumerate() {
@@ -221,7 +216,6 @@ async fn handle_start_cmd(
 }
 
 async fn handle_stop_cmd(args: &[&str], bot_api: &Arc<dyn BotApi>) -> String {
-    // Usage: stop <platform> [account]
     if args.is_empty() {
         return "Usage: stop <platform> [account]".to_string();
     }
@@ -232,7 +226,7 @@ async fn handle_stop_cmd(args: &[&str], bot_api: &Arc<dyn BotApi>) -> String {
         Err(_) => return format!("Unknown platform '{}'", platform_str),
     };
 
-    // If user provided an account, just do the direct logic.
+    // If user provided an account
     if args.len() >= 2 {
         let account = args[1];
         return match bot_api.stop_platform_runtime(platform_str, account).await {
@@ -249,7 +243,6 @@ async fn handle_stop_cmd(args: &[&str], bot_api: &Arc<dyn BotApi>) -> String {
     if all_creds.is_empty() {
         return format!("No accounts found for platform='{}'. Cannot stop.", platform_str);
     } else if all_creds.len() == 1 {
-        // Exactly one → use it automatically
         let c = &all_creds[0];
         let user_display = match bot_api.get_user(c.user_id).await {
             Ok(Some(u)) => u.global_username.unwrap_or_else(|| c.user_id.to_string()),
@@ -264,7 +257,7 @@ async fn handle_stop_cmd(args: &[&str], bot_api: &Arc<dyn BotApi>) -> String {
         };
     }
 
-    // If multiple, prompt user:
+    // If multiple, prompt
     println!("Multiple accounts found for platform '{}':", platform_str);
     let mut display_list = Vec::new();
     for (idx, cred) in all_creds.iter().enumerate() {
@@ -294,7 +287,6 @@ async fn handle_stop_cmd(args: &[&str], bot_api: &Arc<dyn BotApi>) -> String {
     }
 }
 
-/// chat <on/off> [platform] [account]
 async fn handle_chat_cmd(args: &[&str], tui_module: &Arc<TuiModule>) -> String {
     if args.is_empty() {
         return "Usage: chat <on/off> [platform] [account]".to_string();

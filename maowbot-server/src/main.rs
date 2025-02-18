@@ -104,9 +104,16 @@ struct Args {
 
 /// Initialize tracing (logging) at the specified log level.
 fn init_tracing(level: &str) {
-    let filter_string = format!("maowbot={}", level);
-    let filter = EnvFilter::new(filter_string);
-    let sub = fmt().with_env_filter(filter).finish();
+    // If RUST_LOG is set externally, use it.
+    // Otherwise default to maowbot=<level> plus any other crates:
+    let default_filter = format!("maowbot={},twitch_irc={}", level, level);
+
+    let filter = EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| EnvFilter::new(default_filter));
+
+    let sub = tracing_subscriber::fmt()
+        .with_env_filter(filter)
+        .finish();
 
     tracing::subscriber::set_global_default(sub)
         .expect("Failed to set global subscriber");
@@ -119,7 +126,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Initialize tracing with the specified log level
     init_tracing(&args.log_level);
-
+    tracing_log::LogTracer::init().expect("Failed to init LogTracer");
     info!("MaowBot starting. mode={}, headless={}, tui={}, auth={}",
           args.mode, args.headless, args.tui, args.auth);
 

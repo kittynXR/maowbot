@@ -3,16 +3,17 @@ use std::sync::Arc;
 use futures_util::TryFutureExt;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tokio::task::JoinHandle;
-use tracing::{error, info, warn, debug};  // <- using debug, warn, etc.
+use tracing::{error, info, warn, debug};
 
 use twitch_irc::login::StaticLoginCredentials;
 use twitch_irc::message::ServerMessage;
 use twitch_irc::{ClientConfig, SecureTCPTransport, TwitchIRCClient};
 
 use crate::Error;
+use crate::eventbus::EventBus;
 use crate::models::PlatformCredential;
 use crate::platforms::{
-    ConnectionStatus, PlatformAuth, PlatformIntegration, ChatPlatform,
+    ChatPlatform, ConnectionStatus, PlatformAuth, PlatformIntegration,
 };
 
 #[derive(Debug, Clone)]
@@ -33,6 +34,9 @@ pub struct TwitchIrcPlatform {
     pub tx: Option<UnboundedSender<TwitchIrcMessageEvent>>,
 
     pub client: Option<Arc<TwitchIRCClient<SecureTCPTransport, StaticLoginCredentials>>>,
+
+    /// NEW: optional event bus for publishing chat messages (so TUI can see them).
+    pub event_bus: Option<Arc<EventBus>>,
 }
 
 impl TwitchIrcPlatform {
@@ -44,6 +48,7 @@ impl TwitchIrcPlatform {
             rx: None,
             tx: None,
             client: None,
+            event_bus: None,
         }
     }
 
@@ -53,6 +58,11 @@ impl TwitchIrcPlatform {
 
     pub fn credentials(&self) -> Option<&PlatformCredential> {
         self.credentials.as_ref()
+    }
+
+    /// If your system uses an EventBus, you can set it here.
+    pub fn set_event_bus(&mut self, bus: Arc<EventBus>) {
+        self.event_bus = Some(bus);
     }
 
     pub async fn next_message_event(&mut self) -> Option<TwitchIrcMessageEvent> {
@@ -99,66 +109,20 @@ impl PlatformIntegration for TwitchIrcPlatform {
             None => return Err(Error::Auth("No credentials in TwitchIrcPlatform".into())),
         };
 
-        // Example debug lines for diagnosing chat messages not appearing:
-        debug!("TwitchIrcPlatform connecting with user_name='{}', credential_id={}", creds.user_name, creds.credential_id);
-        debug!("TwitchIrcPlatform is_bot={}, platform_id={:?}", creds.is_bot, creds.platform_id);
+        debug!(
+            "TwitchIrcPlatform connecting user_name='{}', user_id={} is_bot={}",
+            creds.user_name,
+            creds.user_id,
+            creds.is_bot
+        );
 
-        // -------------------------------------------------------------------
-        // NEW: Validate the token to confirm the actual login from Twitch
-        //      If it differs from creds.user_name, we at least warn about it.
-        // -------------------------------------------------------------------
-        {
-            let raw_token = creds.primary_token.trim_start_matches("oauth:");
-            let validate_url = "https://id.twitch.tv/oauth2/validate";
-            let client = reqwest::Client::new();
-            match client
-                .get(validate_url)
-                .header("Authorization", format!("OAuth {}", raw_token))
-                .send()
-                .await
-            {
-                Ok(resp) if resp.status().is_success() => {
-                    #[derive(serde::Deserialize)]
-                    struct ValidateResp {
-                        client_id: String,
-                        login: String,
-                        user_id: String,
-                        expires_in: u64,
-                    }
-                    match resp.json::<ValidateResp>().await {
-                        Ok(data) => {
-                            if !data.login.eq_ignore_ascii_case(&creds.user_name) {
-                                warn!(
-                                    "Twitch credential mismatch: DB user_name='{}' but /validate returned login='{}'. \
-                                     You may never receive chat messages unless these match!",
-                                    creds.user_name, data.login
-                                );
-                            } else {
-                                debug!("Validated token => login='{}', user_id='{}'", data.login, data.user_id);
-                            }
-                        }
-                        Err(e) => {
-                            warn!("Could not parse Twitch /validate JSON => {}", e);
-                        }
-                    }
-                }
-                Ok(resp) => {
-                    warn!("Twitch /validate returned HTTP {} => invalid or expired token?", resp.status());
-                }
-                Err(e) => {
-                    warn!("Failed calling /validate => {}", e);
-                }
-            }
-        }
-        // End of new validation snippet
-
+        // Optionally validate token via /validate
         let raw_token = creds
             .primary_token
             .strip_prefix("oauth:")
             .unwrap_or(&creds.primary_token)
             .to_string();
 
-        // The actual Twitch login name for the PASS line must match `creds.user_name`.
         let user_login_name = creds.user_name.clone();
 
         let config = ClientConfig::new_simple(
@@ -166,26 +130,45 @@ impl PlatformIntegration for TwitchIrcPlatform {
         );
 
         let (mut incoming_messages, client) = TwitchIRCClient::<SecureTCPTransport, _>::new(config);
-
         self.client = Some(Arc::new(client));
+
         let (tx, rx) = unbounded_channel();
         self.tx = Some(tx);
         self.rx = Some(rx);
 
         let tx_for_task = self.tx.clone();
+        let bus_for_task = self.event_bus.clone();
+
         let read_handle = tokio::spawn(async move {
-            info!("(TwitchIrcPlatform) starting read loop...");
+            info!("(TwitchIrcPlatform) starting IRC read loop...");
             while let Some(msg) = incoming_messages.recv().await {
                 match msg {
                     ServerMessage::Privmsg(privmsg) => {
+                        debug!("(TwitchIrcPlatform) PRIVMSG in #{} from {}: {}",
+                               privmsg.channel_login,
+                               privmsg.sender.login,
+                               privmsg.message_text);
+
+                        // 1) pass to our TUI MPSC
                         let evt = TwitchIrcMessageEvent {
-                            channel: privmsg.channel_login,
+                            channel: privmsg.channel_login.clone(),
                             user_name: privmsg.sender.login.clone(),
                             user_id: privmsg.sender.id.clone(),
                             text: privmsg.message_text.clone(),
                         };
                         if let Some(sender) = &tx_for_task {
                             let _ = sender.send(evt);
+                        }
+
+                        // 2) also publish to event bus so that
+                        //    other parts of the system can see the chat message.
+                        if let Some(ref bus) = bus_for_task {
+                            bus.publish_chat(
+                                "twitch-irc",
+                                &privmsg.channel_login,
+                                &privmsg.sender.login,
+                                &privmsg.message_text
+                            ).await;
                         }
                     }
                     other => {
@@ -198,7 +181,7 @@ impl PlatformIntegration for TwitchIrcPlatform {
         self.read_task_handle = Some(read_handle);
 
         self.connection_status = ConnectionStatus::Connected;
-        info!("(TwitchIrcPlatform) connected with user_id={}", creds.user_id);
+        info!("(TwitchIrcPlatform) connected user_id={}", creds.user_id);
         Ok(())
     }
 
@@ -214,6 +197,7 @@ impl PlatformIntegration for TwitchIrcPlatform {
 
     async fn send_message(&self, channel: &str, message: &str) -> Result<(), Error> {
         if let Some(ref client) = self.client {
+            debug!("(TwitchIrcPlatform) send_message => {}: {}", channel, message);
             client.say(channel.to_string(), message.to_string()).unwrap_or_else(|err| {
                 error!("Error sending message to Twitch IRC: {:?}", err);
             });
@@ -239,6 +223,7 @@ impl ChatPlatform for TwitchIrcPlatform {
     }
 
     async fn leave_channel(&self, channel: &str) -> Result<(), Error> {
+        info!("(TwitchIrcPlatform) leave_channel => '{}'", channel);
         if let Some(ref client) = self.client {
             client.part(channel.to_string());
             Ok(())

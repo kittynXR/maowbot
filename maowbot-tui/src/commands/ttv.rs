@@ -61,14 +61,14 @@ pub async fn handle_ttv_command(
             // Enter chat mode
             let mut st = tui_module.ttv_state.lock().unwrap();
             if st.joined_channels.is_empty() {
-                "No channels joined. Use 'ttv join <channel>' first.".to_string()
+                return "No channels joined. Use 'ttv join <channel>' first.".to_string();
             } else {
                 st.is_in_chat_mode = true;
                 st.current_channel_index = 0;
-                format!(
+                return format!(
                     "Chat mode enabled. Type '/quit' to exit. Current channel: {}",
                     st.joined_channels[0]
-                )
+                );
             }
         }
 
@@ -85,7 +85,6 @@ pub async fn handle_ttv_command(
 
 fn set_active_account(account: &str, tui_module: &Arc<TuiModule>) -> String {
     let mut st = tui_module.ttv_state.lock().unwrap();
-    // Wrap it in Some(...)
     st.active_account = Some(account.to_string());
     format!("Active Twitch account set to '{}'", account)
 }
@@ -108,10 +107,10 @@ async fn do_join_channel(
     };
 
     if already_joined {
-        println!("(TUI) We already have '{}' in our list, but sending join request again...", chname);
+        return format!("We've already joined channel '{}'.", chname);
     }
 
-    // If no active account set, bail out
+    // If no active account set, bail
     let active_account = match require_active_account(&maybe_acct) {
         Ok(a) => a,
         Err(e) => return e,
@@ -144,14 +143,13 @@ async fn do_part_channel(
         return format!("Not currently joined to '{}'.", chname);
     }
 
-    // If no active account, bail
     let active_account = match require_active_account(&maybe_acct) {
         Ok(a) => a,
         Err(e) => return e,
     };
 
     {
-        // Now remove from joined_channels
+        // remove from joined_channels
         let mut st = tui_module.ttv_state.lock().unwrap();
         if let Some(idx) = pos_opt {
             st.joined_channels.remove(idx);
@@ -172,7 +170,6 @@ async fn do_send_message(
 ) -> String {
     let chname = normalize_channel_name(channel);
 
-    // Check if we have an active account
     let maybe_acct = {
         let st = tui_module.ttv_state.lock().unwrap();
         st.active_account.clone()
