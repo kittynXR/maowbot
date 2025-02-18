@@ -9,12 +9,13 @@ edition.workspace = true
 maowbot-proto = { path = "../maowbot-proto" }
 
 twitch_api = {  workspace = true }
-twitch-irc = { version = "^5.0", features = [ "default"] }
 
 sqlx = { workspace = true }
 
 tokio = { workspace = true }
 tokio-stream = { workspace = true }
+tokio-native-tls = { workspace = true }
+native-tls = { workspace = true }
 
 dashmap = { workspace = true }
 
