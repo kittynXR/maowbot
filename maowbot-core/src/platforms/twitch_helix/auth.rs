@@ -23,7 +23,7 @@ struct TwitchTokenResponse {
     token_type: String,
 }
 
-/// New structure for the /validate response
+/// For /validate
 #[derive(Deserialize)]
 struct TwitchValidateResponse {
     client_id: String,
@@ -33,27 +33,6 @@ struct TwitchValidateResponse {
 }
 
 static STATE_COUNTER: AtomicUsize = AtomicUsize::new(0);
-
-impl TwitchAuthenticator {
-    async fn fetch_user_login_and_id(&self, access_token: &str) -> Result<(String, String), Error> {
-        let http_client = ReqwestClient::new();
-        let response = http_client
-            .get("https://id.twitch.tv/oauth2/validate")
-            .header("Authorization", format!("OAuth {}", access_token))
-            .send()
-            .await
-            .map_err(|e| Error::Auth(format!("Error calling /validate: {e}")))?;
-        if !response.status().is_success() {
-            return Err(Error::Auth(format!("Failed to validate token: HTTP {}", response.status())));
-        }
-        let validate: TwitchValidateResponse = response
-            .json()
-            .await
-            .map_err(|e| Error::Auth(format!("Error parsing /validate response: {e}")))?;
-        debug!("TwitchAuthenticator /validate returned login={} user_id={}", validate.login, validate.user_id);
-        Ok((validate.login, validate.user_id))
-    }
-}
 
 pub struct TwitchAuthenticator {
     pub client_id: String,
@@ -72,8 +51,19 @@ impl TwitchAuthenticator {
         }
     }
 
+    /// Include all scopes needed for your Helix-based flows **plus** what’s required for EventSub.
     fn build_auth_url(&self, state: &str) -> String {
-        let scopes = vec!["chat:read", "chat:edit", "channel:read:subscriptions"];
+        // Example set of scopes for channel bits, ads, etc. Adjust as needed.
+        let scopes = vec![
+            "bits:read",
+            "channel:read:ads",
+            "user:read:chat",
+            "channel:read:subscriptions",
+            "channel:moderate",
+            "moderator:read:unban_requests",
+            "channel:read:hype_train",
+            "moderator:read:shoutouts",
+        ];
         let scope_str = scopes.join(" ");
         let redirect_uri = "http://localhost:9876/callback";
 
@@ -84,6 +74,32 @@ impl TwitchAuthenticator {
             urlencoding::encode(&scope_str),
             urlencoding::encode(state),
         )
+    }
+
+    async fn fetch_user_login_and_id(&self, access_token: &str) -> Result<(String, String, String), Error> {
+        let http_client = ReqwestClient::new();
+        let response = http_client
+            .get("https://id.twitch.tv/oauth2/validate")
+            .header("Authorization", format!("OAuth {}", access_token))
+            .send()
+            .await
+            .map_err(|e| Error::Auth(format!("Error calling /validate: {e}")))?;
+
+        if !response.status().is_success() {
+            return Err(Error::Auth(format!("Failed to validate token: HTTP {}", response.status())));
+        }
+
+        let validate: TwitchValidateResponse = response
+            .json()
+            .await
+            .map_err(|e| Error::Auth(format!("Error parsing /validate response: {e}")))?;
+
+        debug!(
+            "TwitchAuthenticator /validate returned login={} user_id={}",
+            validate.login, validate.user_id
+        );
+        // Return (login, user_id, client_id from validate)
+        Ok((validate.login, validate.user_id, validate.client_id))
     }
 }
 
@@ -137,24 +153,31 @@ impl PlatformAuthenticator for TwitchAuthenticator {
         let now = Utc::now();
         let expires_at = Some(Utc::now() + chrono::Duration::seconds(resp.expires_in as i64));
 
-        // Fetch external Twitch user login and id via /validate.
-        let (login, external_user_id) = self.fetch_user_login_and_id(&resp.access_token).await?;
+        // Fetch login, user_id, and validated client_id
+        let (login, external_user_id, validate_cid) =
+            self.fetch_user_login_and_id(&resp.access_token).await?;
 
+        // Build final credential
         let credential = PlatformCredential {
             credential_id: Uuid::new_v4(),
             platform: Platform::Twitch,
             credential_type: CredentialType::OAuth2,
-            user_id: Uuid::new_v4(), // Will be updated later via complete_auth_flow_for_user.
+            user_id: Uuid::new_v4(), // Will be updated later
             primary_token: resp.access_token,
             refresh_token: resp.refresh_token,
             additional_data: Some(serde_json::json!({
                 "scope": resp.scope.unwrap_or_default(),
+                // KEY CHANGE: Store client_id so that it matches the token
+                "client_id": self.client_id,
+                // If you prefer to store the validated one:
+                "validate_client_id": validate_cid,
             })),
             expires_at,
             created_at: now,
             updated_at: now,
             is_bot: self.is_bot,
-            // NEW fields populated from /validate:
+
+            // external user/broadcaster
             platform_id: Some(external_user_id),
             user_name: login,
         };
@@ -193,7 +216,8 @@ impl PlatformAuthenticator for TwitchAuthenticator {
         let now = Utc::now();
         let expires_at = Some(now + chrono::Duration::seconds(resp.expires_in as i64));
 
-        let (login, external_user_id) = self.fetch_user_login_and_id(&resp.access_token).await?;
+        let (login, external_user_id, validate_cid) =
+            self.fetch_user_login_and_id(&resp.access_token).await?;
 
         let updated = PlatformCredential {
             credential_id: credential.credential_id,
@@ -204,6 +228,8 @@ impl PlatformAuthenticator for TwitchAuthenticator {
             refresh_token: resp.refresh_token,
             additional_data: Some(serde_json::json!({
                 "scope": resp.scope.unwrap_or_default(),
+                "client_id": self.client_id,
+                "validate_client_id": validate_cid,
             })),
             expires_at,
             created_at: credential.created_at,

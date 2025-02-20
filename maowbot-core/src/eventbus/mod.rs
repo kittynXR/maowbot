@@ -27,6 +27,40 @@ pub enum BotEvent {
 
     /// Example system-wide event for debugging or administration.
     SystemMessage(String),
+
+    /// NEW: We add a variant for Twitch EventSub notifications.
+    /// This wraps a typed event from the newly introduced TwitchEventSubData enum.
+    TwitchEventSub(TwitchEventSubData),
+}
+
+/// This is the new type used by BotEvent::TwitchEventSub. Each variant corresponds to one of
+/// the supported Twitch EventSub event types. For the actual fields, see the `events.rs` file in
+/// the `twitch_eventsub` module.
+#[derive(Debug, Clone)]
+pub enum TwitchEventSubData {
+    ChannelBitsUse(crate::platforms::twitch_eventsub::events::ChannelBitsUse),
+    ChannelUpdate(crate::platforms::twitch_eventsub::events::ChannelUpdate),
+    ChannelFollow(crate::platforms::twitch_eventsub::events::ChannelFollow),
+    ChannelAdBreakBegin(crate::platforms::twitch_eventsub::events::ChannelAdBreakBegin),
+    ChannelChatNotification(crate::platforms::twitch_eventsub::events::ChannelChatNotification),
+    ChannelSharedChatBegin(crate::platforms::twitch_eventsub::events::ChannelSharedChatBegin),
+    ChannelSharedChatUpdate(crate::platforms::twitch_eventsub::events::ChannelSharedChatUpdate),
+    ChannelSharedChatEnd(crate::platforms::twitch_eventsub::events::ChannelSharedChatEnd),
+    ChannelSubscribe(crate::platforms::twitch_eventsub::events::ChannelSubscribe),
+    ChannelSubscriptionEnd(crate::platforms::twitch_eventsub::events::ChannelSubscriptionEnd),
+    ChannelSubscriptionGift(crate::platforms::twitch_eventsub::events::ChannelSubscriptionGift),
+    ChannelSubscriptionMessage(crate::platforms::twitch_eventsub::events::ChannelSubscriptionMessage),
+    ChannelCheer(crate::platforms::twitch_eventsub::events::ChannelCheer),
+    ChannelRaid(crate::platforms::twitch_eventsub::events::ChannelRaid),
+    ChannelBan(crate::platforms::twitch_eventsub::events::ChannelBan),
+    ChannelUnban(crate::platforms::twitch_eventsub::events::ChannelUnban),
+    ChannelUnbanRequestCreate(crate::platforms::twitch_eventsub::events::ChannelUnbanRequestCreate),
+    ChannelUnbanRequestResolve(crate::platforms::twitch_eventsub::events::ChannelUnbanRequestResolve),
+    ChannelHypeTrainBegin(crate::platforms::twitch_eventsub::events::ChannelHypeTrainBegin),
+    ChannelHypeTrainProgress(crate::platforms::twitch_eventsub::events::ChannelHypeTrainProgress),
+    ChannelHypeTrainEnd(crate::platforms::twitch_eventsub::events::ChannelHypeTrainEnd),
+    ChannelShoutoutCreate(crate::platforms::twitch_eventsub::events::ChannelShoutoutCreate),
+    ChannelShoutoutReceive(crate::platforms::twitch_eventsub::events::ChannelShoutoutReceive),
 }
 
 /// Each subscriber gets its own `mpsc::Sender<BotEvent>` for guaranteed delivery.

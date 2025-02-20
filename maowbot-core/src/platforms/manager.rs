@@ -407,42 +407,38 @@ impl PlatformManager {
         &self,
         credential: PlatformCredential
     ) -> Result<PlatformRuntimeHandle, Error> {
-        let message_svc = Arc::clone(&self.message_svc);
-        let user_svc = Arc::clone(&self.user_svc);
-
         let platform_str = "twitch-eventsub".to_string();
-        let plat = platform_str.clone();
         let user_id_str = credential.user_id.to_string();
-        let user_id_str_clone = user_id_str.clone();
+        let user_id_str_for_closure = user_id_str.clone();
+        let event_bus = self.event_bus.clone();
 
         let join_handle = tokio::spawn(async move {
-            // Create a new instance of our EventSub stub.
             let mut eventsub = TwitchEventSubPlatform::new();
             eventsub.credentials = Some(credential.clone());
 
-            // Attempt to connect.
+            // Attach the event bus so it can publish BotEvent::TwitchEventSub events.
+            eventsub.set_event_bus(event_bus);
+
+            // Connect, which spawns the tungstenite read-loop internally.
             if let Err(err) = eventsub.connect().await {
                 error!("[TwitchEventSub] connect error: {:?}", err);
                 return;
             }
-            info!("[TwitchEventSub] Connected for user_id={}", user_id_str_clone);
+            info!("[TwitchEventSub] connect() done for user_id={}", user_id_str_for_closure);
 
-            // Main loop: poll for incoming EventSub events (stubbed for now)
-            while let Some(evt) = eventsub.next_message_event().await {
-                // In a full implementation you might forward this event
-                // to your message service or event bus.
-                info!("[TwitchEventSub] Received event: {:?}", evt);
-            }
-            info!("[TwitchEventSub] Task ended for user_id={}", user_id_str_clone);
+            // No more while-let loop here, because connect() runs the background loop.
+            // We could optionally wait on a shutdown signal or just let this task idle.
+            info!("[TwitchEventSub] Task ended for user_id={}", user_id_str_for_closure);
         });
 
         Ok(PlatformRuntimeHandle {
             join_handle,
-            platform: plat,
+            platform: "twitch-eventsub".to_owned(),
             user_id: user_id_str,
             twitch_irc_instance: None,
         })
     }
+
 
     // -------------------------------------------------------------
     // Implementation for the TTV subcommands against Twitch IRC

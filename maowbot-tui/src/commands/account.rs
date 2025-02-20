@@ -224,10 +224,11 @@ async fn do_oauth_like_flow(
 }
 
 /// Re‐use Helix credential to create an eventsub credential for the same user.
-async fn reuse_twitch_helix_for_eventsub(
+pub async fn reuse_twitch_helix_for_eventsub(
     user_id: Uuid,
     bot_api: &Arc<dyn BotApi>,
 ) -> Result<(), Error> {
+    // 1) find the Helix credential for this user
     let all_twitch_creds = bot_api.list_credentials(Some(Platform::Twitch)).await?;
     let helix_cred_opt = all_twitch_creds.into_iter().find(|c| c.user_id == user_id);
     let helix_cred = match helix_cred_opt {
@@ -239,13 +240,30 @@ async fn reuse_twitch_helix_for_eventsub(
         }
     };
 
+    // 2) clone it as a new credential for eventsub
     let mut new_cred = helix_cred.clone();
     new_cred.platform = Platform::TwitchEventSub;
     new_cred.credential_id = Uuid::new_v4();
-    new_cred.created_at = Utc::now();
-    new_cred.updated_at = Utc::now();
-    new_cred.additional_data = Some(serde_json::json!({"note": "EventSub re-uses Helix"}));
+    new_cred.created_at = chrono::Utc::now();
+    new_cred.updated_at = chrono::Utc::now();
 
+    // Instead of overwriting the additional_data, let's merge in a "note"
+    let merged_data = if let Some(old_data) = &new_cred.additional_data {
+        // Convert old_data to a mutable map if possible
+        if let Some(mut map) = old_data.as_object().cloned() {
+            map.insert("note".to_string(), serde_json::Value::String("EventSub re-uses Helix".into()));
+            serde_json::Value::Object(map)
+        } else {
+            // If not an object, just store a new one
+            serde_json::json!({ "note":"EventSub re-uses Helix" })
+        }
+    } else {
+        // If no old data, create a fresh object
+        serde_json::json!({ "note":"EventSub re-uses Helix" })
+    };
+    new_cred.additional_data = Some(merged_data);
+
+    // 3) store it
     bot_api.store_credential(new_cred).await?;
     Ok(())
 }

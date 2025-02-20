@@ -124,7 +124,7 @@ impl PluginManager {
                                 BotEvent::SystemMessage(msg) => {
                                     info!("(EventBus) SystemMessage => {}", msg);
                                 }
-                            },
+                            _ => {}},
                             None => {
                                 info!("PluginManager unsubscribed (channel closed).");
                                 break;
