@@ -6,7 +6,13 @@ use tokio::sync::mpsc::{UnboundedSender, UnboundedReceiver};
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use tokio::time::sleep;
-use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
+
+use tokio_tungstenite::tungstenite::{
+    protocol::Message as WsMessage,
+    handshake::client::generate_key,
+    http::{Request, Uri, header}
+};
+use tokio_tungstenite::{connect_async_tls_with_config, Connector};
 
 use crate::Error;
 use crate::models::PlatformCredential;
@@ -14,7 +20,6 @@ use crate::platforms::{ConnectionStatus, PlatformAuth, PlatformIntegration};
 
 /// This is a simplified VRChat event for demonstration,
 /// just capturing (user_id, display_name, text).
-/// In real code, you might parse out the JSON event types more precisely.
 #[derive(Debug, Clone)]
 pub struct VRChatMessageEvent {
     pub vrchat_display_name: String,
@@ -24,8 +29,6 @@ pub struct VRChatMessageEvent {
 
 /// VRChatPlatform holds the user’s VRChat credential and a background
 /// task reading from the pipeline websocket.
-/// We’ll publish parsed events into `incoming` so
-/// the TUI or an event-bus-based consumer can handle them.
 pub struct VRChatPlatform {
     pub(crate) credentials: Option<PlatformCredential>,
     pub(crate) connection_status: ConnectionStatus,
@@ -56,81 +59,87 @@ impl VRChatPlatform {
         }
     }
 
-    /// The wss endpoint for VRChat user events is typically:
-    /// `wss://pipeline.vrchat.cloud/?authToken=<tokenOrCookie>`,
-    /// though you might see variations in VRChat docs.
-    /// We’ll attempt to parse the “auth=xxx” from `primary_token`
-    /// and attach it as the `authToken` parameter.
-    async fn start_websocket_task(
-        &mut self,
-        primary_token: String,
-    ) -> Result<(), Error> {
-        // Example: primary_token = "auth=XXXXXXXXXXXXXXXXXXXXX"
-        // We only need the raw portion after `auth=`
-        let raw_cookie_val = primary_token.strip_prefix("auth=").unwrap_or("");
-        if raw_cookie_val.is_empty() {
-            return Err(Error::Auth("Missing VRChat 'auth=' token".into()));
-        }
-        // Build the pipeline WebSocket URL
-        let ws_url = format!("wss://pipeline.vrchat.cloud/?authToken={}", raw_cookie_val);
+    /// Connects to wss://pipeline.vrchat.cloud/?authToken=XXXX using
+    /// the same handshake approach as your old working code.
+    async fn start_websocket_task(&mut self, auth_cookie: &str) -> Result<(), Error> {
+        // 1) Extract just the token after "auth="
+        let raw_token = match parse_auth_cookie(auth_cookie) {
+            Some(t) => t,
+            None => {
+                return Err(Error::Auth(
+                    "Could not find 'auth=' in VRChat cookie".into(),
+                ));
+            }
+        };
 
+        // 2) Build the wss:// URL with ?authToken=...
+        let ws_url = format!("wss://pipeline.vrchat.cloud/?authToken={}", raw_token);
+
+        // 3) Construct an explicit handshake request with the same headers
+        let uri: Uri = ws_url.parse().map_err(|e| {
+            Error::Platform(format!("Invalid VRChat WebSocket URL: {e}"))
+        })?;
+        let key = generate_key();
+        let request = Request::builder()
+            .method("GET")
+            .uri(uri)
+            .header(header::HOST, "pipeline.vrchat.cloud")
+            .header(header::ORIGIN, "https://vrchat.com")
+            .header(header::USER_AGENT, "MaowBot/1.0 cat@kittyn.cat")
+            .header(header::CONNECTION, "Upgrade")
+            .header(header::UPGRADE, "websocket")
+            .header(header::SEC_WEBSOCKET_VERSION, "13")
+            .header(header::SEC_WEBSOCKET_KEY, key)
+            .body(())
+            .map_err(|e| Error::Platform(format!("Failed to build request: {e}")))?;
+
+        // 4) Connect with TLS config
+        let tls_connector = native_tls::TlsConnector::new()
+            .map_err(|e| Error::Platform(format!("TlsConnector::new => {e}")))?;
+        let connector = Connector::NativeTls(tls_connector);
+
+        let (ws_stream, _response) = connect_async_tls_with_config(
+            request,
+            None,
+            false,
+            Some(connector)
+        )
+            .await
+            .map_err(|e| Error::Platform(format!("VRChat WebSocket connect failed: {e}")))?;
+
+        // 5) Split into read/write
+        let (mut _write_half, mut read_half) = ws_stream.split();
+
+        // 6) Create the local channel for VRChatMessageEvent
         let (tx_evt, rx_evt) = mpsc::unbounded_channel::<VRChatMessageEvent>();
-        self.tx_incoming = Some(tx_evt);
+        self.tx_incoming = Some(tx_evt.clone());
         self.incoming = Some(rx_evt);
 
-        // Connect the websocket
-        let (ws_stream, _response) = connect_async(&ws_url).await.map_err(|e| {
-            Error::Platform(format!("VRChat WebSocket connect failed: {e}"))
-        })?;
-
-        let (mut write_half, mut read_half) = ws_stream.split();
-
-        // We don’t typically *send* messages to VRChat pipeline
-        // (it’s one-way), but you could keep `write_half` around if needed.
-
-        // Spawn a read task
-        let tx_for_task = self.tx_incoming.clone().unwrap();
+        // 7) Spawn a read task that processes messages
         let handle = tokio::spawn(async move {
             tracing::info!("[VRChat] WebSocket read task started.");
 
-            loop {
-                select! {
-                    msg_opt = read_half.next() => {
-                        match msg_opt {
-                            Some(Ok(msg)) => {
-                                if let Message::Text(txt) = msg {
-                                    let parsed_opt = parse_vrchat_json_event(&txt);
-                                    if let Some(evt) = parsed_opt {
-                                        let _ = tx_for_task.send(evt);
-                                    } else {
-                                        tracing::debug!("(VRChat) unhandled JSON: {}", txt);
-                                    }
-                                }
-                                else if let Message::Binary(bin) = msg {
-                                    tracing::debug!("(VRChat) got binary message: len={}", bin.len());
-                                }
-                                else if let Message::Close(_frame) = msg {
-                                    tracing::info!("(VRChat) WebSocket closed by server.");
-                                    break;
-                                }
-                                else {
-                                    // ping/pong or others
-                                    // do nothing
-                                }
-                            },
-                            Some(Err(e)) => {
-                                tracing::warn!("(VRChat) websocket error => {}", e);
-                                break;
-                            },
-                            None => {
-                                // EOF
-                                break;
-                            }
+            while let Some(incoming) = read_half.next().await {
+                match incoming {
+                    Ok(WsMessage::Text(txt)) => {
+                        if let Some(evt) = parse_vrchat_json_event(&txt) {
+                            let _ = tx_evt.send(evt);
+                        } else {
+                            tracing::debug!("(VRChat) unhandled JSON: {}", txt);
                         }
                     }
-                    // We can also watch for shutdown or other signals here
-                    else => {
-                        tracing::warn!("(VRChat) read task => no more events?");
+                    Ok(WsMessage::Binary(bin)) => {
+                        tracing::debug!("(VRChat) got binary message: len={}", bin.len());
+                    }
+                    Ok(WsMessage::Close(frame)) => {
+                        tracing::info!("(VRChat) WebSocket closed by server: {:?}", frame);
+                        break;
+                    }
+                    Ok(_) => {
+                        // ping/pong or other
+                    }
+                    Err(e) => {
+                        tracing::warn!("(VRChat) WebSocket error => {}", e);
                         break;
                     }
                 }
@@ -144,10 +153,66 @@ impl VRChatPlatform {
     }
 }
 
-/// A minimal parse that tries to see if it's a user-update or user-location
-/// or similar. Then we produce a VRChatMessageEvent for the TUI.
+#[async_trait]
+impl PlatformAuth for VRChatPlatform {
+    async fn authenticate(&mut self) -> Result<(), Error> {
+        Ok(())
+    }
+
+    async fn refresh_auth(&mut self) -> Result<(), Error> {
+        Err(Error::Auth(
+            "VRChat does not support refresh flow.".into(),
+        ))
+    }
+
+    async fn revoke_auth(&mut self) -> Result<(), Error> {
+        self.credentials = None;
+        Ok(())
+    }
+
+    async fn is_authenticated(&self) -> Result<bool, Error> {
+        Ok(self.credentials.is_some())
+    }
+}
+
+#[async_trait]
+impl PlatformIntegration for VRChatPlatform {
+    async fn connect(&mut self) -> Result<(), Error> {
+        if self.connection_status == ConnectionStatus::Connected {
+            return Ok(()); // already connected
+        }
+        let cred = self
+            .credentials
+            .as_ref()
+            .ok_or_else(|| Error::Platform("VRChat: No credentials set".into()))?;
+
+        let cookie_str = cred.primary_token.clone(); // something like "auth=XYZ; path=/; etc..."
+        self.start_websocket_task(&cookie_str).await?;
+
+        self.connection_status = ConnectionStatus::Connected;
+        Ok(())
+    }
+
+    async fn disconnect(&mut self) -> Result<(), Error> {
+        self.connection_status = ConnectionStatus::Disconnected;
+        if let Some(handle) = self.read_task.take() {
+            handle.abort();
+        }
+        Ok(())
+    }
+
+    async fn send_message(&self, _channel: &str, _message: &str) -> Result<(), Error> {
+        // VRChat pipeline is primarily one-way, no direct text chat sending.
+        Ok(())
+    }
+
+    async fn get_connection_status(&self) -> Result<crate::platforms::ConnectionStatus, Error> {
+        Ok(self.connection_status.clone())
+    }
+}
+
+/// Minimal JSON parse that tries to see if it's "user-update" or "user-location"
 fn parse_vrchat_json_event(raw_json: &str) -> Option<VRChatMessageEvent> {
-    // For example, if we see a "type": "user-update", we can decode displayName, etc.
     let json_val: serde_json::Value = match serde_json::from_str(raw_json) {
         Ok(v) => v,
         Err(_) => return None,
@@ -182,67 +247,22 @@ fn parse_vrchat_json_event(raw_json: &str) -> Option<VRChatMessageEvent> {
                 text,
             })
         }
-        // ... handle other event types as needed ...
+        // ... more types ...
         _ => None,
     }
 }
 
-#[async_trait]
-impl PlatformAuth for VRChatPlatform {
-    async fn authenticate(&mut self) -> Result<(), Error> {
-        // typically no-op; see VRChatAuthenticator for the real logic
-        Ok(())
-    }
-
-    async fn refresh_auth(&mut self) -> Result<(), Error> {
-        Err(Error::Auth("VRChat does not support refresh flow.".into()))
-    }
-
-    async fn revoke_auth(&mut self) -> Result<(), Error> {
-        self.credentials = None;
-        Ok(())
-    }
-
-    async fn is_authenticated(&self) -> Result<bool, Error> {
-        Ok(self.credentials.is_some())
-    }
-}
-
-#[async_trait]
-impl PlatformIntegration for VRChatPlatform {
-    async fn connect(&mut self) -> Result<(), Error> {
-        if self.connection_status == ConnectionStatus::Connected {
-            return Ok(()); // already connected
-        }
-        let cred = self
-            .credentials
-            .as_ref()
-            .ok_or_else(|| Error::Platform("VRChat: No credentials set".into()))?;
-        let token = cred.primary_token.clone(); // "auth=XXXX"
-
-        // Start the WS read loop
-        self.start_websocket_task(token).await?;
-
-        self.connection_status = ConnectionStatus::Connected;
-        Ok(())
-    }
-
-    async fn disconnect(&mut self) -> Result<(), Error> {
-        self.connection_status = ConnectionStatus::Disconnected;
-        if let Some(handle) = self.read_task.take() {
-            handle.abort();
-        }
-        Ok(())
-    }
-
-    async fn send_message(&self, _channel: &str, _message: &str) -> Result<(), Error> {
-        // VRChat pipeline is primarily one-way, no direct text chat sending.
-        // If you needed to do invites or instance transitions, you'd call the
-        // VRChat REST endpoints. This is a stub.
-        Ok(())
-    }
-
-    async fn get_connection_status(&self) -> Result<crate::platforms::ConnectionStatus, Error> {
-        Ok(self.connection_status.clone())
-    }
+/// Splits out the "auth=" portion from a cookie string like
+/// `"auth=ABCDEF; Path=/; HttpOnly; ..."`
+fn parse_auth_cookie(cookie_str: &str) -> Option<String> {
+    cookie_str
+        .split(';')
+        .find_map(|piece| {
+            let trimmed = piece.trim();
+            if trimmed.starts_with("auth=") {
+                Some(trimmed.trim_start_matches("auth=").to_string())
+            } else {
+                None
+            }
+        })
 }
