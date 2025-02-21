@@ -12,9 +12,9 @@ use crate::plugins::plugin_connection::PluginConnection;
 use crate::plugins::types::PluginType;
 use crate::Error;
 use crate::eventbus::{BotEvent, EventBus};
-use crate::plugins::bot_api::{BotApi, StatusData, PlatformConfigData, AccountStatus};
+use crate::plugins::bot_api::{BotApi, StatusData, PlatformConfigData, AccountStatus, VRChatWorldBasic, VRChatAvatarBasic};
 use crate::models::{Platform, PlatformCredential, User};
-
+use crate::platforms::vrchat::client::VRChatClient;
 use crate::repositories::postgres::bot_config::BotConfigRepository;
 use crate::repositories::postgres::credentials::CredentialsRepository;
 use crate::repositories::postgres::platform_config::PlatformConfigRepository;
@@ -411,5 +411,74 @@ impl BotApi for PluginManager {
         } else {
             Err(Error::Auth("No auth manager set in plugin manager".into()))
         }
+    }
+
+    async fn vrchat_get_current_world(&self, account_name: &str) -> Result<VRChatWorldBasic, Error> {
+        // 1) get VRChat runtime
+        let vrc_arc = self.platform_manager.get_vrchat_instance(account_name).await?;
+        let vrc_locked = vrc_arc.lock().await;
+
+        // 2) Get credential from VRChatPlatform
+        let cred = match &vrc_locked.credentials {
+            Some(c) => c.clone(),
+            None => return Err(Error::Platform("No VRChat credentials set".into())),
+        };
+
+        // 3) Create VRChatClient
+        let client = VRChatClient::new(&cred.primary_token)?;
+
+        // 4) fetch current user => current_world
+        let user_json = client.fetch_current_user().await?;
+        let world_id = match user_json.current_world {
+            Some(w) => w,
+            None => return Err(Error::Platform("User is not in any world (or data missing)".into())),
+        };
+
+        // 5) fetch that world’s details
+        let winfo = client.fetch_world_info(&world_id).await?;
+        Ok(VRChatWorldBasic {
+            name: winfo.name,
+            author_name: winfo.author_name,
+            updated_at: winfo.updated_at.to_rfc3339(),
+            created_at: winfo.created_at.to_rfc3339(),
+            capacity: winfo.capacity,
+        })
+    }
+
+    async fn vrchat_get_current_avatar(&self, account_name: &str) -> Result<VRChatAvatarBasic, Error> {
+        let vrc_arc = self.platform_manager.get_vrchat_instance(account_name).await?;
+        let vrc_locked = vrc_arc.lock().await;
+
+        let cred = match &vrc_locked.credentials {
+            Some(c) => c.clone(),
+            None => return Err(Error::Platform("No VRChat credentials".into())),
+        };
+
+        let client = VRChatClient::new(&cred.primary_token)?;
+        let user_json = client.fetch_current_user().await?;
+        let avatar_id = user_json.current_avatar;
+        if avatar_id.is_empty() {
+            return Err(Error::Platform("No current_avatar found for user".into()));
+        }
+
+        let ainfo = client.fetch_avatar_info(&avatar_id).await?;
+        Ok(VRChatAvatarBasic {
+            avatar_id: ainfo.avatar_id,
+            avatar_name: ainfo.name,
+        })
+    }
+
+    async fn vrchat_change_avatar(&self, account_name: &str, new_avatar_id: &str) -> Result<(), Error> {
+        let vrc_arc = self.platform_manager.get_vrchat_instance(account_name).await?;
+        let vrc_locked = vrc_arc.lock().await;
+
+        let cred = match &vrc_locked.credentials {
+            Some(c) => c.clone(),
+            None => return Err(Error::Platform("No VRChat credentials".into())),
+        };
+
+        let client = VRChatClient::new(&cred.primary_token)?;
+        client.select_avatar(new_avatar_id).await?;
+        Ok(())
     }
 }

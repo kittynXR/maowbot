@@ -12,6 +12,7 @@ mod platform;
 mod plugin;
 mod ttv;
 mod user;
+mod vrchat;
 
 /// Asynchronous command dispatcher. Returns (quit_requested, optional_output_message).
 pub async fn dispatch_async(
@@ -30,6 +31,11 @@ pub async fn dispatch_async(
         "help" => {
             let subcmd = args.get(0).map(|s| *s).unwrap_or("");
             let msg = help::show_command_help(subcmd);
+            (false, Some(msg))
+        }
+
+        "vrchat" => {
+            let msg = vrchat::handle_vrchat_command(args, bot_api).await;
             (false, Some(msg))
         }
 

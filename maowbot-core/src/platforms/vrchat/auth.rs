@@ -279,7 +279,7 @@ impl PlatformAuthenticator for VRChatAuthenticator {
 }
 
 /// Helper to parse the `"auth=..."` cookie from the "Set-Cookie" headers
-fn parse_auth_cookie_from_headers(
+pub(crate) fn parse_auth_cookie_from_headers(
     set_cookie_headers: reqwest::header::GetAll<reqwest::header::HeaderValue>
 ) -> Result<String, Error> {
     for value in set_cookie_headers {

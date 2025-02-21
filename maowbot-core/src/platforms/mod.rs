@@ -53,5 +53,5 @@ pub mod twitch_helix;
 pub mod discord;
 pub mod vrchat;
 pub mod manager;
-pub(crate) mod twitch_irc;
+pub mod twitch_irc;
 pub mod twitch_eventsub;

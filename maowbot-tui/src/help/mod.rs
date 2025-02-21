@@ -9,6 +9,7 @@ pub mod help_user;
 
 // NEW: import our new TTV help
 pub mod help_ttv;
+mod help_vrchat;
 
 fn show_general_help() -> String {
     let text = r#"MaowBot TUI - Available Commands:

@@ -37,6 +37,21 @@ pub struct PlatformConfigData {
     pub client_secret: Option<String>,
 }
 
+#[derive(Debug)]
+pub struct VRChatWorldBasic {
+    pub name: String,
+    pub author_name: String,
+    pub updated_at: String,
+    pub created_at: String,
+    pub capacity: u32,
+}
+
+#[derive(Debug)]
+pub struct VRChatAvatarBasic {
+    pub avatar_id: String,
+    pub avatar_name: String,
+}
+
 #[async_trait]
 pub trait BotApi: Send + Sync {
     async fn list_plugins(&self) -> Vec<String>;
@@ -143,4 +158,7 @@ pub trait BotApi: Send + Sync {
     async fn part_twitch_irc_channel(&self, account_name: &str, channel: &str) -> Result<(), Error>;
     async fn send_twitch_irc_message(&self, account_name: &str, channel: &str, text: &str) -> Result<(), Error>;
     async fn store_credential(&self, cred: PlatformCredential) -> Result<(), Error>;
+    async fn vrchat_get_current_world(&self, account_name: &str) -> Result<VRChatWorldBasic, Error>;
+    async fn vrchat_get_current_avatar(&self, account_name: &str) -> Result<VRChatAvatarBasic, Error>;
+    async fn vrchat_change_avatar(&self, account_name: &str, new_avatar_id: &str) -> Result<(), Error>;
 }
