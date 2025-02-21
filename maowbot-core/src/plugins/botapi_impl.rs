@@ -226,6 +226,20 @@ impl BotApi for PluginManager {
             .await
     }
 
+    async fn complete_auth_flow_for_user_2fa(
+        &self,
+        platform: Platform,
+        code: String,
+        user_id: Uuid
+    ) -> Result<PlatformCredential, Error> {
+        if let Some(am) = &self.auth_manager {
+            let mut lock = am.lock().await;
+            lock.complete_auth_flow_for_user_twofactor(platform, code, &user_id).await
+        } else {
+            Err(Error::Auth("No auth manager set".into()))
+        }
+    }
+
     async fn revoke_credentials(
         &self,
         platform: Platform,

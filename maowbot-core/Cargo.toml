@@ -9,6 +9,7 @@ edition.workspace = true
 maowbot-proto = { path = "../maowbot-proto" }
 
 twitch_api = {  workspace = true }
+vrchatapi = { version = "^1.19" }
 
 sqlx = { workspace = true }
 

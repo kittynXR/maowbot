@@ -29,7 +29,11 @@ pub async fn handle_platform_command(args: &[&str], bot_api: &Arc<dyn BotApi>) -
             }
         }
         "list" => {
-            let maybe_platform = if args.len() > 1 { Some(args[1]) } else { None };
+            let maybe_platform = if args.len() > 1 {
+                Some(args[1])
+            } else {
+                None
+            };
             let configs = bot_api.list_platform_configs(maybe_platform).await;
             match configs {
                 Ok(list) => {
@@ -67,14 +71,29 @@ pub async fn handle_platform_command(args: &[&str], bot_api: &Arc<dyn BotApi>) -
 
 async fn handle_platform_add(plat: Platform, bot_api: &Arc<dyn BotApi>) -> String {
     let platform_str = plat.to_string();
+
+    // If VRChat, we just set the default API key and skip all user input:
+    if plat == Platform::VRChat {
+        // Insert VRChat default API key: "JlE5Jldo5Jibnk5O5hTx6XVqsJu4WJ26"
+        let vrchat_default_key = "JlE5Jldo5Jibnk5O5hTx6XVqsJu4WJ26".to_string();
+        let res = bot_api
+            .create_platform_config(plat.clone(), vrchat_default_key, None)
+            .await;
+        return match res {
+            Ok(_) => format!("VRChat platform config upserted with default API key."),
+            Err(e) => format!("Error storing VRChat config => {e}"),
+        };
+    }
+
+    // For other platforms, continue the usual flow:
     println!("You are adding/updating the platform config for '{}'.", platform_str);
 
     let also_add_irc_and_eventsub = matches!(plat, Platform::Twitch);
 
     let dev_console_url = match platform_str.as_str() {
-        "twitch"      => Some("https://dev.twitch.tv/console"),
-        "discord"     => Some("https://discord.com/developers/applications"),
-        "vrchat"      => Some("https://dashboard.vrchat.com/"),
+        "twitch" => Some("https://dev.twitch.tv/console"),
+        "discord" => Some("https://discord.com/developers/applications"),
+        "vrchat" => Some("https://dashboard.vrchat.com/"), // not used if we matched above
         _ => None,
     };
     if let Some(url) = dev_console_url {
@@ -104,34 +123,36 @@ async fn handle_platform_add(plat: Platform, bot_api: &Arc<dyn BotApi>) -> Strin
     let secret_opt = if client_secret.is_empty() { None } else { Some(client_secret) };
 
     if let Err(e) = bot_api.create_platform_config(plat.clone(), client_id.clone(), secret_opt.clone()).await {
-        return format!("Error storing config for '{}': {:?}", platform_str, e);
+        return format!("Error storing config for '{platform_str}': {e}");
     }
 
     if also_add_irc_and_eventsub {
+        // insert twitch-irc
         let _ = bot_api
             .create_platform_config(Platform::TwitchIRC, client_id.clone(), secret_opt.clone())
             .await
-            .map_err(|e| println!("(Warning) could not create 'twitch-irc': {:?}", e));
+            .map_err(|e| println!("(Warning) could not create 'twitch-irc': {e}"));
 
+        // insert twitch-eventsub
         let _ = bot_api
             .create_platform_config(Platform::TwitchEventSub, client_id.clone(), secret_opt.clone())
             .await
-            .map_err(|e| println!("(Warning) could not create 'twitch-eventsub': {:?}", e));
+            .map_err(|e| println!("(Warning) could not create 'twitch-eventsub': {e}"));
     }
 
-    format!("Platform config upserted for '{}'.", platform_str)
+    format!("Platform config upserted for '{platform_str}'.")
 }
 
 async fn handle_platform_remove(plat: Platform, bot_api: &Arc<dyn BotApi>) -> String {
     let platform_str = plat.to_string();
-    println!("Removing platform config(s) for '{}'.", platform_str);
+    println!("Removing platform config(s) for '{platform_str}'.");
 
     let also_remove_irc_and_eventsub = matches!(plat, Platform::Twitch);
 
     let list = match bot_api.list_platform_configs(None).await {
         Ok(lst) => lst,
         Err(e) => {
-            return format!("Error listing platform configs => {:?}", e);
+            return format!("Error listing platform configs => {e}");
         }
     };
     if list.is_empty() {
@@ -150,7 +171,7 @@ async fn handle_platform_remove(plat: Platform, bot_api: &Arc<dyn BotApi>) -> St
 
     match remove_main {
         Some(msg) => msg,
-        None => format!("No platform config found for '{}'.", platform_str),
+        None => format!("No platform config found for '{platform_str}'."),
     }
 }
 
@@ -167,20 +188,19 @@ async fn remove_platform_config_by_name(
         return None;
     }
 
-    // **Check if there are any credentials for this platform**:
+    // Check for existing credentials
     let maybe_plat = Platform::from_str(target_platform_str).ok();
     if let Some(plat) = maybe_plat {
         let creds = match bot_api.list_credentials(Some(plat.clone())).await {
             Ok(c) => c,
             Err(e) => {
-                return Some(format!("Error checking credentials => {:?}", e));
+                return Some(format!("Error checking credentials => {e}"));
             }
         };
         if !creds.is_empty() {
             let mut msg = String::new();
             msg.push_str(&format!(
-                "Cannot remove '{}' because these accounts still exist:\n",
-                target_platform_str
+                "Cannot remove '{target_platform_str}' because these accounts still exist:\n"
             ));
             for c in creds {
                 let name = match bot_api.get_user(c.user_id).await {
@@ -188,8 +208,8 @@ async fn remove_platform_config_by_name(
                     _ => c.user_id.to_string(),
                 };
                 msg.push_str(&format!(
-                    " - user='{}' platform={:?} credential_id={}\n",
-                    name, c.platform, c.credential_id
+                    " - user='{name}' platform={:?} credential_id={}\n",
+                    c.platform, c.credential_id
                 ));
             }
             msg.push_str("All accounts must be removed before the platform can be deleted.\n");
@@ -197,7 +217,7 @@ async fn remove_platform_config_by_name(
         }
     }
 
-    println!("\nExisting config(s) for '{}':", target_platform_str);
+    println!("\nExisting config(s) for '{target_platform_str}':");
     for pc in matching.iter() {
         println!(
             " - id={} platform={} client_id={}",
@@ -214,12 +234,12 @@ async fn remove_platform_config_by_name(
     let _ = stdin().read_line(&mut line);
     let chosen_id = line.trim().to_string();
     if chosen_id.is_empty() {
-        return Some(format!("Skipped removal for '{}'.", target_platform_str));
+        return Some(format!("Skipped removal for '{target_platform_str}'."));
     }
 
     match bot_api.remove_platform_config(&chosen_id).await {
-        Ok(_) => Some(format!("Removed platform config with id={}.", chosen_id)),
-        Err(e) => Some(format!("Error removing => {:?}", e)),
+        Ok(_) => Some(format!("Removed platform config with id={chosen_id}.")),
+        Err(e) => Some(format!("Error removing => {e}")),
     }
 }
 
@@ -227,10 +247,10 @@ async fn platform_show(plat: Platform, bot_api: &Arc<dyn BotApi>) -> String {
     let platform_str = plat.to_string();
     let confs = match bot_api.list_platform_configs(Some(&platform_str)).await {
         Ok(list) => list,
-        Err(e) => return format!("Error => {:?}", e),
+        Err(e) => return format!("Error => {e}"),
     };
     if confs.is_empty() {
-        return format!("No platform config found for '{}'.", platform_str);
+        return format!("No platform config found for '{platform_str}'.");
     }
     let pc = &confs[0];
     let mut out = String::new();

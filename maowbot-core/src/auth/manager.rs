@@ -172,6 +172,26 @@ impl AuthManager {
         Ok(cred)
     }
 
+    pub async fn complete_auth_flow_for_user_twofactor(
+        &mut self,
+        platform: Platform,
+        code: String,
+        user_id: &Uuid
+    ) -> Result<PlatformCredential, Error> {
+        let Some(auth) = self.authenticators.get_mut(&platform) else {
+            return Err(Error::Platform(format!("No authenticator for {platform:?}")));
+        };
+
+        // We build a PlatformCredential by passing TwoFactor(...)
+        let mut cred = auth
+            .complete_authentication(AuthenticationResponse::TwoFactor(code))
+            .await?;
+
+        cred.user_id = *user_id;
+        self.credentials_repo.store_credentials(&cred).await?;
+        Ok(cred)
+    }
+
     // --------------------------
     // Revoke / Refresh
     // --------------------------

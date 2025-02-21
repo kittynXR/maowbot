@@ -13,7 +13,7 @@ use maowbot_core::Error;
 /// Handle "account <add|remove|list|show|refresh>" commands asynchronously.
 pub async fn handle_account_command(args: &[&str], bot_api: &Arc<dyn BotApi>) -> String {
     if args.is_empty() {
-        return "Usage: account <add|remove|list|show|refresh> [platform] [username|UUID]".to_string();
+        return "Usage: account <add|remove|list|show|refresh> [platform] [usernameOrUUID]".to_string();
     }
 
     match args[0] {
@@ -42,7 +42,11 @@ pub async fn handle_account_command(args: &[&str], bot_api: &Arc<dyn BotApi>) ->
         "list" => {
             // optional filter: "account list <platform>"
             let maybe_platform = if args.len() > 1 {
-                Platform::from_str(args[1]).ok()
+                if args[1].eq_ignore_ascii_case("list") {
+                    None
+                } else {
+                    Platform::from_str(args[1]).ok()
+                }
             } else {
                 None
             };
@@ -70,7 +74,7 @@ pub async fn handle_account_command(args: &[&str], bot_api: &Arc<dyn BotApi>) ->
                 Err(_) => format!("Unknown platform '{}'", platform_str),
             }
         }
-        _ => "Usage: account <add|remove|list|show|refresh> [platform] [username|UUID]".to_string(),
+        _ => "Usage: account <add|remove|list|show|refresh> [platform] [usernameOrUUID]".to_string(),
     }
 }
 
@@ -83,8 +87,8 @@ async fn account_add_flow(platform: Platform, typed_name: &str, bot_api: &Arc<dy
     let _ = stdin().read_line(&mut line);
     let is_bot = line.trim().eq_ignore_ascii_case("y");
 
+    // Attempt to get a final "global_username" for this user:
     let final_username: String;
-
     if is_bot {
         println!("Use '{}' for the user’s global_username? (y/n):", typed_name);
         print!("> ");
@@ -121,10 +125,21 @@ async fn account_add_flow(platform: Platform, typed_name: &str, bot_api: &Arc<dy
         user.global_username.as_deref().unwrap_or("(none)")
     );
 
-    // Step B: Begin the auth flow
+    // Special VRChat flow if needed:
+    if platform == Platform::VRChat {
+        return vrchat_add_flow(platform, user.user_id, is_bot, bot_api).await;
+    }
+
+    // If it's Discord + bot, we might want to do a specialized "bot_token" approach:
+    if platform == Platform::Discord && is_bot {
+        // We'll do a local "MultipleKeys" with the "bot_token", then call /users/@me, etc.
+        return discord_bot_add_flow(platform, user.user_id, bot_api).await;
+    }
+
+    // Otherwise, do the standard “OAuth-like” approach:
     let main_result = do_oauth_like_flow(platform.clone(), user.user_id, is_bot, bot_api).await;
     if let Err(e) = main_result {
-        return format!("Error creating credential for {:?} => {:?}", platform, e);
+        return format!("Error creating credential for {platform:?} => {e}");
     }
 
     // If "twitch" + non-bot => also create twitch-irc and eventsub
@@ -134,20 +149,155 @@ async fn account_add_flow(platform: Platform, typed_name: &str, bot_api: &Arc<dy
         // twitch-irc
         match do_oauth_like_flow(Platform::TwitchIRC, user.user_id, false, bot_api).await {
             Ok(_) => println!("Successfully created twitch-irc credentials.\n"),
-            Err(e) => println!("(Warning) Could not create twitch-irc => {:?}", e),
+            Err(e) => println!("(Warning) Could not create twitch-irc => {e}"),
         }
 
         // re-use helix tokens for eventsub
         match reuse_twitch_helix_for_eventsub(user.user_id, bot_api).await {
             Ok(_) => println!("Successfully created twitch-eventsub credentials.\n"),
-            Err(e) => println!("(Warning) Could not create twitch-eventsub => {:?}", e),
+            Err(e) => println!("(Warning) Could not create twitch-eventsub => {e}"),
         }
     }
 
     format!("Success! Created credential(s) for user_id={}", user.user_id)
 }
 
-/// Standard OAuth-like path for the named platform
+/// Specialized flow for VRChat:
+/// 1) begin_auth_flow => multiple keys for user/pass
+/// 2) Possibly 2FA => prompt user
+async fn vrchat_add_flow(
+    platform: Platform,
+    user_id: Uuid,
+    is_bot: bool,
+    bot_api: &Arc<dyn BotApi>,
+) -> String {
+    let initial_prompt = match bot_api.begin_auth_flow(platform.clone(), is_bot).await {
+        Ok(pr) => pr,
+        Err(e) => return format!("Error beginning VRChat auth: {e}"),
+    };
+
+    if !initial_prompt.contains("Multiple keys") {
+        return format!("Unexpected VRChat flow prompt => {initial_prompt}");
+    }
+
+    // Step 1: ask for username/password:
+    print!("Enter your VRChat username: ");
+    let _ = stdout().flush();
+    let mut lineu = String::new();
+    let _ = stdin().read_line(&mut lineu);
+
+    print!("Enter your VRChat password: ");
+    let _ = stdout().flush();
+    let mut linep = String::new();
+    let _ = stdin().read_line(&mut linep);
+
+    let mut keys_map = HashMap::new();
+    keys_map.insert("username".to_string(), lineu.trim().to_string());
+    keys_map.insert("password".to_string(), linep.trim().to_string());
+
+    let first_res = bot_api
+        .complete_auth_flow_for_user_multi(platform.clone(), user_id, keys_map)
+        .await;
+
+    match first_res {
+        Ok(_) => {
+            return format!("VRChat credentials stored successfully for user_id={user_id}");
+        }
+        Err(err) => {
+            let msg = format!("{err}");
+            if msg.contains("__2FA_PROMPT__") {
+                println!("VRChat login requires 2FA code!");
+                print!("Enter your 2FA code: ");
+                let _ = stdout().flush();
+                let mut linec = String::new();
+                let _ = stdin().read_line(&mut linec);
+                let code = linec.trim().to_string();
+
+                let second_result = bot_api
+                    .complete_auth_flow_for_user_2fa(platform.clone(), code, user_id)
+                    .await;
+                match second_result {
+                    Ok(_) => format!("VRChat 2FA success! Credentials stored for user_id={user_id}"),
+                    Err(e2) => format!("VRChat 2FA error => {e2}"),
+                }
+            } else {
+                format!("VRChat login failed => {msg}")
+            }
+        }
+    }
+}
+
+/// Specialized flow for Discord bot accounts:
+/// 1) We'll do "MultipleKeys" with "bot_token" (and maybe "bot_user_id")
+/// 2) We also attempt to fetch /users/@me if possible, to confirm ID and username
+async fn discord_bot_add_flow(
+    platform: Platform,
+    user_id: Uuid,
+    bot_api: &Arc<dyn BotApi>
+) -> String {
+    // The authenticator might just show "MultipleKeys" for 'bot_token'.
+    // So let's see:
+    let flow_str = match bot_api.begin_auth_flow(platform.clone(), true).await {
+        Ok(f) => f,
+        Err(e) => return format!("Discord begin_auth_flow error => {e}"),
+    };
+    if !flow_str.contains("(Multiple keys)") {
+        return format!("Unexpected Discord prompt => {flow_str}");
+    }
+
+    // We'll gather the token, fetch /users/@me, then pass the resulting data:
+    match prompt_discord_bot_token_and_fetch().await {
+        Ok(map) => {
+            // Now pass it to "complete_auth_flow_for_user_multi":
+            match bot_api
+                .complete_auth_flow_for_user_multi(platform, user_id, map)
+                .await
+            {
+                Ok(_) => format!("Discord Bot credential stored for user_id={user_id}"),
+                Err(e) => format!("Error storing Discord Bot credential => {e}"),
+            }
+        }
+        Err(e) => format!("Discord token flow error => {e}"),
+    }
+}
+
+/// Re‐use Helix credential to create an eventsub credential for the same user.
+pub async fn reuse_twitch_helix_for_eventsub(
+    user_id: Uuid,
+    bot_api: &Arc<dyn BotApi>,
+) -> Result<(), Error> {
+    let all_twitch_creds = bot_api.list_credentials(Some(Platform::Twitch)).await?;
+    let helix_cred_opt = all_twitch_creds.into_iter().find(|c| c.user_id == user_id);
+    let helix_cred = match helix_cred_opt {
+        Some(c) => c,
+        None => {
+            return Err(Error::Auth("No Twitch Helix cred found for that user.".to_string()));
+        }
+    };
+
+    let mut new_cred = helix_cred.clone();
+    new_cred.platform = Platform::TwitchEventSub;
+    new_cred.credential_id = Uuid::new_v4();
+    new_cred.created_at = Utc::now();
+    new_cred.updated_at = Utc::now();
+
+    let merged_data = if let Some(old_data) = &new_cred.additional_data {
+        if let Some(mut map) = old_data.as_object().cloned() {
+            map.insert("note".to_string(), serde_json::Value::String("EventSub re-uses Helix".into()));
+            serde_json::Value::Object(map)
+        } else {
+            serde_json::json!({ "note":"EventSub re-uses Helix" })
+        }
+    } else {
+        serde_json::json!({ "note":"EventSub re-uses Helix" })
+    };
+    new_cred.additional_data = Some(merged_data);
+
+    bot_api.store_credential(new_cred).await?;
+    Ok(())
+}
+
+/// Standard OAuth-like path for everything else
 async fn do_oauth_like_flow(
     platform: Platform,
     user_id: Uuid,
@@ -155,8 +305,9 @@ async fn do_oauth_like_flow(
     bot_api: &Arc<dyn BotApi>
 ) -> Result<(), Error> {
     let flow_str = bot_api.begin_auth_flow(platform.clone(), is_bot).await?;
+
     if flow_str.starts_with("http://") || flow_str.starts_with("https://") {
-        println!("Open this URL to authenticate:\n  {}", flow_str);
+        println!("Open this URL to authenticate:\n  {flow_str}");
         println!("Open in browser now? (y/n):");
         print!("> ");
         let _ = stdout().flush();
@@ -178,27 +329,20 @@ async fn do_oauth_like_flow(
             }
         };
         let _ = shutdown_tx.send(());
-
         bot_api
             .complete_auth_flow_for_user(platform, callback_result.code, user_id)
             .await?;
         Ok(())
-    } else if flow_str.contains("(Multiple keys required)") {
-        // Discord or VRChat
-        if platform == Platform::Discord {
-            let keys_map = prompt_discord_bot_token_and_fetch().await?;
-            bot_api
-                .complete_auth_flow_for_user_multi(platform, user_id, keys_map)
-                .await?;
-        } else {
-            let keys_map = prompt_for_multiple_keys()?;
-            bot_api
-                .complete_auth_flow_for_user_multi(platform, user_id, keys_map)
-                .await?;
-        }
+    } else if flow_str.contains("(Multiple keys)") {
+        // E.g. standard "bot_token" for Discord if not handled above,
+        // or any platform that needs multiple fields
+        let keys_map = prompt_for_multiple_keys()?;
+        bot_api
+            .complete_auth_flow_for_user_multi(platform, user_id, keys_map)
+            .await?;
         Ok(())
     } else if flow_str.contains("(API key)") {
-        println!("Auth flow said: {}", flow_str);
+        println!("Auth flow said: {flow_str}");
         print!("Paste the API key now:\n> ");
         let _ = stdout().flush();
         let mut key_line = String::new();
@@ -214,7 +358,9 @@ async fn do_oauth_like_flow(
             .await?;
         Ok(())
     } else if flow_str.contains("(2FA)") {
-        Err(Error::Auth("2FA-based login not implemented in TUI".into()))
+        Err(Error::Auth(
+            "2FA-based login not implemented in TUI for this platform.".into(),
+        ))
     } else if flow_str.contains("(No prompt needed)") {
         println!("No prompt needed, possibly auto-completed.");
         Ok(())
@@ -223,121 +369,8 @@ async fn do_oauth_like_flow(
     }
 }
 
-/// Re‐use Helix credential to create an eventsub credential for the same user.
-pub async fn reuse_twitch_helix_for_eventsub(
-    user_id: Uuid,
-    bot_api: &Arc<dyn BotApi>,
-) -> Result<(), Error> {
-    // 1) find the Helix credential for this user
-    let all_twitch_creds = bot_api.list_credentials(Some(Platform::Twitch)).await?;
-    let helix_cred_opt = all_twitch_creds.into_iter().find(|c| c.user_id == user_id);
-    let helix_cred = match helix_cred_opt {
-        Some(c) => c,
-        None => {
-            return Err(Error::Auth(
-                "Cannot create eventsub credential: no Twitch Helix cred found.".to_string()
-            ));
-        }
-    };
-
-    // 2) clone it as a new credential for eventsub
-    let mut new_cred = helix_cred.clone();
-    new_cred.platform = Platform::TwitchEventSub;
-    new_cred.credential_id = Uuid::new_v4();
-    new_cred.created_at = chrono::Utc::now();
-    new_cred.updated_at = chrono::Utc::now();
-
-    // Instead of overwriting the additional_data, let's merge in a "note"
-    let merged_data = if let Some(old_data) = &new_cred.additional_data {
-        // Convert old_data to a mutable map if possible
-        if let Some(mut map) = old_data.as_object().cloned() {
-            map.insert("note".to_string(), serde_json::Value::String("EventSub re-uses Helix".into()));
-            serde_json::Value::Object(map)
-        } else {
-            // If not an object, just store a new one
-            serde_json::json!({ "note":"EventSub re-uses Helix" })
-        }
-    } else {
-        // If no old data, create a fresh object
-        serde_json::json!({ "note":"EventSub re-uses Helix" })
-    };
-    new_cred.additional_data = Some(merged_data);
-
-    // 3) store it
-    bot_api.store_credential(new_cred).await?;
-    Ok(())
-}
-
-/// For Discord: prompt for a “bot_token,” fetch /users/@me, optionally override
-async fn prompt_discord_bot_token_and_fetch() -> Result<HashMap<String, String>, Error> {
-    println!("\nDiscord flow => we’ll ask for your Bot token, then fetch /users/@me.\n");
-
-    print!("Paste your Discord Bot Token: ");
-    let _ = stdout().flush();
-    let mut token_line = String::new();
-    stdin().read_line(&mut token_line).ok();
-    let bot_token = token_line.trim();
-    if bot_token.is_empty() {
-        return Err(Error::Auth("Discord: no bot token.".into()));
-    }
-
-    let (fetched_id, fetched_name) = match fetch_discord_bot_info_once(bot_token).await {
-        Ok(p) => p,
-        Err(e) => {
-            eprintln!("(Warning) Could not fetch from Discord => {e}");
-            ("".to_string(), "".to_string())
-        }
-    };
-
-    let final_id = if fetched_id.is_empty() {
-        println!("Enter your Discord Bot User ID:");
-        print!("> ");
-        let _ = stdout().flush();
-        let mut tmp = String::new();
-        stdin().read_line(&mut tmp).ok();
-        tmp.trim().to_string()
-    } else {
-        println!("Fetched ID='{}'. Press Enter to keep, or type override:", fetched_id);
-        print!("> ");
-        let _ = stdout().flush();
-        let mut tmp = String::new();
-        stdin().read_line(&mut tmp).ok();
-        let override_id = tmp.trim();
-        if override_id.is_empty() { fetched_id } else { override_id.to_string() }
-    };
-    if final_id.is_empty() {
-        return Err(Error::Auth("Discord: No bot_user_id provided/fetched.".into()));
-    }
-
-    let final_name = if fetched_name.is_empty() {
-        println!("Enter your Discord Bot Username:");
-        print!("> ");
-        let _ = stdout().flush();
-        let mut tmp = String::new();
-        stdin().read_line(&mut tmp).ok();
-        tmp.trim().to_string()
-    } else {
-        println!("Fetched username='{}'. Press Enter to keep, or type override:", fetched_name);
-        print!("> ");
-        let _ = stdout().flush();
-        let mut tmp = String::new();
-        stdin().read_line(&mut tmp).ok();
-        let override_nm = tmp.trim();
-        if override_nm.is_empty() { fetched_name } else { override_nm.to_string() }
-    };
-    if final_name.is_empty() {
-        return Err(Error::Auth("Discord: No bot_username provided/fetched.".into()));
-    }
-
-    let mut out = HashMap::new();
-    out.insert("bot_token".to_string(), bot_token.to_string());
-    out.insert("bot_user_id".to_string(), final_id);
-    out.insert("bot_username".to_string(), final_name);
-    Ok(out)
-}
-
 fn prompt_for_multiple_keys() -> Result<HashMap<String, String>, Error> {
-    println!("Enter each required field (e.g. 'username', 'password'). Leave key blank to finish.");
+    println!("Enter each required field. Leave key blank to finish.");
     let mut keys_map = HashMap::new();
     loop {
         print!("Key name (empty to finish) > ");
@@ -365,7 +398,9 @@ fn prompt_for_multiple_keys() -> Result<HashMap<String, String>, Error> {
     Ok(keys_map)
 }
 
-async fn fetch_discord_bot_info_once(bot_token: &str) -> Result<(String, String), Error> {
+/// This function prompts the user for a Discord Bot Token, does `GET /users/@me`,
+/// and allows user override. Returns a HashMap ready for `complete_auth_flow_for_user_multi`.
+async fn prompt_discord_bot_token_and_fetch() -> Result<HashMap<String, String>, Error> {
     use reqwest::Client;
     #[derive(serde::Deserialize)]
     struct DiscordMe {
@@ -373,25 +408,109 @@ async fn fetch_discord_bot_info_once(bot_token: &str) -> Result<(String, String)
         username: String,
         discriminator: String,
     }
+
+    println!("\nDiscord flow => we’ll ask for your Bot token, then fetch /users/@me.\n");
+    print!("Paste your Discord Bot Token: ");
+    let _ = stdout().flush();
+    let mut token_line = String::new();
+    stdin().read_line(&mut token_line).ok();
+    let bot_token = token_line.trim();
+    if bot_token.is_empty() {
+        return Err(Error::Auth("Discord: no bot token.".into()));
+    }
+
     let client = Client::new();
-    let resp = client
+    let resp = match client
         .get("https://discord.com/api/v10/users/@me")
         .header("Authorization", format!("Bot {bot_token}"))
         .send()
         .await
-        .map_err(|e| Error::Auth(format!("Discord /users/@me => {e}")))?;
+    {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("(Warning) Could not call /users/@me => {e}");
+            return Err(Error::Auth(format!("Discord request error => {e}")));
+        }
+    };
 
     if !resp.status().is_success() {
-        return Err(Error::Auth(format!(
-            "Discord /users/@me returned HTTP {}",
-            resp.status()
-        )));
+        eprintln!("(Warning) /users/@me returned HTTP {}", resp.status());
+        // We'll let user manually input
+        return read_discord_bot_ids_manually(bot_token);
     }
-    let body = resp
-        .json::<DiscordMe>()
-        .await
-        .map_err(|e| Error::Auth(format!("Discord parse JSON => {e}")))?;
-    Ok((body.id, body.username))
+
+    let body: DiscordMe = match resp.json().await {
+        Ok(b) => b,
+        Err(e) => {
+            eprintln!("(Warning) Could not parse Discord /users/@me => {e}");
+            return read_discord_bot_ids_manually(bot_token);
+        }
+    };
+
+    // Fetched ID:
+    println!("Fetched ID='{}'. Press Enter to keep, or type override:", body.id);
+    print!("> ");
+    let _ = stdout().flush();
+    let mut tmp_id = String::new();
+    stdin().read_line(&mut tmp_id).ok();
+    let final_id = {
+        let trimmed = tmp_id.trim();
+        if trimmed.is_empty() {
+            &body.id
+        } else {
+            trimmed
+        }
+    };
+
+    // Fetched name:
+    println!("Fetched username='{}'. Press Enter to keep, or type override:", body.username);
+    print!("> ");
+    let _ = stdout().flush();
+    let mut tmp_nm = String::new();
+    stdin().read_line(&mut tmp_nm).ok();
+    let final_name = {
+        let trimmed = tmp_nm.trim();
+        if trimmed.is_empty() {
+            &body.username
+        } else {
+            trimmed
+        }
+    };
+
+    let mut map = HashMap::new();
+    map.insert("bot_token".to_string(), bot_token.to_string());
+    map.insert("bot_user_id".to_string(), final_id.to_string());
+    map.insert("bot_username".to_string(), final_name.to_string());
+    Ok(map)
+}
+
+/// If we can't fetch /users/@me, we ask for IDs manually:
+fn read_discord_bot_ids_manually(bot_token: &str) -> Result<HashMap<String, String>, Error> {
+    println!("Enter your Discord Bot User ID:");
+    print!("> ");
+    let _ = stdout().flush();
+    let mut line_id = String::new();
+    stdin().read_line(&mut line_id).ok();
+    let final_id = line_id.trim().to_string();
+    if final_id.is_empty() {
+        return Err(Error::Auth("Discord: no bot_user_id provided.".into()));
+    }
+
+    println!("Enter your Discord Bot Username:");
+    print!("> ");
+    let _ = stdout().flush();
+    let mut line_un = String::new();
+    stdin().read_line(&mut line_un).ok();
+    let final_name = line_un.trim().to_string();
+    if final_name.is_empty() {
+        return Err(Error::Auth("Discord: no bot_username provided.".into()));
+    }
+
+    let mut map = HashMap::new();
+    map.insert("bot_token".to_string(), bot_token.to_string());
+    map.insert("bot_user_id".to_string(), final_id);
+    map.insert("bot_username".to_string(), final_name);
+    Ok(map)
 }
 
 async fn account_remove(platform: Platform, user_id_str: &str, bot_api: &Arc<dyn BotApi>) -> String {
@@ -401,7 +520,7 @@ async fn account_remove(platform: Platform, user_id_str: &str, bot_api: &Arc<dyn
             // find user by name
             match bot_api.find_user_by_name(user_id_str).await {
                 Ok(u) => u.user_id,
-                Err(e) => return format!("No user found with name '{}': {:?}", user_id_str, e),
+                Err(e) => return format!("No user found with name '{}': {e}", user_id_str),
             }
         }
     };
@@ -410,8 +529,8 @@ async fn account_remove(platform: Platform, user_id_str: &str, bot_api: &Arc<dyn
         .revoke_credentials(platform.clone(), user_uuid.to_string())
         .await
     {
-        Ok(_) => format!("Removed credentials for platform='{:?}', user_id={}", platform, user_uuid),
-        Err(e) => format!("Error removing => {:?}", e),
+        Ok(_) => format!("Removed credentials for platform='{platform:?}', user_id={user_uuid}"),
+        Err(e) => format!("Error removing => {e}"),
     }
 }
 
@@ -441,7 +560,7 @@ async fn account_list(
                 out
             }
         }
-        Err(e) => format!("Error => {:?}", e),
+        Err(e) => format!("Error => {e}"),
     }
 }
 
@@ -457,8 +576,7 @@ async fn account_show(
                 Ok(u) => u.user_id,
                 Err(_) => {
                     return format!(
-                        "No credentials found for platform={:?}, user='{}'",
-                        platform, user_id_str
+                        "No credentials found for platform={platform:?}, user='{user_id_str}'"
                     );
                 }
             }
@@ -467,7 +585,7 @@ async fn account_show(
 
     let all = match bot_api.list_credentials(Some(platform.clone())).await {
         Ok(list) => list,
-        Err(e) => return format!("Error => {:?}", e),
+        Err(e) => return format!("Error => {e}"),
     };
 
     if let Some(c) = all.into_iter().find(|cred| cred.user_id == user_uuid) {
@@ -485,13 +603,12 @@ async fn account_show(
         out
     } else {
         format!(
-            "No credentials found for platform={:?}, user_id='{}'",
-            platform, user_uuid
+            "No credentials found for platform={platform:?}, user_id='{user_uuid}'"
         )
     }
 }
 
-/// **New**: refresh an existing credential
+/// **Refresh** an existing credential
 async fn account_refresh(
     platform: Platform,
     user_id_str: &str,
@@ -504,7 +621,7 @@ async fn account_refresh(
             match bot_api.find_user_by_name(user_id_str).await {
                 Ok(u) => u.user_id,
                 Err(e) => {
-                    return format!("No user found with name '{}': {:?}", user_id_str, e);
+                    return format!("No user found with name '{}': {e}", user_id_str);
                 }
             }
         }
@@ -517,7 +634,7 @@ async fn account_refresh(
                 new_cred.platform, new_cred.user_id, new_cred.expires_at
             )
         }
-        Err(e) => format!("Error refreshing => {:?}", e),
+        Err(e) => format!("Error refreshing => {e}"),
     }
 }
 

@@ -84,6 +84,12 @@ pub trait BotApi: Send + Sync {
         user_id: Uuid,
         keys: HashMap<String, String>,
     ) -> Result<PlatformCredential, Error>;
+    async fn complete_auth_flow_for_user_2fa(
+        &self,
+        platform: Platform,
+        code: String,
+        user_id: Uuid
+    ) -> Result<PlatformCredential, Error>;
 
     /// Revoke credentials for a user (by UUID).
     async fn revoke_credentials(
