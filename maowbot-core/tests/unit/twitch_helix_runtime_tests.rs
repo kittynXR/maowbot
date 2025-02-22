@@ -1,6 +1,6 @@
 // tests/unit/twitch_helix_runtime_tests.rs
 
-use maowbot_core::platforms::twitch_helix::runtime::{TwitchPlatform, TwitchMessageEvent};
+use maowbot_core::platforms::twitch::runtime::{TwitchPlatform, TwitchMessageEvent};
 use maowbot_core::platforms::{PlatformIntegration, PlatformAuth, ConnectionStatus};
 use maowbot_core::Error;
 

@@ -15,7 +15,7 @@ use crate::repositories::postgres::credentials::CredentialsRepository;
 
 use crate::platforms::discord::runtime::DiscordPlatform;
 use crate::platforms::{ChatPlatform, PlatformIntegration};
-use crate::platforms::twitch_helix::runtime::TwitchPlatform;
+use crate::platforms::twitch::runtime::TwitchPlatform;
 use crate::platforms::vrchat_pipeline::runtime::VRChatPlatform;  // <-- CHANGED
 use crate::platforms::twitch_irc::runtime::TwitchIrcPlatform;
 use crate::platforms::twitch_eventsub::runtime::TwitchEventSubPlatform;

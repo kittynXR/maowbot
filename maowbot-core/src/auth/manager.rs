@@ -10,7 +10,7 @@ use crate::repositories::postgres::platform_config::PlatformConfigRepository;
 
 use crate::platforms::discord::auth::DiscordAuthenticator;
 use crate::platforms::twitch_eventsub::TwitchEventSubAuthenticator;
-use crate::platforms::twitch_helix::auth::TwitchAuthenticator;
+use crate::platforms::twitch::auth::TwitchAuthenticator;
 use crate::platforms::vrchat::auth::VRChatAuthenticator;
 use crate::platforms::twitch_irc::auth::TwitchIrcAuthenticator;
 

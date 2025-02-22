@@ -3,9 +3,7 @@
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use async_trait::async_trait;
-use maowbot_core::plugins::manager::{
-    PluginManager, PluginConnection, PluginConnectionInfo
-};
+use maowbot_core::plugins::manager::{PluginManager};
 use maowbot_proto::plugs::{
     plugin_stream_request::Payload as ReqPayload,
     plugin_stream_response::Payload as RespPayload,
@@ -15,6 +13,7 @@ use maowbot_proto::plugs::{
 };
 use maowbot_core::eventbus::{EventBus, BotEvent};
 use maowbot_core::Error;
+use maowbot_core::plugins::plugin_connection::{PluginConnection, PluginConnectionInfo};
 
 #[derive(Clone)]
 struct MockPluginConnection {

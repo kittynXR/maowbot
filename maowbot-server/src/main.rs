@@ -53,7 +53,7 @@ use sqlx::types::uuid;
 use tokio::time;
 
 use maowbot_core::Error;
-use maowbot_core::platforms::twitch_helix::TwitchAuthenticator;
+use maowbot_core::platforms::twitch::TwitchAuthenticator;
 use maowbot_core::repositories::CredentialsRepository;
 use maowbot_core::tasks::autostart::run_autostart;
 
