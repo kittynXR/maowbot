@@ -9,6 +9,7 @@ use crate::repositories::postgres::UserRepository;
 
 use tokio::sync::mpsc;
 use crate::eventbus::BotEvent;
+use crate::platforms::vrchat::VRChatClient;
 
 #[derive(Debug)]
 pub struct AccountStatus {
@@ -44,6 +45,13 @@ pub struct VRChatWorldBasic {
     pub updated_at: String,
     pub created_at: String,
     pub capacity: u32,
+}
+
+#[derive(Debug)]
+pub struct VRChatInstanceBasic {
+    pub world_id: Option<String>,
+    pub instance_id: Option<String>,
+    pub location: Option<String>,
 }
 
 #[derive(Debug)]
@@ -160,5 +168,6 @@ pub trait BotApi: Send + Sync {
     async fn store_credential(&self, cred: PlatformCredential) -> Result<(), Error>;
     async fn vrchat_get_current_world(&self, account_name: &str) -> Result<VRChatWorldBasic, Error>;
     async fn vrchat_get_current_avatar(&self, account_name: &str) -> Result<VRChatAvatarBasic, Error>;
-    async fn vrchat_change_avatar(&self, account_name: &str, new_avatar_id: &str) -> Result<(), Error>;
+    async fn vrchat_change_avatar(&self, account_name: &str, new_avatar_id: &str) -> Result<(), Error>; // (NEW) Expose an “instance” function.
+    async fn vrchat_get_current_instance(&self, account_name: &str) -> Result<VRChatInstanceBasic, Error>;
 }
