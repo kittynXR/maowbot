@@ -4,6 +4,8 @@ use std::sync::Arc;
 use maowbot_core::plugins::bot_api::{BotApi, VRChatWorldBasic, VRChatAvatarBasic};
 
 /// Handle "vrchat" subcommands from TUI.
+/// If the user typed e.g. "vrchat world" with no name, we pass "" to the BotApi
+/// so it knows to do the single-account logic.
 pub async fn handle_vrchat_command(args: &[&str], bot_api: &Arc<dyn BotApi>) -> String {
     if args.is_empty() {
         return show_vrchat_usage();
@@ -11,41 +13,55 @@ pub async fn handle_vrchat_command(args: &[&str], bot_api: &Arc<dyn BotApi>) -> 
 
     match args[0] {
         "world" => {
-            if args.len() != 2 {
-                // usage: vrchat world <accountName>
-                return "Usage: vrchat world <accountName>".to_string();
-            }
-            let account_name = args[1];
+            // Possible usage:
+            //   vrchat world              -> if exactly 1 VRChat account, use it
+            //   vrchat world kittyn       -> use that account
+            let account_name = if args.len() >= 2 { args[1] } else { "" };
             match bot_api.vrchat_get_current_world(account_name).await {
                 Ok(world) => format_world_info(&world),
                 Err(e) => format!("Error => {:?}", e),
             }
         }
         "avatar" => {
-            // usage:
-            //   vrchat avatar <accountName>
-            //   vrchat avatar <accountName> change <avatarId>
-            if args.len() < 2 {
-                return "Usage: vrchat avatar <accountName> [change <avatarId>]".to_string();
-            }
-            let account_name = args[1];
-            if args.len() == 2 {
-                // just show current avatar
-                match bot_api.vrchat_get_current_avatar(account_name).await {
+            // usage can be:
+            //   vrchat avatar
+            //   vrchat avatar kittyn
+            //   vrchat avatar kittyn change <id>
+            //   vrchat avatar change <id>  (if exactly 1 account)
+            //
+            // We will see if "change" is in there. The easiest is:
+            if args.len() == 1 {
+                // "vrchat avatar"
+                let account_name = "";
+                return match bot_api.vrchat_get_current_avatar(account_name).await {
                     Ok(av) => format_avatar_info(&av),
                     Err(e) => format!("Error => {:?}", e),
-                }
+                };
+            } else if args.len() == 2 && !args[1].eq_ignore_ascii_case("change") {
+                // "vrchat avatar kittyn"
+                let account_name = args[1];
+                return match bot_api.vrchat_get_current_avatar(account_name).await {
+                    Ok(av) => format_avatar_info(&av),
+                    Err(e) => format!("Error => {:?}", e),
+                };
+            } else if args.len() == 3 && args[1].eq_ignore_ascii_case("change") {
+                // "vrchat avatar change <id>" (no account name, single acct?)
+                let new_avatar_id = args[2];
+                let account_name = "";
+                return match bot_api.vrchat_change_avatar(account_name, new_avatar_id).await {
+                    Ok(_) => format!("Avatar changed to {}", new_avatar_id),
+                    Err(e) => format!("Error => {:?}", e),
+                };
+            } else if args.len() == 4 && args[2].eq_ignore_ascii_case("change") {
+                // "vrchat avatar kittyn change <id>"
+                let account_name = args[1];
+                let new_avatar_id = args[3];
+                return match bot_api.vrchat_change_avatar(account_name, new_avatar_id).await {
+                    Ok(_) => format!("Avatar changed to {}", new_avatar_id),
+                    Err(e) => format!("Error => {:?}", e),
+                };
             } else {
-                // maybe "change <avatarId>"
-                if args.len() == 4 && args[2].eq_ignore_ascii_case("change") {
-                    let avatar_id = args[3];
-                    match bot_api.vrchat_change_avatar(account_name, avatar_id).await {
-                        Ok(_) => format!("Avatar changed to {}", avatar_id),
-                        Err(e) => format!("Error => {:?}", e),
-                    }
-                } else {
-                    "Usage: vrchat avatar <accountName> [change <avatarId>]".to_string()
-                }
+                return show_vrchat_usage();
             }
         }
         _ => show_vrchat_usage(),
@@ -54,13 +70,13 @@ pub async fn handle_vrchat_command(args: &[&str], bot_api: &Arc<dyn BotApi>) -> 
 
 fn show_vrchat_usage() -> String {
     r#"Usage:
-  vrchat world <accountName>
-    - fetches the current world from VRChat API and prints details
+  vrchat world [accountName]
+    - fetches the current world from VRChat, ignoring the runtime
 
-  vrchat avatar <accountName>
-    - fetches the current avatar and prints info
+  vrchat avatar [accountName]
+    - fetches the current avatar
 
-  vrchat avatar <accountName> change <avatarId>
+  vrchat avatar [accountName] change <avatarId>
     - changes your avatar to the specified avatarId
 "#
         .to_string()

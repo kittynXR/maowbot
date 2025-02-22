@@ -12,9 +12,16 @@ use crate::plugins::plugin_connection::PluginConnection;
 use crate::plugins::types::PluginType;
 use crate::Error;
 use crate::eventbus::{BotEvent, EventBus};
-use crate::plugins::bot_api::{BotApi, StatusData, PlatformConfigData, AccountStatus, VRChatWorldBasic, VRChatAvatarBasic};
+use crate::plugins::bot_api::{
+    BotApi,
+    StatusData,
+    PlatformConfigData,
+    AccountStatus,
+    VRChatWorldBasic,
+    VRChatAvatarBasic
+};
 use crate::models::{Platform, PlatformCredential, User};
-use crate::platforms::vrchat::client::VRChatClient;
+use crate::platforms::vrchat::client::{VRChatClient, VRChatWorldInfo, VRChatAvatarInfo};
 use crate::repositories::postgres::bot_config::BotConfigRepository;
 use crate::repositories::postgres::credentials::CredentialsRepository;
 use crate::repositories::postgres::platform_config::PlatformConfigRepository;
@@ -43,29 +50,24 @@ impl BotApi for PluginManager {
             })
             .collect();
 
-        // 1) Gather every stored credential from DB
+        // Gather every stored credential
         let creds_result = self.list_credentials(None).await;
         let mut account_statuses = Vec::new();
 
         if let Ok(all_creds) = creds_result {
-            // 2) For each credential, see if there's a matching active runtime
-            //    The PlatformManager stores them as key = (platform_str, user_id_str).
+            // Check each credential to see if there's a matching active runtime
             let guard = self.platform_manager.active_runtimes.lock().await;
             for c in all_creds {
-                // Attempt to map c.user_id => global username (for display)
                 let user_display = match self.user_repo.get(c.user_id).await {
                     Ok(Some(u)) => u
                         .global_username
                         .unwrap_or_else(|| c.user_id.to_string()),
                     _ => c.user_id.to_string(),
                 };
-
-                // Convert the platform to a string key
                 let platform_key = c.platform.to_string().to_lowercase();
                 let user_key = c.user_id.to_string();
 
                 let is_connected = guard.contains_key(&(platform_key.clone(), user_key));
-                // We'll fill out an AccountStatus
                 account_statuses.push(AccountStatus {
                     platform: platform_key,
                     account_name: user_display,
@@ -95,9 +97,9 @@ impl BotApi for PluginManager {
         self.remove_plugin(plugin_name).await
     }
 
-    // --------------------------------------------------------------------------------
-    //  All user-related methods now pass Uuid for user_id:
-    // --------------------------------------------------------------------------------
+    // -----------------------------------------------------------------
+    // User repository methods
+    // -----------------------------------------------------------------
 
     async fn create_user(&self, new_user_id: Uuid, display_name: &str) -> Result<(), Error> {
         let user_repo = self.user_repo.clone();
@@ -118,10 +120,9 @@ impl BotApi for PluginManager {
         Ok(())
     }
 
-    async fn get_user(&self, user_id: Uuid) -> Result<Option<crate::models::User>, Error> {
+    async fn get_user(&self, user_id: Uuid) -> Result<Option<User>, Error> {
         let user_repo = self.user_repo.clone();
-        let found = user_repo.get(user_id).await?;
-        Ok(found)
+        Ok(user_repo.get(user_id).await?)
     }
 
     async fn update_user_active(&self, user_id: Uuid, is_active: bool) -> Result<(), Error> {
@@ -134,14 +135,12 @@ impl BotApi for PluginManager {
         Ok(())
     }
 
-    /// We still do naive substring matching for search_users. This remains a string-based query
-    /// so no change to the signature.
-    async fn search_users(&self, query: &str) -> Result<Vec<crate::models::User>, Error> {
+    async fn search_users(&self, query: &str) -> Result<Vec<User>, Error> {
         let user_repo = self.user_repo.clone();
         let all_users = user_repo.list_all().await?;
-        let filtered = all_users.into_iter()
+        let filtered = all_users
+            .into_iter()
             .filter(|u| {
-                // Convert user_id to string or do something else if you want
                 let user_id_str = u.user_id.to_string();
                 user_id_str.contains(query)
                     || u.global_username.as_deref().unwrap_or("").contains(query)
@@ -151,29 +150,21 @@ impl BotApi for PluginManager {
     }
 
     async fn find_user_by_name(&self, name: &str) -> Result<User, Error> {
-        // 1) call search_users
         let all = self.search_users(name).await?;
-        // 2) find exact or partial match
         if all.is_empty() {
-            Err(Error::Auth(format!("No user with name='{}'", name)))
+            Err(Error::Auth(format!("No user with name='{name}'")))
         } else if all.len() > 1 {
-            // optional: return error or pick the first
-            Err(Error::Auth(format!("Multiple matches for '{}'", name)))
+            Err(Error::Auth(format!("Multiple matches for '{name}'")))
         } else {
-            // exactly 1
             Ok(all[0].clone())
         }
     }
 
-    // --------------------------------------------------------------------------------
-    //  OAuth flows
-    // --------------------------------------------------------------------------------
+    // -----------------------------------------------------------------
+    // OAuth flows
+    // -----------------------------------------------------------------
 
-    async fn begin_auth_flow(
-        &self,
-        platform: Platform,
-        is_bot: bool
-    ) -> Result<String, Error> {
+    async fn begin_auth_flow(&self, platform: Platform, is_bot: bool) -> Result<String, Error> {
         if let Some(am) = &self.auth_manager {
             let mut lock = am.lock().await;
             lock.begin_auth_flow(platform, is_bot).await
@@ -182,14 +173,11 @@ impl BotApi for PluginManager {
         }
     }
 
-    async fn complete_auth_flow(
-        &self,
-        platform: Platform,
-        code: String
-    ) -> Result<PlatformCredential, Error> {
+    async fn complete_auth_flow(&self, platform: Platform, code: String) -> Result<PlatformCredential, Error> {
         if let Some(am) = &self.auth_manager {
             let mut lock = am.lock().await;
-            lock.complete_auth_flow_for_user(platform, code, "00000000-0000-0000-0000-000000000000").await
+            lock.complete_auth_flow_for_user(platform, code, "00000000-0000-0000-0000-000000000000")
+                .await
         } else {
             Err(Error::Auth("No auth manager set in plugin manager".into()))
         }
@@ -247,7 +235,7 @@ impl BotApi for PluginManager {
     ) -> Result<(), Error> {
         if let Some(am) = &self.auth_manager {
             let mut lock = am.lock().await;
-            lock.revoke_credentials(&platform, &user_id.to_string()).await
+            lock.revoke_credentials(&platform, &user_id).await
         } else {
             Err(Error::Auth("No auth manager set in plugin manager".into()))
         }
@@ -360,7 +348,7 @@ impl BotApi for PluginManager {
     async fn get_bot_config_value(&self, key: &str) -> Result<Option<String>, Error> {
         let auth_mgr_arc = self.auth_manager
             .as_ref()
-            .expect("No auth manager set in plugin manager");
+            .ok_or_else(|| Error::Auth("No auth manager set in plugin manager".into()))?;
         let mut auth_manager_locked = auth_mgr_arc.lock().await;
         auth_manager_locked.bot_config_repo.get_value(key).await
     }
@@ -368,13 +356,13 @@ impl BotApi for PluginManager {
     async fn set_bot_config_value(&self, key: &str, value: &str) -> Result<(), Error> {
         let auth_mgr_arc = self.auth_manager
             .as_ref()
-            .expect("No auth manager set in plugin manager");
+            .ok_or_else(|| Error::Auth("No auth manager set in plugin manager".into()))?;
         let mut auth_manager_locked = auth_mgr_arc.lock().await;
         auth_manager_locked.bot_config_repo.set_value(key, value).await
     }
 
     async fn subscribe_chat_events(&self, buffer_size: Option<usize>) -> mpsc::Receiver<BotEvent> {
-        // If we have an event bus, subscribe to it. If not, return a dummy empty receiver.
+        // If we have an event bus, subscribe to it. Otherwise return a dummy channel.
         if let Some(bus) = &self.event_bus {
             bus.subscribe(buffer_size).await
         } else {
@@ -413,72 +401,185 @@ impl BotApi for PluginManager {
         }
     }
 
+    // -----------------------------------------------------------------
+    // VRChat “world” and “avatar” lookups — no runtime required
+    // -----------------------------------------------------------------
+
     async fn vrchat_get_current_world(&self, account_name: &str) -> Result<VRChatWorldBasic, Error> {
-        // 1) get VRChat runtime
-        let vrc_arc = self.platform_manager.get_vrchat_instance(account_name).await?;
-        let vrc_locked = vrc_arc.lock().await;
-
-        // 2) Get credential from VRChatPlatform
-        let cred = match &vrc_locked.credentials {
-            Some(c) => c.clone(),
-            None => return Err(Error::Platform("No VRChat credentials set".into())),
+        // If account_name is empty, see how many VRChat credentials exist
+        let name_to_use = if account_name.is_empty() {
+            // List all VRChat credentials
+            let all_creds = self.list_credentials(Some(Platform::VRChat)).await?;
+            if all_creds.is_empty() {
+                return Err(Error::Platform("No VRChat credentials in DB.".into()));
+            }
+            if all_creds.len() > 1 {
+                return Err(Error::Platform(
+                    "Multiple VRChat accounts found. Please specify an account name.".into()
+                ));
+            }
+            // We have exactly one VRChat credential, so figure out that user’s global_username
+            let c = &all_creds[0];
+            let user_opt = self.user_repo.get(c.user_id).await?;
+            let uname = match user_opt {
+                Some(u) => u.global_username.unwrap_or_else(|| c.user_id.to_string()),
+                None => c.user_id.to_string(),
+            };
+            uname
+        } else {
+            account_name.to_string()
         };
 
-        // 3) Create VRChatClient
+        // Now find user by that name
+        let user = self.user_repo.get_by_global_username(&name_to_use).await?;
+        let user = user.ok_or_else(|| {
+            Error::Platform(format!("No user found with global_username='{}'", name_to_use))
+        })?;
+
+        // Get VRChat credential for that user
+        let cred_opt = {
+            if let Some(am) = &self.auth_manager {
+                let lock = am.lock().await;
+                lock.credentials_repo.get_credentials(&Platform::VRChat, user.user_id).await?
+            } else {
+                return Err(Error::Auth("No auth manager set in plugin manager".into()));
+            }
+        };
+        let cred = match cred_opt {
+            Some(c) => c,
+            None => return Err(Error::Platform(
+                format!("No VRChat credential for user='{}'", name_to_use)
+            )),
+        };
+
+        // Build a client and call our “3-attempt” method
         let client = VRChatClient::new(&cred.primary_token)?;
+        let world_opt = client.fetch_current_world_api().await?;
 
-        // 4) fetch current user => current_world
-        let user_json = client.fetch_current_user().await?;
-        let world_id = match user_json.current_world {
-            Some(w) => w,
-            None => return Err(Error::Platform("User is not in any world (or data missing)".into())),
-        };
-
-        // 5) fetch that world’s details
-        let winfo = client.fetch_world_info(&world_id).await?;
-        Ok(VRChatWorldBasic {
-            name: winfo.name,
-            author_name: winfo.author_name,
-            updated_at: winfo.updated_at.to_rfc3339(),
-            created_at: winfo.created_at.to_rfc3339(),
-            capacity: winfo.capacity,
-        })
+        match world_opt {
+            Some(w) => {
+                Ok(VRChatWorldBasic {
+                    name: w.name,
+                    author_name: w.author_name,
+                    // If you store updated_at / created_at, parse them here or omit
+                    updated_at: "".into(),
+                    created_at: "".into(),
+                    capacity: w.capacity,
+                })
+            }
+            None => {
+                Err(Error::Platform("User is offline or not in any world.".into()))
+            }
+        }
     }
 
     async fn vrchat_get_current_avatar(&self, account_name: &str) -> Result<VRChatAvatarBasic, Error> {
-        let vrc_arc = self.platform_manager.get_vrchat_instance(account_name).await?;
-        let vrc_locked = vrc_arc.lock().await;
-
-        let cred = match &vrc_locked.credentials {
-            Some(c) => c.clone(),
-            None => return Err(Error::Platform("No VRChat credentials".into())),
+        // Same single-credential logic
+        let name_to_use = if account_name.is_empty() {
+            // List all VRChat credentials
+            let all_creds = self.list_credentials(Some(Platform::VRChat)).await?;
+            if all_creds.is_empty() {
+                return Err(Error::Platform("No VRChat credentials in DB.".into()));
+            }
+            if all_creds.len() > 1 {
+                return Err(Error::Platform(
+                    "Multiple VRChat accounts found. Please specify an account name.".into()
+                ));
+            }
+            let c = &all_creds[0];
+            let user_opt = self.user_repo.get(c.user_id).await?;
+            match user_opt {
+                Some(u) => u.global_username.unwrap_or_else(|| c.user_id.to_string()),
+                None => c.user_id.to_string(),
+            }
+        } else {
+            account_name.to_string()
         };
 
-        let client = VRChatClient::new(&cred.primary_token)?;
-        let user_json = client.fetch_current_user().await?;
-        let avatar_id = user_json.current_avatar;
-        if avatar_id.is_empty() {
-            return Err(Error::Platform("No current_avatar found for user".into()));
-        }
+        // Find user
+        let user = self.user_repo.get_by_global_username(&name_to_use).await?;
+        let user = user.ok_or_else(|| {
+            Error::Platform(format!("No user found with global_username='{}'", name_to_use))
+        })?;
 
-        let ainfo = client.fetch_avatar_info(&avatar_id).await?;
-        Ok(VRChatAvatarBasic {
-            avatar_id: ainfo.avatar_id,
-            avatar_name: ainfo.name,
-        })
+        // Grab VRChat credential
+        let cred_opt = {
+            if let Some(am) = &self.auth_manager {
+                let lock = am.lock().await;
+                lock.credentials_repo.get_credentials(&Platform::VRChat, user.user_id).await?
+            } else {
+                return Err(Error::Auth("No auth manager set in plugin manager".into()));
+            }
+        };
+        let cred = match cred_opt {
+            Some(c) => c,
+            None => return Err(Error::Platform(
+                format!("No VRChat credential for user='{}'", name_to_use)
+            )),
+        };
+
+        // Create VRChat client; fetch current avatar
+        let client = VRChatClient::new(&cred.primary_token)?;
+        let av_opt = client.fetch_current_avatar_api().await?;
+        match av_opt {
+            Some(av) => {
+                Ok(VRChatAvatarBasic {
+                    avatar_id: av.avatar_id,
+                    avatar_name: av.name,
+                })
+            }
+            None => {
+                Err(Error::Platform("User has no current avatar or is offline.".into()))
+            }
+        }
     }
 
     async fn vrchat_change_avatar(&self, account_name: &str, new_avatar_id: &str) -> Result<(), Error> {
-        let vrc_arc = self.platform_manager.get_vrchat_instance(account_name).await?;
-        let vrc_locked = vrc_arc.lock().await;
+        // We do require a specific user here, so if account_name is empty but 2 VRChat creds exist,
+        // that’s ambiguous. You could either do the single-credential logic or ask them to specify.
+        // For simplicity, we will do the same single-credential logic:
 
-        let cred = match &vrc_locked.credentials {
-            Some(c) => c.clone(),
-            None => return Err(Error::Platform("No VRChat credentials".into())),
+        let name_to_use = if account_name.is_empty() {
+            let all_creds = self.list_credentials(Some(Platform::VRChat)).await?;
+            if all_creds.is_empty() {
+                return Err(Error::Platform("No VRChat credentials in DB.".into()));
+            }
+            if all_creds.len() > 1 {
+                return Err(Error::Platform(
+                    "Multiple VRChat accounts found. Please specify an account name.".into()
+                ));
+            }
+            let c = &all_creds[0];
+            let user_opt = self.user_repo.get(c.user_id).await?;
+            match user_opt {
+                Some(u) => u.global_username.unwrap_or_else(|| c.user_id.to_string()),
+                None => c.user_id.to_string(),
+            }
+        } else {
+            account_name.to_string()
+        };
+
+        let user = self.user_repo.get_by_global_username(&name_to_use).await?;
+        let user = user.ok_or_else(|| {
+            Error::Platform(format!("No user found with global_username='{}'", name_to_use))
+        })?;
+
+        let cred_opt = {
+            if let Some(am) = &self.auth_manager {
+                let lock = am.lock().await;
+                lock.credentials_repo.get_credentials(&Platform::VRChat, user.user_id).await?
+            } else {
+                return Err(Error::Auth("No auth manager set in plugin manager".into()));
+            }
+        };
+        let cred = match cred_opt {
+            Some(c) => c,
+            None => return Err(Error::Platform(
+                format!("No VRChat credential for user='{}'", name_to_use)
+            )),
         };
 
         let client = VRChatClient::new(&cred.primary_token)?;
-        client.select_avatar(new_avatar_id).await?;
-        Ok(())
+        client.select_avatar(new_avatar_id).await
     }
 }
