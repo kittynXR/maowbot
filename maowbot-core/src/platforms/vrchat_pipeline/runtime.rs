@@ -1,7 +1,7 @@
-// File: maowbot-core/src/platforms/vrchat/runtime.rs
+// File: maowbot-core/src/platforms/vrchat_pipeline/runtime.rs
 //
-// Now this file *only* handles the WebSocket (pipeline) runtime. All
-// VRChat REST/HTTP logic has been moved into client.rs.
+// This file was moved from the old src/platforms/vrchat/runtime.rs,
+// which handles the WebSocket/pipeline logic.
 
 use std::time::Duration;
 use async_trait::async_trait;
@@ -20,10 +20,10 @@ use tokio_tungstenite::{connect_async_tls_with_config, Connector};
 use crate::Error;
 use crate::models::PlatformCredential;
 use crate::platforms::{ConnectionStatus, PlatformAuth, PlatformIntegration};
-use super::auth::parse_auth_cookie_from_headers;
+use crate::platforms::vrchat::auth::parse_auth_cookie_from_headers;
 
 /// This is a simplified VRChat event for demonstration,
-/// just capturing (user_id, display_name, text).
+/// capturing (user_id, display_name, text).
 #[derive(Debug, Clone)]
 pub struct VRChatMessageEvent {
     pub vrchat_display_name: String,
@@ -31,8 +31,8 @@ pub struct VRChatMessageEvent {
     pub text: String,
 }
 
-/// VRChatPlatform holds the user’s VRChat credential and a background
-/// task reading from the pipeline websocket. (REST calls moved to client.rs)
+/// VRChatPlatform is the pipeline-based platform object: handles the
+/// background WebSocket reading for VRChat events.
 pub struct VRChatPlatform {
     pub credentials: Option<PlatformCredential>,
     pub connection_status: ConnectionStatus,
@@ -43,7 +43,7 @@ pub struct VRChatPlatform {
     /// The task reading from the websocket
     read_task: Option<JoinHandle<()>>,
 
-    // Used for graceful close. We store the writing half or a handle to close?
+    /// For clean shutdown, store a one-shot sender
     write_shutdown_handle: Option<tokio::sync::oneshot::Sender<()>>,
 }
 
@@ -67,9 +67,9 @@ impl VRChatPlatform {
         }
     }
 
-    /// Actually starts the background read loop from wss://pipeline.vrchat.cloud.
+    /// Starts the background read loop from wss://pipeline.vrchat.cloud
     async fn start_websocket_task(&mut self, auth_cookie: &str) -> Result<(), Error> {
-        // 1) Extract just the token after "auth="
+        // 1) Extract token after "auth="
         let raw_token = match extract_auth_token(auth_cookie) {
             Some(t) => t,
             None => {
@@ -82,7 +82,7 @@ impl VRChatPlatform {
         // 2) Build the wss:// URL with ?authToken=...
         let ws_url = format!("wss://pipeline.vrchat.cloud/?authToken={}", raw_token);
 
-        // 3) Construct an explicit handshake request with the same headers
+        // 3) Build handshake request
         let uri: Uri = ws_url.parse().map_err(|e| {
             Error::Platform(format!("Invalid VRChat WebSocket URL: {e}"))
         })?;
@@ -116,12 +116,12 @@ impl VRChatPlatform {
 
         let (mut write_half, mut read_half) = ws_stream.split();
 
-        // 5) Create the local channel for VRChatMessageEvent
+        // 5) Create local channel for VRChatMessageEvent
         let (tx_evt, rx_evt) = mpsc::unbounded_channel::<VRChatMessageEvent>();
         self.tx_incoming = Some(tx_evt.clone());
         self.incoming = Some(rx_evt);
 
-        // 6) We also create a "shutdown" signal channel for the write half.
+        // 6) Create shutdown channel for writing half
         let (shutdown_tx, mut shutdown_rx) = tokio::sync::oneshot::channel::<()>();
         self.write_shutdown_handle = Some(shutdown_tx);
 
@@ -148,7 +148,7 @@ impl VRChatPlatform {
                                 break;
                             }
                             Some(Ok(_other)) => {
-                                // ping/pong or other
+                                // ping/pong or other messages
                             }
                             Some(Err(e)) => {
                                 tracing::warn!("(VRChat) WebSocket error => {}", e);
@@ -163,7 +163,6 @@ impl VRChatPlatform {
                     }
                     _ = &mut shutdown_rx => {
                         tracing::info!("(VRChat) Received shutdown signal. Closing read loop.");
-                        // Optionally we can attempt a "close" message here if we want.
                         break;
                     }
                 }
@@ -181,7 +180,7 @@ impl VRChatPlatform {
 #[async_trait]
 impl PlatformAuth for VRChatPlatform {
     async fn authenticate(&mut self) -> Result<(), Error> {
-        // no-op here
+        // No-op here; any real login is done outside
         Ok(())
     }
 
@@ -227,12 +226,11 @@ impl PlatformIntegration for VRChatPlatform {
         if let Some(handle) = self.read_task.take() {
             handle.abort();
         }
-
         Ok(())
     }
 
     async fn send_message(&self, _channel: &str, _message: &str) -> Result<(), Error> {
-        // VRChat pipeline is primarily one-way, no direct text chat sending.
+        // VRChat pipeline is primarily one-way. No direct text chat sending here.
         Ok(())
     }
 
@@ -276,8 +274,8 @@ fn parse_vrchat_json_event(raw_json: &str) -> Option<VRChatMessageEvent> {
     }
 }
 
-/// Splits out the "auth=" portion from a cookie string like
-/// `"auth=ABCDEF; Path=/; HttpOnly; ..."`
+/// Splits out "auth=..." from a cookie string like
+/// `"auth=ABC123; Path=/; HttpOnly; ..."`.
 fn extract_auth_token(cookie_str: &str) -> Option<String> {
     cookie_str
         .split(';')

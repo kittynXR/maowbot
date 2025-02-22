@@ -55,3 +55,4 @@ pub mod vrchat;
 pub mod manager;
 pub mod twitch_irc;
 pub mod twitch_eventsub;
+pub mod vrchat_pipeline;
