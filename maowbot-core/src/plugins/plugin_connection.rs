@@ -11,7 +11,7 @@ use maowbot_proto::plugs::plugin_stream_response::Payload as RespPayload;
 
 use tracing::info;
 use crate::plugins::types::PluginType;
-use crate::plugins::bot_api::{BotApi, StatusData, PlatformConfigData};
+use crate::plugins::bot_api::{BotApi};
 
 /// PluginConnectionInfo: in-memory info about a connected plugin.
 #[derive(Clone)]

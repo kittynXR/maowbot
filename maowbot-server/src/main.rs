@@ -33,7 +33,7 @@ use maowbot_core::services::message_service::MessageService;
 use maowbot_core::services::user_service::UserService;
 use maowbot_core::tasks::biweekly_maintenance::spawn_biweekly_maintenance_task;
 
-use maowbot_core::plugins::bot_api::{BotApi, StatusData};
+use maowbot_core::plugins::bot_api::{BotApi};
 
 use tonic::transport::{Server, Identity, Certificate, ServerTlsConfig, Channel, ClientTlsConfig};
 use maowbot_proto::plugs::plugin_service_server::PluginServiceServer;

@@ -1,4 +1,6 @@
-// src/plugins/manager.rs
+//! plugins/manager/core.rs
+//!
+//! Contains the `PluginManager` struct and general logic not tied to BotApi sub-traits.
 
 use std::fs;
 use std::path::Path;
@@ -9,21 +11,11 @@ use std::time::Instant;
 use async_trait::async_trait;
 use futures_util::StreamExt;
 use libloading::{Library, Symbol};
-use maowbot_proto::plugs::{
-    plugin_stream_request::{Payload as ReqPayload},
-    plugin_stream_response::{Payload as RespPayload},
-    PluginStreamRequest, PluginStreamResponse,
-    Hello, LogMessage, RequestCaps, CapabilityResponse,
-    AuthError, SendChat, Shutdown, SwitchScene, RequestStatus,
-    WelcomeResponse, ForceDisconnect, Tick, ChatMessage,
-    PluginCapability, StatusResponse
-};
 use tokio::sync::{mpsc::UnboundedSender, Mutex as AsyncMutex};
 use tracing::{info, error};
 
 use crate::Error;
 use crate::eventbus::{BotEvent, EventBus};
-use crate::plugins::bot_api::{BotApi, StatusData, PlatformConfigData};
 use crate::plugins::plugin_connection::{
     PluginConnection, PluginConnectionInfo,
     PluginGrpcConnection, InProcessPluginConnection
@@ -35,10 +27,12 @@ use crate::plugins::types::{
 };
 use crate::repositories::postgres::user::{UserRepo, UserRepository};
 use crate::auth::AuthManager;
-use crate::models::{Platform, PlatformCredential, User};
+use crate::models::User;
 use crate::platforms::manager::PlatformManager;
+use crate::services::message_service::MessageService;
+use crate::plugins::manager::plugin_api_impl::build_status_response; // or you can keep the function local
 use crate::repositories::postgres::bot_config::BotConfigRepository;
-use crate::repositories::postgres::credentials::{CredentialsRepository, PostgresCredentialsRepository};
+use crate::repositories::postgres::credentials::CredentialsRepository;
 use crate::repositories::postgres::platform_config::PlatformConfigRepository;
 
 /// The main manager that loads/stores plugins, spawns connections,
@@ -70,11 +64,17 @@ pub struct PluginManager {
     /// A user repository so we can create/remove user rows, etc.
     pub user_repo: Arc<UserRepository>,
 
+    /// The manager for platform logic (starting/stopping runtimes, etc.).
     pub platform_manager: Arc<PlatformManager>,
 }
 
 impl PluginManager {
-    pub fn new(passphrase: Option<String>, user_repo: Arc<UserRepository>, platform_manager: Arc<PlatformManager>) -> Self {
+    /// Constructs a new `PluginManager` with empty plugin lists and so on.
+    pub fn new(
+        passphrase: Option<String>,
+        user_repo: Arc<UserRepository>,
+        platform_manager: Arc<PlatformManager>,
+    ) -> Self {
         let manager = Self {
             plugins: Arc::new(AsyncMutex::new(Vec::new())),
             plugin_records: Arc::new(Mutex::new(Vec::new())),
@@ -90,17 +90,17 @@ impl PluginManager {
         manager
     }
 
-    /// We can set the global AuthManager if we want to support OAuth flows.
+    /// Sets the global AuthManager if you want to support OAuth flows or credential logic.
     pub fn set_auth_manager(&mut self, am: Arc<tokio::sync::Mutex<AuthManager>>) {
         self.auth_manager = Some(am);
     }
 
-    /// Attach the shared `EventBus` so we can publish or subscribe to events.
+    /// Attaches a shared `EventBus`.
     pub fn set_event_bus(&mut self, bus: Arc<EventBus>) {
         self.event_bus = Some(bus);
     }
 
-    /// Subscribe the manager to events from the bus, so we can broadcast them to plugins if needed.
+    /// Subscribes the manager to events from the bus, so we can broadcast them to plugins if needed.
     pub async fn subscribe_to_event_bus(&self, bus: Arc<EventBus>) {
         let mut rx = bus.subscribe(None).await;
         let mut shutdown_rx = bus.shutdown_rx.clone();
@@ -116,6 +116,12 @@ impl PluginManager {
                                     pm_clone.handle_chat_event(&platform, &channel, &user, &text).await;
                                 },
                                 BotEvent::Tick => {
+                                    // We can broadcast Tick to plugins if we want:
+                                    use maowbot_proto::plugs::{
+                                        PluginStreamResponse,
+                                        plugin_stream_response::Payload as RespPayload,
+                                        Tick
+                                    };
                                     let tick_msg = PluginStreamResponse {
                                         payload: Some(RespPayload::Tick(Tick {})),
                                     };
@@ -124,7 +130,8 @@ impl PluginManager {
                                 BotEvent::SystemMessage(msg) => {
                                     info!("(EventBus) SystemMessage => {}", msg);
                                 }
-                            _ => {}},
+                                _ => {}
+                            },
                             None => {
                                 info!("PluginManager unsubscribed (channel closed).");
                                 break;
@@ -142,8 +149,14 @@ impl PluginManager {
         });
     }
 
-    /// Handle an inbound chat event → broadcast to plugins that have `ReceiveChatEvents` cap.
+    /// Called internally whenever a ChatMessage event arrives. We can broadcast to plugins if they have a chat capability.
     async fn handle_chat_event(&self, platform: &str, channel: &str, user: &str, text: &str) {
+        use maowbot_proto::plugs::{
+            PluginStreamResponse,
+            plugin_stream_response::Payload as RespPayload,
+            ChatMessage, PluginCapability
+        };
+
         let msg = PluginStreamResponse {
             payload: Some(RespPayload::ChatMessage(ChatMessage {
                 platform: platform.to_string(),
@@ -155,7 +168,28 @@ impl PluginManager {
         self.broadcast(msg, Some(PluginCapability::ReceiveChatEvents)).await;
     }
 
-    /// For loading & storing the plugin_records JSON on disk:
+    /// Broadcasts a single `PluginStreamResponse` to all loaded plugins that have `required_cap` (if specified).
+    pub async fn broadcast(
+        &self,
+        response: maowbot_proto::plugs::PluginStreamResponse,
+        required_cap: Option<maowbot_proto::plugs::PluginCapability>,
+    ) {
+        let lock = self.plugins.lock().await;
+        for p in lock.iter() {
+            let pi = p.info().await;
+            if !pi.is_enabled {
+                continue;
+            }
+            if let Some(cap) = &required_cap {
+                if !pi.capabilities.contains(cap) {
+                    continue;
+                }
+            }
+            let _ = p.send(response.clone()).await;
+        }
+    }
+
+    /// Loads the plugin states from disk. Called in `new()`.
     fn load_plugin_states(&self) {
         if !self.persist_path.exists() {
             info!("No plugin-states file at {:?}; using empty defaults.", self.persist_path);
@@ -184,7 +218,8 @@ impl PluginManager {
         }
     }
 
-    fn save_plugin_states(&self) {
+    /// Saves the current plugin records to disk (JSON).
+    pub fn save_plugin_states(&self) {
         let lock = self.plugin_records.lock().unwrap();
         let data = PluginStatesFile { plugins: lock.clone() };
         let contents = match serde_json::to_string_pretty(&data) {
@@ -200,12 +235,12 @@ impl PluginManager {
         }
     }
 
-    /// Return a copy of the in-memory `plugin_records`.
+    /// Returns a copy of the in-memory `plugin_records`.
     pub fn get_plugin_records(&self) -> Vec<PluginRecord> {
         self.plugin_records.lock().unwrap().clone()
     }
 
-    /// A helper used by the TUI or other code to see what connections are actually loaded right now.
+    /// Lists the currently connected plugin connections in memory.
     pub async fn list_connected_plugins(&self) -> Vec<PluginConnectionInfo> {
         let lock = self.plugins.lock().await;
         let mut out = Vec::new();
@@ -216,7 +251,7 @@ impl PluginManager {
     }
 
     /// Insert or update a plugin_record in memory, then save to disk.
-    fn upsert_plugin_record(&self, record: PluginRecord) {
+    pub fn upsert_plugin_record(&self, record: PluginRecord) {
         let mut lock = self.plugin_records.lock().unwrap();
         if let Some(existing) = lock.iter_mut().find(|r| r.name == record.name && r.plugin_type == record.plugin_type) {
             existing.enabled = record.enabled;
@@ -227,7 +262,9 @@ impl PluginManager {
         self.save_plugin_states();
     }
 
-    fn is_plugin_enabled(&self, name: &str, plugin_type: &PluginType) -> bool {
+    /// Checks if the plugin is in `plugin_records` and if so, returns whether it’s enabled.
+    /// If not found, returns false by default.
+    pub fn is_plugin_enabled(&self, name: &str, plugin_type: &PluginType) -> bool {
         let lock = self.plugin_records.lock().unwrap();
         lock.iter()
             .find(|r| r.name == name && r.plugin_type == *plugin_type)
@@ -238,8 +275,8 @@ impl PluginManager {
     /// Called by the gRPC service to handle a new inbound plugin stream.
     pub async fn handle_new_grpc_stream(
         &self,
-        mut inbound: tonic::Streaming<PluginStreamRequest>,
-        sender: UnboundedSender<PluginStreamResponse>,
+        mut inbound: tonic::Streaming<maowbot_proto::plugs::PluginStreamRequest>,
+        sender: UnboundedSender<maowbot_proto::plugs::PluginStreamResponse>,
     ) {
         // Start off as disabled => we’ll enable after Hello passes.
         let conn = Arc::new(PluginGrpcConnection::new(sender, false));
@@ -259,13 +296,24 @@ impl PluginManager {
     }
 
     /// Processes an inbound message from a plugin (on the gRPC side).
-    pub async fn on_inbound_message(&self, payload: ReqPayload, plugin: Arc<dyn PluginConnection>) {
+    pub async fn on_inbound_message(
+        &self,
+        payload: maowbot_proto::plugs::plugin_stream_request::Payload,
+        plugin: Arc<dyn PluginConnection>,
+    ) {
+        use maowbot_proto::plugs::{
+            plugin_stream_request::Payload as ReqPayload,
+            plugin_stream_response::Payload as RespPayload,
+            Hello, AuthError, CapabilityResponse, ForceDisconnect,
+            LogMessage, RequestCaps, Shutdown, SwitchScene, SendChat, Tick, RequestStatus
+        };
+
         match payload {
             ReqPayload::Hello(Hello { plugin_name, passphrase }) => {
                 // Passphrase check:
                 if let Some(req_pass) = &self.passphrase {
                     if passphrase != *req_pass {
-                        let err_resp = PluginStreamResponse {
+                        let err_resp = maowbot_proto::plugs::PluginStreamResponse {
                             payload: Some(RespPayload::AuthError(AuthError {
                                 reason: "Invalid passphrase".into(),
                             })),
@@ -289,8 +337,8 @@ impl PluginManager {
                 plugin.set_name(plugin_name.clone()).await;
                 plugin.set_enabled(is_enabled).await;
 
-                let welcome = PluginStreamResponse {
-                    payload: Some(RespPayload::Welcome(WelcomeResponse {
+                let welcome = maowbot_proto::plugs::PluginStreamResponse {
+                    payload: Some(RespPayload::Welcome(maowbot_proto::plugs::WelcomeResponse {
                         bot_name: "MaowBot".into(),
                     })),
                 };
@@ -310,8 +358,8 @@ impl PluginManager {
                 if !pi.is_enabled {
                     return;
                 }
-                let status = self.build_status_response().await;
-                let _ = plugin.send(status).await;
+                let status_msg = build_status_response(self).await;
+                let _ = plugin.send(status_msg).await;
             }
 
             ReqPayload::RequestCaps(RequestCaps { requested }) => {
@@ -321,7 +369,7 @@ impl PluginManager {
                 }
                 let (granted, denied) = self.evaluate_caps(&requested);
                 plugin.set_capabilities(granted.clone()).await;
-                let caps = PluginStreamResponse {
+                let caps = maowbot_proto::plugs::PluginStreamResponse {
                     payload: Some(RespPayload::CapabilityResponse(CapabilityResponse {
                         granted: granted.into_iter().map(|c| c as i32).collect(),
                         denied: denied.into_iter().map(|c| c as i32).collect(),
@@ -346,10 +394,12 @@ impl PluginManager {
                 if !pi.is_enabled {
                     return;
                 }
-                if pi.capabilities.contains(&PluginCapability::SceneManagement) {
+                let can_switch = pi.capabilities.contains(&maowbot_proto::plugs::PluginCapability::SceneManagement);
+                if can_switch {
                     info!("Plugin '{}' switching scene => {}", pi.name, scene_name);
+                    // Perform the real “scene switch” logic if any...
                 } else {
-                    let err = PluginStreamResponse {
+                    let err = maowbot_proto::plugs::PluginStreamResponse {
                         payload: Some(RespPayload::AuthError(AuthError {
                             reason: "No SceneManagement capability".into(),
                         })),
@@ -363,7 +413,8 @@ impl PluginManager {
                 if !pi.is_enabled {
                     return;
                 }
-                if pi.capabilities.contains(&PluginCapability::SendChat) {
+                let can_send = pi.capabilities.contains(&maowbot_proto::plugs::PluginCapability::SendChat);
+                if can_send {
                     info!("(PLUGIN->BOT) {} => channel='{}' => '{}'",
                           pi.name, channel, text);
                     if let Some(bus) = &self.event_bus {
@@ -377,7 +428,7 @@ impl PluginManager {
                         bus.publish(evt).await;
                     }
                 } else {
-                    let err = PluginStreamResponse {
+                    let err = maowbot_proto::plugs::PluginStreamResponse {
                         payload: Some(RespPayload::AuthError(AuthError {
                             reason: "No SendChat capability".into(),
                         })),
@@ -391,7 +442,11 @@ impl PluginManager {
     fn evaluate_caps(
         &self,
         requested: &[i32]
-    ) -> (Vec<PluginCapability>, Vec<PluginCapability>) {
+    ) -> (
+        Vec<maowbot_proto::plugs::PluginCapability>,
+        Vec<maowbot_proto::plugs::PluginCapability>
+    ) {
+        use maowbot_proto::plugs::PluginCapability;
         let mut granted = Vec::new();
         let mut denied = Vec::new();
 
@@ -413,13 +468,13 @@ impl PluginManager {
         (granted, denied)
     }
 
-    /// Add a plugin connection (in-process or gRPC).
+    /// Adds a plugin connection (in-process or gRPC) to our in-memory list.
     pub async fn add_plugin_connection(&self, plugin: Arc<dyn PluginConnection>) {
         let mut lock = self.plugins.lock().await;
         lock.push(plugin);
     }
 
-    /// Remove a plugin connection from our in-memory list.
+    /// Removes a plugin connection from our in-memory list.
     pub async fn remove_plugin_connection(&self, plugin: &Arc<dyn PluginConnection>) {
         let info = plugin.info().await;
         let mut lock = self.plugins.lock().await;
@@ -428,158 +483,6 @@ impl PluginManager {
             pi.name != info.name
         });
         info!("Removed plugin connection '{}'", info.name);
-    }
-
-    /// Helper to broadcast a single `PluginStreamResponse` to all loaded plugins
-    /// that have `required_cap` (if any).
-    pub async fn broadcast(&self, response: PluginStreamResponse, required_cap: Option<PluginCapability>) {
-        let lock = self.plugins.lock().await;
-        for p in lock.iter() {
-            let pi = p.info().await;
-            if !pi.is_enabled {
-                continue;
-            }
-            if let Some(cap) = &required_cap {
-                if !pi.capabilities.contains(cap) {
-                    continue;
-                }
-            }
-            let _ = p.send(response.clone()).await;
-        }
-    }
-
-    /// Creates a `StatusResponse` listing connected plugins + uptime.
-    pub async fn build_status_response(&self) -> PluginStreamResponse {
-        let connected = {
-            let infos = self.list_connected_plugins().await;
-            infos.into_iter().map(|i| i.name).collect::<Vec<_>>()
-        };
-        let uptime = self.start_time.elapsed().as_secs();
-        PluginStreamResponse {
-            payload: Some(RespPayload::StatusResponse(StatusResponse {
-                connected_plugins: connected,
-                server_uptime: uptime,
-            })),
-        }
-    }
-
-    /// Try to enable or disable a plugin by name. Called by TUI or other code.
-    pub async fn toggle_plugin_async(&self, plugin_name: &str, enable: bool) -> Result<(), Error> {
-        let maybe_rec = {
-            let lock = self.plugin_records.lock().unwrap();
-            lock.iter().find(|r| r.name == plugin_name).cloned()
-        };
-        let rec = match maybe_rec {
-            Some(r) => r,
-            None => return Err(Error::Platform(format!("No known plugin named '{}'", plugin_name))),
-        };
-
-        if rec.enabled == enable {
-            return Ok(());
-        }
-        let updated = PluginRecord {
-            name: rec.name.clone(),
-            plugin_type: rec.plugin_type.clone(),
-            enabled: enable,
-        };
-        self.upsert_plugin_record(updated.clone());
-        info!(
-            "PluginManager: set plugin '{}' to {}",
-            updated.name,
-            if enable { "ENABLED" } else { "DISABLED" },
-        );
-
-        match updated.plugin_type {
-            PluginType::Grpc => {
-                // Look for the connection in memory and call set_enabled
-                let lock = self.plugins.lock().await;
-                for p in lock.iter() {
-                    let pi = p.info().await;
-                    if pi.name == updated.name {
-                        p.set_capabilities(pi.capabilities.clone()).await; // re-send caps
-                        p.set_enabled(enable).await;
-                        break;
-                    }
-                }
-            }
-            PluginType::DynamicLib { .. } => {
-                if enable {
-                    let mut lock = self.plugins.lock().await;
-                    let already_loaded = lock.iter().any(|p| {
-                        let pi = futures_lite::future::block_on(p.info());
-                        pi.name == updated.name
-                    });
-                    drop(lock);
-
-                    if !already_loaded {
-                        // If not loaded yet, actually load it:
-                        if let Err(e) = self.load_in_process_plugin_by_record(&updated).await {
-                            error!("Failed to load '{}': {:?}", updated.name, e);
-                        }
-                    } else {
-                        // If it’s already in memory, just enable it:
-                        let mut lock = self.plugins.lock().await;
-                        for p in lock.iter() {
-                            let pi = p.info().await;
-                            if pi.name == updated.name {
-                                p.set_capabilities(pi.capabilities.clone()).await;
-                                p.set_enabled(true).await;
-                                break;
-                            }
-                        }
-                    }
-                } else {
-                    // If disabling => remove from memory:
-                    let mut lock = self.plugins.lock().await;
-                    if let Some(i) = lock.iter().position(|p| {
-                        let pi = futures_lite::future::block_on(p.info());
-                        pi.name == updated.name
-                    }) {
-                        let plugin_arc = lock.remove(i);
-                        let _ = plugin_arc.stop().await;
-                        info!("Unloaded in-process plugin '{}'", updated.name);
-                    }
-                }
-            }
-        }
-        Ok(())
-    }
-
-    /// Removes a plugin entirely from records + memory.
-    pub async fn remove_plugin(&self, plugin_name: &str) -> Result<(), Error> {
-        let maybe_record = {
-            let lock = self.plugin_records.lock().unwrap();
-            lock.iter().find(|r| r.name == plugin_name).cloned()
-        };
-        let record = match maybe_record {
-            Some(r) => r,
-            None => {
-                return Err(Error::Platform(format!("No known plugin named '{}'", plugin_name)));
-            }
-        };
-
-        // If plugin is loaded in memory, remove it
-        {
-            let mut lock = self.plugins.lock().await;
-            if let Some(pos) = lock.iter().position(|p| {
-                let pi = futures_lite::future::block_on(p.info());
-                pi.name == record.name
-            }) {
-                let plugin_arc = lock.remove(pos);
-                let _ = plugin_arc.stop().await;
-                info!("Stopped and removed in-memory plugin '{}'", record.name);
-            }
-        }
-
-        // Remove from plugin_records
-        {
-            let mut lock = self.plugin_records.lock().unwrap();
-            lock.retain(|r| r.name != record.name);
-        }
-        self.save_plugin_states();
-        info!("Plugin '{}' removed from JSON records.", plugin_name);
-
-        Ok(())
     }
 
     /// Discovers a plugin record from its .so/.dll path, then upserts it.
@@ -594,7 +497,7 @@ impl PluginManager {
         PluginRecord { name: plugin_name, plugin_type, enabled }
     }
 
-    /// Dynamically load a single plugin library if it’s “enabled”.
+    /// Dynamically loads a single plugin library if it is “enabled”.
     pub async fn load_in_process_plugin_by_record(&self, record: &PluginRecord) -> Result<(), Error> {
         let path_str = match &record.plugin_type {
             PluginType::DynamicLib { path } => path.clone(),

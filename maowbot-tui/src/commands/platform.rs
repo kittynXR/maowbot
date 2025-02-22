@@ -3,6 +3,7 @@ use std::io::{Write, stdin, stdout};
 use std::str::FromStr;
 use maowbot_core::models::Platform;
 use maowbot_core::plugins::bot_api::BotApi;
+use maowbot_core::plugins::bot_api::platform_api::PlatformConfigData;
 
 pub async fn handle_platform_command(args: &[&str], bot_api: &Arc<dyn BotApi>) -> String {
     if args.is_empty() {
@@ -176,7 +177,7 @@ async fn handle_platform_remove(plat: Platform, bot_api: &Arc<dyn BotApi>) -> St
 }
 
 async fn remove_platform_config_by_name(
-    list: &[maowbot_core::plugins::bot_api::PlatformConfigData],
+    list: &[PlatformConfigData],
     target_platform_str: &str,
     bot_api: &Arc<dyn BotApi>,
 ) -> Option<String> {

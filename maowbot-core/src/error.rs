@@ -67,7 +67,12 @@ pub enum Error {
 
     #[error("Keyring error: {0}")]
     Keyring(String),
+
+    #[error("Uuid error: {0}")]
+    Uuid(#[from] uuid::Error),
 }
+
+
 
 impl From<String> for Error {
     fn from(s: String) -> Self {
