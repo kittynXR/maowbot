@@ -1,12 +1,10 @@
-//! src/tasks/credential_refresh.rs
-
 use chrono::{Duration};
 use tracing::{info, error};
 use crate::repositories::postgres::PostgresCredentialsRepository;
 use crate::auth::AuthManager;
-// use crate::models::Platform;
 use crate::Error;
 use crate::repositories::postgres::credentials::CredentialsRepository;
+use crate::models::PlatformCredential;
 
 /// Checks for credentials that will expire within `within_minutes` from now.
 /// For each such credential, calls `AuthManager::refresh_platform_credentials`.
@@ -30,15 +28,67 @@ pub async fn refresh_expiring_tokens(
     // For each credential, attempt to refresh
     for cred in expiring {
         let platform = cred.platform.clone();
-        let user_id = cred.user_id.clone();
+        let user_id = cred.user_id;
 
-        // Because refresh_platform_credentials requires (platform, user_id)
-        // and it returns a new credential on success:
         match auth_manager.refresh_platform_credentials(&platform, &user_id).await {
             Ok(new_cred) => {
                 info!(
                     "Successfully refreshed credential for platform={:?}, user_id={}",
                     new_cred.platform, new_cred.user_id
+                );
+            }
+            Err(e) => {
+                error!(
+                    "Failed to refresh credential for platform={:?}, user_id={}: {:?}",
+                    platform, user_id, e
+                );
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Refreshes **all** credentials in the database that have a valid `refresh_token`.
+/// This ensures both “bot” credentials (`is_bot = true`) and user “account” credentials
+/// (`is_bot = false`) are attempted. If the refresh fails, it logs the error but continues.
+///
+/// This also covers the scenario where we simply want to refresh everything at startup.
+pub async fn refresh_all_refreshable_credentials(
+    creds_repo: &PostgresCredentialsRepository,
+    auth_manager: &mut AuthManager,
+) -> Result<(), Error> {
+    let all_creds = creds_repo.get_all_credentials().await?;
+    let mut refreshable = Vec::new();
+
+    // Gather only those that have a refresh_token (indicating they're refreshable)
+    for cred in &all_creds {
+        if cred.refresh_token.is_some() {
+            refreshable.push(cred.clone());
+        }
+    }
+
+    if refreshable.is_empty() {
+        info!("No refreshable credentials found in the database.");
+        return Ok(());
+    }
+
+    info!(
+        "Found {} refreshable credential(s). Attempting to refresh all...",
+        refreshable.len()
+    );
+
+    for cred in refreshable {
+        let platform = cred.platform.clone();
+        let user_id = cred.user_id;
+        match auth_manager.refresh_platform_credentials(&platform, &user_id).await {
+            Ok(updated_cred) => {
+                info!(
+                    "Refreshed credential for platform={:?}, user_id={}. \
+                     New expires_at={:?}",
+                    updated_cred.platform,
+                    updated_cred.user_id,
+                    updated_cred.expires_at
                 );
             }
             Err(e) => {

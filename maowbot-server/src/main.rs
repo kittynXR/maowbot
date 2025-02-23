@@ -57,6 +57,9 @@ use maowbot_core::platforms::twitch::TwitchAuthenticator;
 use maowbot_core::repositories::CredentialsRepository;
 use maowbot_core::tasks::autostart::run_autostart;
 
+// -- NEW: We'll import our new function:
+use maowbot_core::tasks::credential_refresh::refresh_all_refreshable_credentials;
+
 mod portable_postgres;
 use portable_postgres::*;
 
@@ -102,33 +105,22 @@ struct Args {
     log_level: String,
 }
 
-/// Initialize tracing (logging) at the specified log level.
 fn init_tracing(level: &str) {
-    // If RUST_LOG is set externally, use it.
-    // Otherwise default to maowbot=<level> plus any other crates:
-    let default_filter = format!("maowbot={},twitch_irc={}", level, level);
-
-    let filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new(default_filter));
-
-    let sub = tracing_subscriber::fmt()
-        .with_env_filter(filter)
-        .finish();
-
+    let default_filter = format!("maowbot={0},twitch_irc={0}", level);
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(default_filter));
+    let sub = tracing_subscriber::fmt().with_env_filter(filter).finish();
     tracing::subscriber::set_global_default(sub)
         .expect("Failed to set global subscriber");
+    tracing_log::LogTracer::init().ok();
 }
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Parse CLI arguments first
     let args = Args::parse();
-
-    // Initialize tracing with the specified log level
     init_tracing(&args.log_level);
-    tracing_log::LogTracer::init().expect("Failed to init LogTracer");
+
     info!("MaowBot starting. mode={}, headless={}, tui={}, auth={}",
-          args.mode, args.headless, args.tui, args.auth);
+        args.mode, args.headless, args.tui, args.auth);
 
     match args.mode.as_str() {
         "server" => {
@@ -145,33 +137,30 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             error!("Invalid mode '{}'. Use --mode=server or --mode=client.", other);
         }
     }
+
     info!("Main finished. Goodbye!");
     Ok(())
 }
 
 async fn run_server(args: Args) -> Result<(), Error> {
-    // 1) Start local Postgres if desired
+    // Start local Postgres if desired
     let pg_bin_dir = "./postgres/bin";
     let pg_data_dir = "./postgres/data";
     let port = 5432;
 
-    ensure_db_initialized(pg_bin_dir, pg_data_dir)
-        .map_err(|e| Error::Io(e))?;
-    start_postgres(pg_bin_dir, pg_data_dir, port)
-        .map_err(|e| Error::Io(e))?;
-    create_database(pg_bin_dir, port, "maowbot")
-        .map_err(|e| Error::Io(e))?;
+    ensure_db_initialized(pg_bin_dir, pg_data_dir)?;
+    start_postgres(pg_bin_dir, pg_data_dir, port)?;
+    create_database(pg_bin_dir, port, "maowbot")?;
 
-    // 2) Connect
+    // Connect
     let db_url = args.db_path.clone();
     info!("Using Postgres DB URL: {}", db_url);
     let db = Database::new(&db_url).await?;
     db.migrate().await?;
 
-    // 2b) If no users in the `users` table, prompt once for an owner username:
     maybe_create_owner_user(&db).await?;
 
-    // 3) Event bus & tasks
+    // Event bus & maintenance task
     let event_bus = Arc::new(EventBus::new());
     let _maintenance_handle = spawn_biweekly_maintenance_task(
         db.clone(),
@@ -179,12 +168,10 @@ async fn run_server(args: Args) -> Result<(), Error> {
         event_bus.clone(),
     );
 
-    // 4) Auth, Repos
+    // Build Repos & Auth
     let key = get_master_key()?;
     let encryptor = Encryptor::new(&key)?;
-    let creds_repo_arc: Arc<dyn CredentialsRepository + Send + Sync> =
-        Arc::new(PostgresCredentialsRepository::new(db.pool().clone(), encryptor.clone()));
-
+    let creds_repo_arc = Arc::new(PostgresCredentialsRepository::new(db.pool().clone(), encryptor.clone()));
     let platform_config_repo = Arc::new(PostgresPlatformConfigRepository::new(db.pool().clone()));
     let bot_config_repo = Arc::new(PostgresBotConfigRepository::new(db.pool().clone()));
     let user_repo_arc = Arc::new(UserRepository::new(db.pool().clone()));
@@ -195,18 +182,17 @@ async fn run_server(args: Args) -> Result<(), Error> {
         bot_config_repo.clone(),
     );
 
-    // Build user manager & user service
+    // User manager & message service
     let identity_repo = PlatformIdentityRepository::new(db.pool().clone());
     let analysis_repo = PostgresUserAnalysisRepository::new(db.pool().clone());
     let default_user_mgr = DefaultUserManager::new(
         user_repo_arc.clone(),
         identity_repo,
-        analysis_repo
+        analysis_repo,
     );
     let user_manager = Arc::new(default_user_mgr);
     let user_service = Arc::new(UserService::new(user_manager.clone()));
 
-    // Build message service
     let trim_policy = TrimPolicy {
         max_age_seconds: Some(24 * 3600),
         spam_score_cutoff: Some(5.0),
@@ -221,7 +207,7 @@ async fn run_server(args: Args) -> Result<(), Error> {
     let chat_cache = Arc::new(Mutex::new(chat_cache));
     let message_service = Arc::new(MessageService::new(chat_cache, event_bus.clone()));
 
-    // 5) PlatformManager
+    // Platform manager
     use maowbot_core::platforms::manager::PlatformManager;
     let platform_manager = Arc::new(PlatformManager::new(
         message_service.clone(),
@@ -230,7 +216,7 @@ async fn run_server(args: Args) -> Result<(), Error> {
         creds_repo_arc.clone(),
     ));
 
-    // 6) PluginManager
+    // Plugin manager
     let mut plugin_manager = PluginManager::new(
         args.plugin_passphrase.clone(),
         user_repo_arc.clone(),
@@ -238,33 +224,48 @@ async fn run_server(args: Args) -> Result<(), Error> {
     );
     plugin_manager.subscribe_to_event_bus(event_bus.clone());
     plugin_manager.set_event_bus(event_bus.clone());
-    plugin_manager.set_auth_manager(Arc::new(Mutex::new(auth_manager)));
 
-    // 7) Possibly load plugins
+    // Wrap the auth_manager in Arc<Mutex<>> so plugin_manager can use it
+    let shared_auth_manager = Arc::new(Mutex::new(auth_manager));
+    plugin_manager.set_auth_manager(shared_auth_manager.clone());
+
+    // Attempt to load optional in-process plugin
     if let Some(path) = &args.in_process_plugin {
         if let Err(e) = plugin_manager.load_in_process_plugin(path).await {
             error!("Failed to load in‑process plugin from {}: {:?}", path, e);
         }
     }
+    // Load all in-process plugins in "plugs" folder
     if let Err(e) = plugin_manager.load_plugins_from_folder("plugs").await {
-        error!("Failed to load plugins from folder: {:?}", e);
+        error!("Failed to load plugins from folder 'plugs': {:?}", e);
     }
 
     // Expose BotApi
     let bot_api: Arc<dyn BotApi> = Arc::new(plugin_manager.clone());
 
-    // (1) -- Call run_autostart so that "discord, cutecat_chat" actually starts up
+    // (A) => Immediately attempt to refresh all refreshable credentials on bot startup
+    {
+        let mut lock = shared_auth_manager.lock().await;
+        if let Err(e) = refresh_all_refreshable_credentials(
+            creds_repo_arc.as_ref(),
+            &mut *lock
+        ).await {
+            error!("Failed to refresh credentials on startup => {:?}", e);
+        }
+    }
+
+    // (B) => run the autostart logic
     if let Err(e) = run_autostart(bot_config_repo.as_ref(), bot_api.clone()).await {
         error!("Autostart error => {:?}", e);
     }
 
-    // If TUI was requested => spawn the TuiModule
+    // If TUI was requested
     if args.tui {
         let raw_tui = Arc::new(TuiModule::new(bot_api.clone(), event_bus.clone()).await);
         raw_tui.spawn_tui_thread().await;
     }
 
-    // Set BotApi on loaded plugins
+    // Now set BotApi on all loaded plugins
     {
         let lock = plugin_manager.plugins.lock().await;
         for p in lock.iter() {
@@ -272,12 +273,15 @@ async fn run_server(args: Args) -> Result<(), Error> {
         }
     }
 
-    // 8) Start gRPC server
+    // Start gRPC server with TLS
     let identity = load_or_generate_certs()?;
     let tls_config = ServerTlsConfig::new().identity(identity);
     let addr: SocketAddr = args.server_addr.parse()?;
     info!("Starting Tonic gRPC server on {}", addr);
-    let service = PluginServiceGrpc { manager: Arc::new(plugin_manager) };
+
+    let service = PluginServiceGrpc {
+        manager: Arc::new(plugin_manager)
+    };
     let server_future = Server::builder()
         .tls_config(tls_config)?
         .add_service(PluginServiceServer::new(service))
@@ -290,7 +294,7 @@ async fn run_server(args: Args) -> Result<(), Error> {
         }
     });
 
-    // 9) Handle Ctrl-C => signal event_bus
+    // Ctrl‑C => shutdown
     let _ctrlc_handle = tokio::spawn(async move {
         if let Err(e) = tokio::signal::ctrl_c().await {
             error!("Failed to listen for Ctrl‑C: {:?}", e);
@@ -299,7 +303,7 @@ async fn run_server(args: Args) -> Result<(), Error> {
         eb_clone.shutdown();
     });
 
-    // 10) Main event loop
+    // Main loop => send Tick events or watch for shutdown
     let mut shutdown_rx = event_bus.shutdown_rx.clone();
     loop {
         tokio::select! {
@@ -315,12 +319,12 @@ async fn run_server(args: Args) -> Result<(), Error> {
         }
     }
 
-    // 11) Stop gRPC
+    // Stop gRPC
     info!("Stopping gRPC server...");
     srv_handle.abort();
 
-    // 12) Stop Postgres
-    stop_postgres(pg_bin_dir, pg_data_dir).map_err(|e| Error::Io(e))?;
+    // Stop Postgres
+    stop_postgres(pg_bin_dir, pg_data_dir)?;
 
     Ok(())
 }
@@ -344,7 +348,6 @@ async fn maybe_create_owner_user(db: &Database) -> Result<(), Error> {
 
         let user_id = uuid::Uuid::new_v4();
         let now = chrono::Utc::now();
-        // Insert into users
         sqlx::query(
             r#"
             INSERT INTO users (user_id, global_username, created_at, last_seen, is_active)
@@ -358,7 +361,6 @@ async fn maybe_create_owner_user(db: &Database) -> Result<(), Error> {
             .execute(db.pool())
             .await?;
 
-        // Mark in bot_config => config_key='owner_user_id'
         sqlx::query(
             r#"
             INSERT INTO bot_config (config_key, config_value)
@@ -376,7 +378,6 @@ async fn maybe_create_owner_user(db: &Database) -> Result<(), Error> {
     Ok(())
 }
 
-/// "client" mode (testing usage)
 async fn run_client(args: Args) -> Result<(), Error> {
     info!("Running in CLIENT mode. Connecting to server...");
 
@@ -469,9 +470,9 @@ fn load_or_generate_certs() -> Result<Identity, Error> {
         "0.0.0.0".to_string(),
     ];
 
-    let CertifiedKey { cert, key_pair } = generate_simple_self_signed(alt_names)?;
-    let cert_pem = cert.pem();
-    let key_pem  = key_pair.serialize_pem();
+    let certified = generate_simple_self_signed(alt_names)?;
+    let cert_pem = certified.cert.pem();
+    let key_pem  = certified.key_pair.serialize_pem();
 
     fs::create_dir_all(cert_folder)?;
     fs::File::create(&cert_path)?.write_all(cert_pem.as_bytes())?;
