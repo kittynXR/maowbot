@@ -1,5 +1,4 @@
 //! src/platforms/twitch_irc/client.rs
-
 use std::io;
 use std::sync::Arc;
 
@@ -23,6 +22,11 @@ pub struct ParsedTwitchMsg {
 }
 
 impl ParsedTwitchMsg {
+    /// Parses a raw IRC line into tags, prefix, command, params, trailing, etc.
+    ///
+    /// **Important Fix**: For lines like `PING :tmi.twitch.tv`, we now handle the case where
+    /// after removing `PING`, the remainder is `":tmi.twitch.tv"` (no leading space).
+    /// We detect that and set `trailing = Some("tmi.twitch.tv")` so we can PONG correctly.
     pub fn parse_irc_line(line: &str) -> Self {
         let mut rest = line.trim();
         let mut tags = None;
@@ -31,7 +35,7 @@ impl ParsedTwitchMsg {
         let mut params = Vec::new();
         let mut trailing = None;
 
-        // 1) extract tags
+        // 1) extract tags if line starts with '@'
         if rest.starts_with('@') {
             if let Some(space_pos) = rest.find(' ') {
                 tags = Some(rest[..space_pos].to_string());
@@ -47,7 +51,7 @@ impl ParsedTwitchMsg {
             }
         }
 
-        // 2) extract prefix
+        // 2) extract prefix if line starts with ':'
         if rest.starts_with(':') {
             if let Some(space_pos) = rest.find(' ') {
                 prefix = Some(rest[..space_pos].trim_start_matches(':').to_string());
@@ -63,27 +67,38 @@ impl ParsedTwitchMsg {
             }
         }
 
-        // 3) command
+        // 3) The next token is the command, then the remainder are potential params + trailing
         let mut parts = rest.splitn(2, ' ');
         if let Some(cmd) = parts.next() {
             command = cmd.to_string();
         }
         rest = parts.next().unwrap_or("");
 
-        // 4) check for trailing
-        if let Some(idx) = rest.find(" :") {
-            // trailing after " :"
+        // 4) Attempt to find the trailing portion after " :"
+        //    or handle the case if rest starts directly with ':' (e.g. `PING :stuff`)
+        if rest.starts_with(':') {
+            // [FIX] This case handles lines like "PING :tmi.twitch.tv"
+            // where there's no preceding space before the colon in `rest`.
+            trailing = Some(rest.trim_start_matches(':').to_string());
+        } else if let Some(idx) = rest.find(" :") {
+            // old logic for typical lines like "PRIVMSG #channel :text"
             trailing = Some(rest[idx + 2..].to_string());
             let before = rest[..idx].trim();
             if !before.is_empty() {
                 params.extend(before.split_whitespace().map(|s| s.to_string()));
             }
         } else {
-            // all params
+            // otherwise, no " :", so we treat everything as normal params
             params.extend(rest.split_whitespace().map(|s| s.to_string()));
         }
 
-        Self { tags, prefix, command, params, trailing }
+        Self {
+            tags,
+            prefix,
+            command,
+            params,
+            trailing,
+        }
     }
 }
 
