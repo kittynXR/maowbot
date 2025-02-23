@@ -38,9 +38,7 @@ impl TwitchEventSubPlatform {
     }
 
     /// The main loop that attempts to connect to wss://eventsub.wss.twitch.tv/ws
-    /// and handle keepalives, notifications, etc. This is designed to be called once
-    /// from an external `tokio::spawn` so that when that handle is aborted, this loop
-    /// also terminates. No second spawn is needed.
+    /// and handle keepalives, notifications, etc.
     pub async fn start_loop(&mut self) -> Result<(), Error> {
         let url = "wss://eventsub.wss.twitch.tv/ws";
 
@@ -60,7 +58,7 @@ impl TwitchEventSubPlatform {
             info!("[TwitchEventSub] Connected to {}. Starting read loop...", url);
             self.connection_status = ConnectionStatus::Connected;
 
-            // run_read_loop returns Ok(bool) => "bool indicates 'session_reconnect' or normal close"
+            // run_read_loop returns Ok(bool) => "bool indicates session_reconnect"
             let read_loop_result = self.run_read_loop(&mut ws).await;
 
             match read_loop_result {
@@ -129,7 +127,7 @@ impl TwitchEventSubPlatform {
 
                 match msg_type {
                     Some("session_welcome") => {
-                        info!("[TwitchEventSub] session_welcome => we are connected!");
+                        info!("[TwitchEventSub] session_welcome => connected OK.");
 
                         let session_id = parsed
                             .get("payload").and_then(|p| p.get("session"))
@@ -144,7 +142,7 @@ impl TwitchEventSubPlatform {
                         }
                     }
                     Some("session_keepalive") => {
-                        debug!("[TwitchEventSub] keepalive => do nothing.");
+                        debug!("[TwitchEventSub] keepalive => no action needed");
                     }
                     Some("session_reconnect") => {
                         warn!("[TwitchEventSub] session_reconnect => must reconnect soon.");
@@ -181,10 +179,11 @@ impl TwitchEventSubPlatform {
             }
         }
 
-        // if we drop out of the while loop, ws is closed
+        // if we drop out of the while, WS is closed
         Ok(false)
     }
 
+    /// Modify this function to add your new channel points event subscriptions.
     async fn subscribe_all_events(&self, session_id: &str) -> Result<(), Error> {
         let cred = match &self.credentials {
             Some(c) => c,
@@ -206,7 +205,9 @@ impl TwitchEventSubPlatform {
 
         let http = ReqwestClient::new();
 
+        // Existing events plus your new channel points events:
         let events_to_subscribe = vec![
+            // existing examples:
             ("channel.bits.use", "beta",  json!({ "broadcaster_user_id": broadcaster_id })),
             ("channel.update",   "2",     json!({ "broadcaster_user_id": broadcaster_id })),
             ("channel.follow",   "2",     json!({
@@ -248,6 +249,20 @@ impl TwitchEventSubPlatform {
                 "broadcaster_user_id": broadcaster_id,
                 "moderator_user_id": broadcaster_id
             })),
+
+            // ----- ADD THESE 6 new channel points events -----
+            ("channel.channel_points_automatic_reward_redemption.add", "beta",
+             json!({ "broadcaster_user_id": broadcaster_id })),
+            ("channel.channel_points_custom_reward.add", "1",
+             json!({ "broadcaster_user_id": broadcaster_id })),
+            ("channel.channel_points_custom_reward.update", "1",
+             json!({ "broadcaster_user_id": broadcaster_id })),
+            ("channel.channel_points_custom_reward.remove", "1",
+             json!({ "broadcaster_user_id": broadcaster_id })),
+            ("channel.channel_points_custom_reward_redemption.add", "1",
+             json!({ "broadcaster_user_id": broadcaster_id })),
+            ("channel.channel_points_custom_reward_redemption.update", "1",
+             json!({ "broadcaster_user_id": broadcaster_id })),
         ];
 
         for (etype, version, condition) in events_to_subscribe {
@@ -307,25 +322,20 @@ impl PlatformAuth for TwitchEventSubPlatform {
 #[async_trait]
 impl PlatformIntegration for TwitchEventSubPlatform {
     async fn connect(&mut self) -> Result<(), Error> {
-        // In the new approach, we don't spawn the loop here. We just do a check:
         if matches!(self.connection_status, ConnectionStatus::Connected) {
             return Ok(());
         }
-        // The actual loop is started externally by manager's tokio::spawn.
-        // So just mark status (optional).
         self.connection_status = ConnectionStatus::Connecting;
         Ok(())
     }
 
     async fn disconnect(&mut self) -> Result<(), Error> {
         self.connection_status = ConnectionStatus::Disconnected;
-        // In a more advanced design, you could store the actual socket
-        // and close it here. For now, the manager’s handle aborts.
         Ok(())
     }
 
     async fn send_message(&self, _channel: &str, _message: &str) -> Result<(), Error> {
-        // no-op (EventSub is not a chat interface)
+        // EventSub is not a chat interface, so no-op
         Ok(())
     }
 

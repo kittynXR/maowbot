@@ -5,7 +5,7 @@
 
 pub mod db_logger;
 
-use std::sync::{Arc};
+use std::sync::Arc;
 use tokio::sync::{mpsc, watch, Mutex};
 use chrono::{DateTime, Utc};
 
@@ -61,6 +61,24 @@ pub enum TwitchEventSubData {
     ChannelHypeTrainEnd(crate::platforms::twitch_eventsub::events::ChannelHypeTrainEnd),
     ChannelShoutoutCreate(crate::platforms::twitch_eventsub::events::ChannelShoutoutCreate),
     ChannelShoutoutReceive(crate::platforms::twitch_eventsub::events::ChannelShoutoutReceive),
+    ChannelPointsAutomaticRewardRedemptionAddV2(
+        crate::platforms::twitch_eventsub::events::ChannelPointsAutomaticRewardRedemptionAddV2
+    ),
+    ChannelPointsCustomRewardAdd(
+        crate::platforms::twitch_eventsub::events::ChannelPointsCustomReward
+    ),
+    ChannelPointsCustomRewardUpdate(
+        crate::platforms::twitch_eventsub::events::ChannelPointsCustomReward
+    ),
+    ChannelPointsCustomRewardRemove(
+        crate::platforms::twitch_eventsub::events::ChannelPointsCustomReward
+    ),
+    ChannelPointsCustomRewardRedemptionAdd(
+        crate::platforms::twitch_eventsub::events::ChannelPointsCustomRewardRedemption
+    ),
+    ChannelPointsCustomRewardRedemptionUpdate(
+        crate::platforms::twitch_eventsub::events::ChannelPointsCustomRewardRedemption
+    ),
 }
 
 /// Each subscriber gets its own `mpsc::Sender<BotEvent>` for guaranteed delivery.
