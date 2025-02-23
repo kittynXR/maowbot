@@ -1,9 +1,8 @@
 use async_trait::async_trait;
+use futures_util::StreamExt;
 use tokio::time::{sleep, Duration};
-use tokio::sync::Mutex;
-use futures_util::{StreamExt};
 use tokio_tungstenite::tungstenite::protocol::Message;
-use tokio_tungstenite::{connect_async};
+use tokio_tungstenite::connect_async;
 use tracing::{error, info, warn, debug};
 use std::sync::Arc;
 use reqwest::Client as ReqwestClient;
@@ -18,6 +17,7 @@ use super::events::{
     EventSubNotificationEnvelope,
 };
 
+/// TwitchEventSubPlatform holds all relevant state for the websocket session.
 pub struct TwitchEventSubPlatform {
     pub credentials: Option<PlatformCredential>,
     pub connection_status: ConnectionStatus,
@@ -33,8 +33,14 @@ impl TwitchEventSubPlatform {
         }
     }
 
+    pub fn set_event_bus(&mut self, event_bus: Arc<EventBus>) {
+        self.event_bus = Some(event_bus);
+    }
+
     /// The main loop that attempts to connect to wss://eventsub.wss.twitch.tv/ws
-    /// and handle keepalives, notifications, etc.
+    /// and handle keepalives, notifications, etc. This is designed to be called once
+    /// from an external `tokio::spawn` so that when that handle is aborted, this loop
+    /// also terminates. No second spawn is needed.
     pub async fn start_loop(&mut self) -> Result<(), Error> {
         let url = "wss://eventsub.wss.twitch.tv/ws";
 
@@ -54,6 +60,7 @@ impl TwitchEventSubPlatform {
             info!("[TwitchEventSub] Connected to {}. Starting read loop...", url);
             self.connection_status = ConnectionStatus::Connected;
 
+            // run_read_loop returns Ok(bool) => "bool indicates 'session_reconnect' or normal close"
             let read_loop_result = self.run_read_loop(&mut ws).await;
 
             match read_loop_result {
@@ -124,7 +131,6 @@ impl TwitchEventSubPlatform {
                     Some("session_welcome") => {
                         info!("[TwitchEventSub] session_welcome => we are connected!");
 
-                        // GET THE session_id
                         let session_id = parsed
                             .get("payload").and_then(|p| p.get("session"))
                             .and_then(|s| s.get("id"))
@@ -132,7 +138,7 @@ impl TwitchEventSubPlatform {
                             .unwrap_or("");
                         debug!("[TwitchEventSub] session_id='{}'", session_id);
 
-                        // TRY SUBSCRIBING to all events
+                        // Attempt to subscribe to events you want:
                         if let Err(e) = self.subscribe_all_events(session_id).await {
                             error!("Error subscribing to events => {:?}", e);
                         }
@@ -179,9 +185,7 @@ impl TwitchEventSubPlatform {
         Ok(false)
     }
 
-    /// The function that issues POST calls to Helix to subscribe to each event type you want.
     async fn subscribe_all_events(&self, session_id: &str) -> Result<(), Error> {
-        // 1) We need the Helix token, client_id, broadcaster user ID, etc.
         let cred = match &self.credentials {
             Some(c) => c,
             None => return Err(Error::Auth("No credential in TwitchEventSubPlatform".into())),
@@ -192,27 +196,17 @@ impl TwitchEventSubPlatform {
             .and_then(|j| j.as_str())
         {
             Some(s) => s.to_string(),
-            None => {
-                // fallback to the main credential's platform_id if you store client_id there
-                // Or if you store it in the DB "platform_config" row, you'd fetch it differently.
-                // We'll guess you store it in `cred.platform_id`.
-                cred.platform_id.clone().unwrap_or_default()
-            }
+            None => cred.platform_id.clone().unwrap_or_default(), // fallback
         };
 
         let broadcaster_id = cred.platform_id.clone().unwrap_or_default();
         if broadcaster_id.is_empty() {
-            // For some events, we also need a "moderator_user_id". We'll just reuse the same ID
-            // or skip. Up to you how you manage this.
             return Err(Error::Auth("No broadcaster user_id in credential.platform_id!".into()));
         }
 
         let http = ReqwestClient::new();
 
-        // 2) Build up your set of subscription specs. For each event, define: (type, version, condition).
-        //    Then call a helper that does the POST.
         let events_to_subscribe = vec![
-            // (type, version, condition), minimal examples
             ("channel.bits.use", "beta",  json!({ "broadcaster_user_id": broadcaster_id })),
             ("channel.update",   "2",     json!({ "broadcaster_user_id": broadcaster_id })),
             ("channel.follow",   "2",     json!({
@@ -257,7 +251,6 @@ impl TwitchEventSubPlatform {
         ];
 
         for (etype, version, condition) in events_to_subscribe {
-            // Build the body
             let body = json!({
                 "type": etype,
                 "version": version,
@@ -281,25 +274,13 @@ impl TwitchEventSubPlatform {
             let status = resp.status();
             if !status.is_success() {
                 let text = resp.text().await.unwrap_or_default();
-                warn!("[TwitchEventSub] Could not subscribe to {} => HTTP {} => {}",etype, status, text);
+                warn!("[TwitchEventSub] Could not subscribe to {} => HTTP {} => {}", etype, status, text);
             } else {
                 debug!("[TwitchEventSub] subscribed to {} OK", etype);
             }
         }
 
         Ok(())
-    }
-
-    pub fn set_event_bus(&mut self, event_bus: Arc<EventBus>) {
-        self.event_bus = Some(event_bus);
-    }
-
-    fn clone_for_task(&self) -> Self {
-        Self {
-            credentials: self.credentials.clone(),
-            connection_status: self.connection_status.clone(),
-            event_bus: self.event_bus.clone(),
-        }
     }
 }
 
@@ -326,27 +307,25 @@ impl PlatformAuth for TwitchEventSubPlatform {
 #[async_trait]
 impl PlatformIntegration for TwitchEventSubPlatform {
     async fn connect(&mut self) -> Result<(), Error> {
+        // In the new approach, we don't spawn the loop here. We just do a check:
         if matches!(self.connection_status, ConnectionStatus::Connected) {
             return Ok(());
         }
-        let mut self_clone = self.clone_for_task();
-        tokio::spawn(async move {
-            if let Err(e) = self_clone.start_loop().await {
-                error!("[TwitchEventSub] start_loop error => {:?}", e);
-            }
-            info!("[TwitchEventSub] EventSub loop ended.");
-        });
+        // The actual loop is started externally by manager's tokio::spawn.
+        // So just mark status (optional).
+        self.connection_status = ConnectionStatus::Connecting;
         Ok(())
     }
 
     async fn disconnect(&mut self) -> Result<(), Error> {
         self.connection_status = ConnectionStatus::Disconnected;
-        // In a real design, you'd signal the read loop to stop or drop the connection.
+        // In a more advanced design, you could store the actual socket
+        // and close it here. For now, the manager’s handle aborts.
         Ok(())
     }
 
     async fn send_message(&self, _channel: &str, _message: &str) -> Result<(), Error> {
-        // no-op
+        // no-op (EventSub is not a chat interface)
         Ok(())
     }
 

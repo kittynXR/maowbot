@@ -9,6 +9,7 @@ pub enum ConnectionStatus {
     Disconnected,
     Reconnecting,
     Error(String),
+    Connecting,
 }
 
 #[cfg_attr(test, mockall::automock)]

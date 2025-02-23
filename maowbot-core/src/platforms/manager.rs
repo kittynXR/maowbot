@@ -1,5 +1,3 @@
-// File: maowbot-core/src/platforms/manager.rs
-
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::task::JoinHandle;
@@ -16,7 +14,7 @@ use crate::repositories::postgres::credentials::CredentialsRepository;
 use crate::platforms::discord::runtime::DiscordPlatform;
 use crate::platforms::{ChatPlatform, PlatformIntegration};
 use crate::platforms::twitch::runtime::TwitchPlatform;
-use crate::platforms::vrchat_pipeline::runtime::VRChatPlatform;  // <-- CHANGED
+use crate::platforms::vrchat_pipeline::runtime::VRChatPlatform;
 use crate::platforms::twitch_irc::runtime::TwitchIrcPlatform;
 use crate::platforms::twitch_eventsub::runtime::TwitchEventSubPlatform;
 
@@ -126,6 +124,14 @@ impl PlatformManager {
             guard.remove(&key)
         };
         if let Some(rh) = handle_opt {
+            // If we need a graceful close, call it now:
+            if platform_str.eq_ignore_ascii_case("twitch-eventsub") {
+                // If desired, you can do a more elaborate approach here,
+                // like storing an Arc<Mutex<TwitchEventSubPlatform>> if
+                // you want a real .disconnect(). For now, the read loop
+                // will see the abort and close. Or see runtime's updated
+                // `disconnect()` usage.
+            }
             rh.join_handle.abort();
             info!("Stopped runtime for platform='{platform_str}', user_id={}", user.user_id);
         } else {
@@ -143,11 +149,9 @@ impl PlatformManager {
         let message_svc = Arc::clone(&self.message_svc);
         let user_svc = Arc::clone(&self.user_svc);
 
-        // Prepare strings for storing in the handle:
         let platform_str = "discord".to_string();
         let user_id_str = credential.user_id.to_string();
 
-        // Clone them for the async move closure
         let platform_str_cloned = platform_str.clone();
         let user_id_str_cloned = user_id_str.clone();
 
@@ -346,17 +350,23 @@ impl PlatformManager {
         let user_id_str = credential.user_id.to_string();
         let user_id_str_cloned = user_id_str.clone();
 
-        let join_handle = tokio::spawn(async move {
-            let mut eventsub = TwitchEventSubPlatform::new();
-            eventsub.credentials = Some(credential.clone());
-            eventsub.set_event_bus(event_bus);
+        // Create the platform object:
+        let mut eventsub = TwitchEventSubPlatform::new();
+        eventsub.credentials = Some(credential.clone());
+        eventsub.set_event_bus(event_bus);
 
-            if let Err(err) = eventsub.connect().await {
-                error!("[TwitchEventSub] connect error: {err:?}");
-                return;
+        // We'll spawn the real tungstenite loop inside the single manager task:
+        let join_handle = tokio::spawn(async move {
+            // Start the socket read loop inline here
+            match eventsub.start_loop().await {
+                Ok(_) => {
+                    info!("[TwitchEventSub] start_loop returned OK for user_id={user_id_str_cloned}");
+                }
+                Err(e) => {
+                    error!("[TwitchEventSub] start_loop error => {:?}", e);
+                }
             }
-            info!("[TwitchEventSub] connect() done for user_id={user_id_str_cloned}");
-            // the tungstenite read loop is inside eventsub
+            info!("[TwitchEventSub] Task ended for user_id={user_id_str_cloned}");
         });
 
         Ok(PlatformRuntimeHandle {
