@@ -1,3 +1,5 @@
+// File: maowbot-tui/src/commands/user.rs (UPDATED)
+
 use std::sync::Arc;
 use std::io::{stdin, stdout, Write};
 use uuid::Uuid;
@@ -131,6 +133,7 @@ async fn user_edit(typed_user_or_id: &str, bot_api: &Arc<dyn BotApi>) -> String 
 }
 
 async fn user_info(typed_user_or_id: &str, bot_api: &Arc<dyn BotApi>) -> String {
+    // Resolve user ID
     let user_id = match Uuid::parse_str(typed_user_or_id) {
         Ok(u) => u,
         Err(_) => {
@@ -143,14 +146,57 @@ async fn user_info(typed_user_or_id: &str, bot_api: &Arc<dyn BotApi>) -> String 
         }
     };
 
-    match bot_api.get_user(user_id).await {
-        Ok(Some(u)) => format!(
-            "user_id='{}', global_username='{:?}', created_at={}, last_seen={}, is_active={}",
-            u.user_id, u.global_username, u.created_at, u.last_seen, u.is_active
-        ),
-        Ok(None) => format!("User '{}' not found.", user_id),
-        Err(e) => format!("Error fetching user '{}': {:?}", user_id, e),
+    // Fetch user record
+    let maybe_user = bot_api.get_user(user_id).await;
+    let user = match maybe_user {
+        Ok(Some(u)) => u,
+        Ok(None) => return format!("User '{}' not found.", user_id),
+        Err(e) => return format!("Error fetching user '{}': {:?}", user_id, e),
+    };
+
+    // Start building output
+    let mut out = String::new();
+    out.push_str(&format!("user_id={}\n", user.user_id));
+    out.push_str(&format!(
+        "global_username={}\n",
+        user.global_username.as_deref().unwrap_or("(none)")
+    ));
+    out.push_str(&format!("created_at={}\n", user.created_at));
+    out.push_str(&format!("last_seen={}\n", user.last_seen));
+    out.push_str(&format!("is_active={}\n", user.is_active));
+
+    // Now fetch all credentials belonging to this user
+    let all_creds = match bot_api.list_credentials(None).await {
+        Ok(list) => list,
+        Err(e) => {
+            out.push_str(&format!("Error listing user credentials => {e}\n"));
+            return out;
+        }
+    };
+
+    let user_creds: Vec<_> = all_creds.into_iter().filter(|c| c.user_id == user_id).collect();
+
+    if user_creds.is_empty() {
+        out.push_str("No accounts or platforms associated with this user.\n");
+    } else {
+        out.push_str("\n-- Accounts & Platforms --\n");
+        for c in &user_creds {
+            out.push_str(&format!("platform={:?}\n", c.platform));
+            out.push_str(&format!("credential_id={}\n", c.credential_id));
+            out.push_str(&format!("credential_type={:?}\n", c.credential_type));
+            out.push_str(&format!("is_bot={}\n", c.is_bot));
+            out.push_str(&format!("primary_token={}\n", c.primary_token));
+            let refresh_str = c.refresh_token.as_deref().unwrap_or("(none)");
+            out.push_str(&format!("refresh_token={}\n", refresh_str));
+            out.push_str(&format!("expires_at={:?}\n", c.expires_at));
+            out.push_str(&format!("created_at={}\n", c.created_at));
+            out.push_str(&format!("updated_at={}\n", c.updated_at));
+            out.push_str(&format!("additional_data={:?}\n", c.additional_data));
+            out.push_str("\n");
+        }
     }
+
+    out
 }
 
 async fn user_search(query: &str, bot_api: &Arc<dyn BotApi>) -> String {
@@ -227,12 +273,12 @@ async fn user_list(args: &[&str], bot_api: &Arc<dyn BotApi>) -> String {
 
         // After last page chunk, if there's anything left in "output", print it
         if !output.is_empty() {
-            return output;
+            output
         } else {
-            return format!(
+            format!(
                 "Done listing all {} user(s) in {} page(s).",
                 total, total_pages
-            );
+            )
         }
     } else {
         // Non-paginated listing
