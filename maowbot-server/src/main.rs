@@ -171,10 +171,15 @@ async fn run_server(args: Args) -> Result<(), Error> {
     // Build Repos & Auth
     let key = get_master_key()?;
     let encryptor = Encryptor::new(&key)?;
+
     let creds_repo_arc = Arc::new(PostgresCredentialsRepository::new(db.pool().clone(), encryptor.clone()));
     let platform_config_repo = Arc::new(PostgresPlatformConfigRepository::new(db.pool().clone()));
     let bot_config_repo = Arc::new(PostgresBotConfigRepository::new(db.pool().clone()));
     let user_repo_arc = Arc::new(UserRepository::new(db.pool().clone()));
+
+    let analytics_repo_arc = Arc::new(maowbot_core::repositories::postgres::analytics::PostgresAnalyticsRepository::new(db.pool().clone()));
+    let user_analysis_repo_arc = Arc::new(PostgresUserAnalysisRepository::new(db.pool().clone()));
+    let platform_identity_repo_arc = Arc::new(PlatformIdentityRepository::new(db.pool().clone()));
 
     let auth_manager = AuthManager::new(
         creds_repo_arc.clone(),
@@ -185,6 +190,8 @@ async fn run_server(args: Args) -> Result<(), Error> {
     // User manager & message service
     let identity_repo = PlatformIdentityRepository::new(db.pool().clone());
     let analysis_repo = PostgresUserAnalysisRepository::new(db.pool().clone());
+
+
     let default_user_mgr = DefaultUserManager::new(
         user_repo_arc.clone(),
         identity_repo,
@@ -220,6 +227,9 @@ async fn run_server(args: Args) -> Result<(), Error> {
     let mut plugin_manager = PluginManager::new(
         args.plugin_passphrase.clone(),
         user_repo_arc.clone(),
+        analytics_repo_arc.clone(),
+        user_analysis_repo_arc.clone(),
+        platform_identity_repo_arc.clone(),
         platform_manager.clone(),
     );
     plugin_manager.subscribe_to_event_bus(event_bus.clone());

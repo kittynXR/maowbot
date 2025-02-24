@@ -14,6 +14,9 @@ mod ttv;
 mod user;
 mod vrchat;
 
+// NEW:
+mod member;
+
 /// Asynchronous command dispatcher. Returns (quit_requested, optional_output_message).
 pub async fn dispatch_async(
     line: &str,
@@ -51,7 +54,7 @@ pub async fn dispatch_async(
         }
 
         "status" => {
-            // Existing logic
+            // existing logic
             let subcmd = args.get(0).map(|s| s.to_lowercase());
             let status_data = bot_api.status().await;
 
@@ -63,12 +66,10 @@ pub async fn dispatch_async(
                 output.push_str(&format!("  {}\n", c));
             }
 
-            // NEW CODE BLOCK: show all platforms + accounts + connectedness
             output.push_str("\n--- Platforms & Accounts ---\n");
             if status_data.account_statuses.is_empty() {
                 output.push_str("(No platform credentials found.)\n");
             } else {
-                // Group them by platform
                 use std::collections::BTreeMap;
                 let mut by_platform: BTreeMap<String, Vec<(String, bool)>> = BTreeMap::new();
                 for acc in &status_data.account_statuses {
@@ -77,7 +78,6 @@ pub async fn dispatch_async(
                         .or_default()
                         .push((acc.account_name.clone(), acc.is_connected));
                 }
-
                 for (plat, accs) in by_platform {
                     output.push_str(&format!("Platform: {}\n", plat));
                     for (acct, conn) in accs {
@@ -87,7 +87,6 @@ pub async fn dispatch_async(
                 }
             }
 
-            // If subcommand was "status config" => show config
             if subcmd.as_deref() == Some("config") {
                 match bot_api.list_config().await {
                     Ok(list) => {
@@ -131,6 +130,12 @@ pub async fn dispatch_async(
         "user" => {
             let message = user::handle_user_command(args, bot_api).await;
             (false, Some(message))
+        }
+
+        // NEW: "member" command
+        "member" => {
+            let msg = member::handle_member_command(args, bot_api).await;
+            (false, Some(msg))
         }
 
         // Connectivity: autostart, start, stop, chat

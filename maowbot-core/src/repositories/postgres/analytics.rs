@@ -1,5 +1,3 @@
-// src/repositories/postgres/analytics.rs
-
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use sqlx::{Pool, Postgres, Row, FromRow};
@@ -7,8 +5,7 @@ use serde_json::Value;
 use uuid::Uuid;
 use crate::Error;
 
-#[derive(Clone, Debug)]
-#[derive(sqlx::FromRow)]
+#[derive(Clone, Debug, FromRow)]
 pub struct ChatMessage {
     pub message_id: Uuid,
     pub platform: String,
@@ -65,6 +62,19 @@ pub trait AnalyticsRepo: Send + Sync {
         new_messages: i64,
         new_visits: i64
     ) -> Result<(), Error>;
+
+    // NEW METHOD:
+    /// Fetch messages for a specific user_id with optional filters (platform, channel, LIKE search).
+    /// `limit` is how many messages we want, `offset` is for paging (like skip).
+    async fn get_messages_for_user(
+        &self,
+        user_id: Uuid,
+        limit: i64,
+        offset: i64,
+        maybe_platform: Option<&str>,
+        maybe_channel: Option<&str>,
+        maybe_search: Option<&str>,
+    ) -> Result<Vec<ChatMessage>, Error>;
 }
 
 #[derive(Clone)]
@@ -246,5 +256,84 @@ impl AnalyticsRepo for PostgresAnalyticsRepository {
             .await?;
 
         Ok(())
+    }
+
+    // NEW METHOD: get_messages_for_user
+    async fn get_messages_for_user(
+        &self,
+        user_id: Uuid,
+        limit: i64,
+        offset: i64,
+        maybe_platform: Option<&str>,
+        maybe_channel: Option<&str>,
+        maybe_search: Option<&str>,
+    ) -> Result<Vec<ChatMessage>, Error> {
+        // We'll construct dynamic SQL here:
+        let base_sql = r#"
+            SELECT
+                message_id,
+                platform,
+                channel,
+                user_id,
+                message_text,
+                timestamp,
+                metadata
+            FROM chat_messages
+            WHERE user_id = $1
+        "#;
+
+        // We'll accumulate conditions in a String, plus bindings in a Vec
+        let mut conditions = String::new();
+        let mut bind_index = 2; // first param is $1 (the user_id)
+        let mut binds: Vec<(usize, String)> = vec![];
+
+        if let Some(plat) = maybe_platform {
+            conditions.push_str(&format!(" AND LOWER(platform) = LOWER(${}) ", bind_index));
+            binds.push((bind_index, plat.to_string()));
+            bind_index += 1;
+        }
+        if let Some(chan) = maybe_channel {
+            conditions.push_str(&format!(" AND channel = ${} ", bind_index));
+            binds.push((bind_index, chan.to_string()));
+            bind_index += 1;
+        }
+        if let Some(s) = maybe_search {
+            // We'll do a naive LIKE
+            conditions.push_str(&format!(" AND message_text ILIKE ${} ", bind_index));
+            binds.push((bind_index, format!("%{}%", s)));
+            bind_index += 1;
+        }
+
+        let mut final_sql = format!("{}{} ORDER BY timestamp DESC LIMIT ${} OFFSET ${} ", base_sql, conditions, bind_index, bind_index + 1);
+
+        // Prepare query
+        let mut query = sqlx::query(&final_sql).bind(user_id);
+
+        for (bidx, val) in &binds {
+            query = query.bind(val);
+        }
+        query = query.bind(limit).bind(offset);
+
+        let rows = query.fetch_all(&self.pool).await?;
+
+        let mut messages = Vec::with_capacity(rows.len());
+        for row in rows {
+            let meta_str: Option<String> = row.try_get("metadata")?;
+            let metadata = meta_str
+                .as_deref()
+                .and_then(|m| serde_json::from_str(m).ok());
+
+            messages.push(ChatMessage {
+                message_id: row.try_get("message_id")?,
+                platform: row.try_get("platform")?,
+                channel: row.try_get("channel")?,
+                user_id: row.try_get("user_id")?,
+                message_text: row.try_get("message_text")?,
+                timestamp: row.try_get("timestamp")?,
+                metadata,
+            });
+        }
+
+        Ok(messages)
     }
 }

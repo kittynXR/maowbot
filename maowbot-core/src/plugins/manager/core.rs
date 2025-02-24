@@ -34,6 +34,7 @@ use crate::plugins::manager::plugin_api_impl::build_status_response; // or you c
 use crate::repositories::postgres::bot_config::BotConfigRepository;
 use crate::repositories::postgres::credentials::CredentialsRepository;
 use crate::repositories::postgres::platform_config::PlatformConfigRepository;
+use crate::repositories::postgres::{PlatformIdentityRepository, PostgresAnalyticsRepository, PostgresUserAnalysisRepository};
 
 /// The main manager that loads/stores plugins, spawns connections,
 /// listens to inbound plugin messages, etc.
@@ -66,6 +67,10 @@ pub struct PluginManager {
 
     /// The manager for platform logic (starting/stopping runtimes, etc.).
     pub platform_manager: Arc<PlatformManager>,
+
+    pub analytics_repo: Arc<PostgresAnalyticsRepository>,
+    pub user_analysis_repo: Arc<PostgresUserAnalysisRepository>,
+    pub platform_identity_repo: Arc<PlatformIdentityRepository>,
 }
 
 impl PluginManager {
@@ -73,6 +78,9 @@ impl PluginManager {
     pub fn new(
         passphrase: Option<String>,
         user_repo: Arc<UserRepository>,
+        analytics_repo: Arc<PostgresAnalyticsRepository>,
+        user_analysis_repo: Arc<PostgresUserAnalysisRepository>,
+        platform_identity_repo: Arc<PlatformIdentityRepository>,
         platform_manager: Arc<PlatformManager>,
     ) -> Self {
         let manager = Self {
@@ -85,6 +93,10 @@ impl PluginManager {
             auth_manager: None,
             user_repo,
             platform_manager,
+
+            analytics_repo,
+            user_analysis_repo,
+            platform_identity_repo,
         };
         manager.load_plugin_states();
         manager

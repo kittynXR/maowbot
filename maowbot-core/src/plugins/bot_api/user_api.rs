@@ -2,7 +2,7 @@
 //!
 //! Sub-trait with user account / profile methods (DB row in `users` table).
 
-use crate::{Error, models::User};
+use crate::{Error, models::{User, PlatformIdentity, UserAnalysis}};
 use async_trait::async_trait;
 use uuid::Uuid;
 
@@ -26,4 +26,28 @@ pub trait UserApi: Send + Sync {
 
     /// Look up a single user by name, returning an error if not found or if multiple matches.
     async fn find_user_by_name(&self, name: &str) -> Result<User, Error>;
+
+    // NEW METHODS BELOW:
+
+    /// Returns up to `limit` messages from chat_messages for the specified `user_id`,
+    /// offset by `offset` for paging, optionally filtered by platform/channel, and text search.
+    async fn get_user_chat_messages(
+        &self,
+        user_id: Uuid,
+        limit: i64,
+        offset: i64,
+        maybe_platform: Option<String>,
+        maybe_channel: Option<String>,
+        maybe_search: Option<String>,
+    ) -> Result<Vec<crate::repositories::postgres::analytics::ChatMessage>, Error>;
+
+    /// Appends (or sets) a moderator note in user_analysis for the given user_id.
+    /// If user_analysis does not exist, create it. Then either append or override the existing note.
+    async fn append_moderator_note(&self, user_id: Uuid, note_text: &str) -> Result<(), Error>;
+
+    /// Returns all platform_identities for a given user.
+    async fn get_platform_identities_for_user(&self, user_id: Uuid) -> Result<Vec<PlatformIdentity>, Error>;
+
+    /// Returns the user_analysis row if present.
+    async fn get_user_analysis(&self, user_id: Uuid) -> Result<Option<UserAnalysis>, Error>;
 }
