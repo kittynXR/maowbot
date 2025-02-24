@@ -38,7 +38,7 @@ impl MessageService {
         let msg = CachedMessage {
             platform: platform.to_string(),
             channel: channel.to_string(),
-            user_name: user_name.to_string(), // store ephemeral chatter name
+            user_name: user_name.to_string(),
             text: text.to_string(),
             timestamp: Utc::now(),
             token_count,
@@ -52,7 +52,7 @@ impl MessageService {
         let event = BotEvent::ChatMessage {
             platform: platform.to_string(),
             channel: channel.to_string(),
-            user: user_name.to_string(),  // for the eventbus, we also carry the ephemeral username
+            user: user_name.to_string(),
             text: text.to_string(),
             timestamp: Utc::now(),
         };
