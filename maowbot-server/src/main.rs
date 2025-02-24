@@ -212,7 +212,7 @@ async fn run_server(args: Args) -> Result<(), Error> {
         CacheConfig { trim_policy },
     );
     let chat_cache = Arc::new(Mutex::new(chat_cache));
-    let message_service = Arc::new(MessageService::new(chat_cache, event_bus.clone()));
+    let message_service = Arc::new(MessageService::new(chat_cache, event_bus.clone(), user_manager.clone()));
 
     // Platform manager
     use maowbot_core::platforms::manager::PlatformManager;

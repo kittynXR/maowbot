@@ -319,9 +319,9 @@ impl PlatformManager {
             let mut msg_rx = rx;
             while let Some(evt) = msg_rx.recv().await {
                 let channel = evt.channel;
-                let user_platform_id = evt.user_id;
+                let user_platform_id = evt.twitch_user_id.clone();
                 let text = evt.text;
-                let user_name = evt.user_name.clone();
+                let user_name = evt.display_name.clone();
 
                 let _ = user_svc
                     .get_or_create_user("twitch-irc", &user_platform_id, Some(&user_name))

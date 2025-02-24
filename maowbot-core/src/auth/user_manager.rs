@@ -1,5 +1,5 @@
 use std::sync::Arc;
-use chrono::{DateTime, Duration, Utc};
+use chrono::{DateTime, Utc};
 use uuid::Uuid;
 use async_trait::async_trait;
 use dashmap::DashMap;
@@ -119,42 +119,52 @@ impl UserManager for DefaultUserManager {
         platform_user_id: &str,
         platform_username: Option<&str>,
     ) -> Result<User, Error> {
-        // 1) prune
+        // 1) prune old cache entries
         self.prune_cache().await;
 
-        // 2) check in-memory
-        if let Some(mut entry) = self.user_cache.get_mut(&(platform.clone(), platform_user_id.to_string())) {
+        // 2) unify the platform_user_id by forcing to lowercase (or do a case-insensitive DB search).
+        //    We'll store it in DB as all-lowercase to avoid duplicates like "Kittyn" vs "kittyn".
+        let lower_id = platform_user_id.to_lowercase();
+
+        // 3) check in-memory cache
+        if let Some(mut entry) = self.user_cache.get_mut(&(platform.clone(), lower_id.clone())) {
             entry.last_access = Utc::now();
             return Ok(entry.user.clone());
         }
 
-        // 3) check DB
+        // 4) check DB for a matching identity
         let existing_ident = self
             .identity_repo
-            .get_by_platform(platform.clone(), platform_user_id)
+            .get_by_platform(platform.clone(), &lower_id)
             .await?;
 
         let user = if let Some(ident) = existing_ident {
-            // user_id is already a Uuid
             let db_user = self.user_repo
-                .get(ident.user_id)  // pass ident.user_id directly
+                .get(ident.user_id)
                 .await?
                 .ok_or_else(|| Error::Database(sqlx::Error::RowNotFound))?;
 
-            self.insert_into_cache(platform.clone(), platform_user_id, &db_user).await;
+            // Cache it
+            self.insert_into_cache(platform.clone(), &lower_id, &db_user).await;
             db_user
         } else {
-            // create new
+            // create a new user
             let new_user_id = Uuid::new_v4();
             let now = Utc::now();
-
-            let user = User {
+            let mut user = User {
                 user_id: new_user_id,
                 global_username: None,
                 created_at: now,
                 last_seen: now,
                 is_active: true,
             };
+            // If a platform_username is provided, set the global_username at creation
+            if let Some(name) = platform_username {
+                if !name.trim().is_empty() {
+                    user.global_username = Some(name.trim().to_string());
+                }
+            }
+
             self.user_repo.create(&user).await?;
 
             // new identity
@@ -163,7 +173,9 @@ impl UserManager for DefaultUserManager {
                 platform_identity_id: new_identity_id,
                 user_id: new_user_id,
                 platform: platform.clone(),
-                platform_user_id: platform_user_id.to_string(),
+                // store in DB as all-lowercase
+                platform_user_id: lower_id.clone(),
+                // use the original username param if we want
                 platform_username: platform_username.unwrap_or("unknown").to_string(),
                 platform_display_name: None,
                 platform_roles: vec![],
@@ -176,7 +188,8 @@ impl UserManager for DefaultUserManager {
             // also create analysis row
             let _analysis = self.get_or_create_user_analysis(new_user_id).await?;
 
-            self.insert_into_cache(platform.clone(), platform_user_id, &user).await;
+            // store in cache
+            self.insert_into_cache(platform.clone(), &lower_id, &user).await;
             user
         };
 
@@ -206,11 +219,13 @@ impl UserManager for DefaultUserManager {
         if let Some(mut user) = self.user_repo.get(parsed_id).await? {
             user.last_seen = Utc::now();
             if let Some(name) = new_username {
-                user.global_username = Some(name.to_string());
+                if !name.trim().is_empty() {
+                    user.global_username = Some(name.trim().to_string());
+                }
             }
             self.user_repo.update(&user).await?;
 
-            // remove from cache
+            // remove from cache in case we want to refresh
             let mut keys_to_remove = Vec::new();
             for entry in self.user_cache.iter() {
                 if entry.value().user.user_id == parsed_id {

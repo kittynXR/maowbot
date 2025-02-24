@@ -16,6 +16,10 @@ pub struct CachedMessage {
     pub text: String,
     pub timestamp: DateTime<Utc>,
     pub token_count: usize,
+
+    /// **NEW**: We store the user's roles (e.g. Twitch "mod", "broadcaster", "subscriber", etc.).
+    /// For non-Twitch platforms, this may be empty.
+    pub user_roles: Vec<String>,
 }
 
 /// Rules for trimming or filtering
@@ -194,8 +198,7 @@ impl<R: UserAnalysisRepository> ChatCache<R> {
     }
 
     /// A separate function that you might call from a background task to remove messages from
-    /// users who exceed spam score or fail min_quality, etc. Because it calls DB async, we
-    /// must not hold the RwLock guard across awaits.
+    /// users who exceed spam score or fail min_quality, etc.
     pub async fn trim_spammy_users(&self) {
         let policy = &self.config.trim_policy;
         if policy.spam_score_cutoff.is_none() && policy.min_quality_score.is_none() {
@@ -206,12 +209,9 @@ impl<R: UserAnalysisRepository> ChatCache<R> {
 
         // 1) Gather user_names to purge
         let mut purge_list = Vec::new();
-        // We do not actually have a user_id in the DB sense here, just chat usernames.
-        // You could optionally do a user analysis lookup by name if your system supports that.
         for user_name in self.user_map.iter().map(|e| e.key().clone()) {
-            // If you had a DB mapping from name -> user_id, you'd do that here.
-            // Example: skip for demonstration (or do some logic).
-            // We won't do anything for now. This is just an example:
+            // Example approach: you could look up user_id in DB, then do scoring checks.
+            // Here, we just do dummy checks:
             let dummy_spam_score = 0.0;
             let dummy_quality_score = 1.0;
             if dummy_spam_score >= spam_cut || dummy_quality_score < quality_min {
@@ -222,14 +222,14 @@ impl<R: UserAnalysisRepository> ChatCache<R> {
             return;
         }
 
-        // 2) Now do a quick synchronous pass to remove those users' messages from user_map
+        // 2) Remove those users' messages from user_map
         for uname in purge_list {
             if let Some(mut q) = self.user_map.get_mut(&uname) {
                 q.clear();
             }
         }
 
-        // 3) Because the ring is a circular buffer, physically removing them is tricky. We'll do:
+        // 3) Rebuild ring for those that remain
         {
             let mut guard = self.global.write().await;
             let capacity = guard.capacity;
@@ -239,7 +239,7 @@ impl<R: UserAnalysisRepository> ChatCache<R> {
             let mut keep = Vec::with_capacity(total_count);
             for i in 0..total_count {
                 let pos = (start_idx + i) % capacity;
-                if let Some(msg) = guard.messages[pos].as_ref() {
+                if let Some(msg) = guard.messages[pos].take() {
                     // If the user_map for this name is empty, skip it
                     if let Some(q) = self.user_map.get(&msg.user_name) {
                         if q.is_empty() {
@@ -247,10 +247,9 @@ impl<R: UserAnalysisRepository> ChatCache<R> {
                             continue;
                         }
                     }
-                    keep.push(guard.messages[pos].take());
+                    keep.push(Some(msg));
                 }
             }
-            // re-insert them
             guard.messages.fill(None);
             guard.start_idx = 0;
             guard.end_idx = 0;
@@ -263,7 +262,6 @@ impl<R: UserAnalysisRepository> ChatCache<R> {
             self.total_in_buffer.store(guard.total_count, Ordering::Release);
         }
 
-        // remove stale indices
         self.remove_stale_indices();
     }
 
@@ -276,10 +274,9 @@ impl<R: UserAnalysisRepository> ChatCache<R> {
                 // if try_read fails, just skip
                 return;
             }
-        }; // ring read lock dropped
+        };
 
         if total_count == 0 {
-            // Now we want to lock the DashMap
             for mut entry in self.user_map.iter_mut() {
                 entry.clear();
             }
@@ -313,7 +310,7 @@ impl<R: UserAnalysisRepository> ChatCache<R> {
         filter_user_name: Option<&str>,
     ) -> Vec<CachedMessage> {
         let mut results = Vec::new();
-        let global_guard = self.global.read().await; // Async lock
+        let global_guard = self.global.read().await;
 
         let capacity = global_guard.capacity;
         let start_idx = global_guard.start_idx;
