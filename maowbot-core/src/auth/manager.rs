@@ -127,7 +127,7 @@ impl AuthManager {
             AuthenticationPrompt::Browser { url } => Ok(url),
             AuthenticationPrompt::Code { message } => Err(Error::Auth(message)),
             AuthenticationPrompt::ApiKey { message } => Ok(format!("(API key) {message}")),
-            AuthenticationPrompt::MultipleKeys { .. } => Ok("(Multiple keys required) handle in TUI".into()),
+            AuthenticationPrompt::MultipleKeys { .. } => Ok("(Multiple keys) handle in TUI".into()),
             AuthenticationPrompt::TwoFactor { message } => Ok(format!("(2FA) {message}")),
             AuthenticationPrompt::None => Ok("(No prompt needed)".into()),
         }
