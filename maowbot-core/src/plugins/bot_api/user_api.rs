@@ -27,8 +27,6 @@ pub trait UserApi: Send + Sync {
     /// Look up a single user by name, returning an error if not found or if multiple matches.
     async fn find_user_by_name(&self, name: &str) -> Result<User, Error>;
 
-    // NEW METHODS BELOW:
-
     /// Returns up to `limit` messages from chat_messages for the specified `user_id`,
     /// offset by `offset` for paging, optionally filtered by platform/channel, and text search.
     async fn get_user_chat_messages(
@@ -50,4 +48,16 @@ pub trait UserApi: Send + Sync {
 
     /// Returns the user_analysis row if present.
     async fn get_user_analysis(&self, user_id: Uuid) -> Result<Option<UserAnalysis>, Error>;
+
+    // -------------------------------
+    // NEW MERGE METHOD
+    // -------------------------------
+    /// Merge user2’s data into user1, reassigning platform identities and chat messages.
+    /// Optionally set a new global_username for user1. Then delete user2 from DB.
+    async fn merge_users(
+        &self,
+        user1_id: Uuid,
+        user2_id: Uuid,
+        new_global_name: Option<&str>
+    ) -> Result<(), Error>;
 }

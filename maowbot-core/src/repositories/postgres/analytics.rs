@@ -63,7 +63,6 @@ pub trait AnalyticsRepo: Send + Sync {
         new_visits: i64
     ) -> Result<(), Error>;
 
-    // NEW METHOD:
     /// Fetch messages for a specific user_id with optional filters (platform, channel, LIKE search).
     /// `limit` is how many messages we want, `offset` is for paging (like skip).
     async fn get_messages_for_user(
@@ -75,6 +74,17 @@ pub trait AnalyticsRepo: Send + Sync {
         maybe_channel: Option<&str>,
         maybe_search: Option<&str>,
     ) -> Result<Vec<ChatMessage>, Error>;
+
+    // ------------------------------------------------
+    // NEW: reassign_user_messages
+    // ------------------------------------------------
+    /// Reassign all chat_messages from one user_id to another.
+    /// Returns the count of messages updated.
+    async fn reassign_user_messages(
+        &self,
+        from_user: Uuid,
+        to_user: Uuid
+    ) -> Result<u64, Error>;
 }
 
 #[derive(Clone)]
@@ -258,7 +268,6 @@ impl AnalyticsRepo for PostgresAnalyticsRepository {
         Ok(())
     }
 
-    // NEW METHOD: get_messages_for_user
     async fn get_messages_for_user(
         &self,
         user_id: Uuid,
@@ -268,7 +277,6 @@ impl AnalyticsRepo for PostgresAnalyticsRepository {
         maybe_channel: Option<&str>,
         maybe_search: Option<&str>,
     ) -> Result<Vec<ChatMessage>, Error> {
-        // We'll construct dynamic SQL here:
         let base_sql = r#"
             SELECT
                 message_id,
@@ -282,9 +290,8 @@ impl AnalyticsRepo for PostgresAnalyticsRepository {
             WHERE user_id = $1
         "#;
 
-        // We'll accumulate conditions in a String, plus bindings in a Vec
         let mut conditions = String::new();
-        let mut bind_index = 2; // first param is $1 (the user_id)
+        let mut bind_index = 2;
         let mut binds: Vec<(usize, String)> = vec![];
 
         if let Some(plat) = maybe_platform {
@@ -298,15 +305,16 @@ impl AnalyticsRepo for PostgresAnalyticsRepository {
             bind_index += 1;
         }
         if let Some(s) = maybe_search {
-            // We'll do a naive LIKE
             conditions.push_str(&format!(" AND message_text ILIKE ${} ", bind_index));
             binds.push((bind_index, format!("%{}%", s)));
             bind_index += 1;
         }
 
-        let mut final_sql = format!("{}{} ORDER BY timestamp DESC LIMIT ${} OFFSET ${} ", base_sql, conditions, bind_index, bind_index + 1);
+        let final_sql = format!(
+            "{}{} ORDER BY timestamp DESC LIMIT ${} OFFSET ${}",
+            base_sql, conditions, bind_index, bind_index + 1
+        );
 
-        // Prepare query
         let mut query = sqlx::query(&final_sql).bind(user_id);
 
         for (bidx, val) in &binds {
@@ -315,7 +323,6 @@ impl AnalyticsRepo for PostgresAnalyticsRepository {
         query = query.bind(limit).bind(offset);
 
         let rows = query.fetch_all(&self.pool).await?;
-
         let mut messages = Vec::with_capacity(rows.len());
         for row in rows {
             let meta_str: Option<String> = row.try_get("metadata")?;
@@ -333,7 +340,29 @@ impl AnalyticsRepo for PostgresAnalyticsRepository {
                 metadata,
             });
         }
-
         Ok(messages)
+    }
+
+    // ----------------------------
+    // NEW method: reassign_user_messages
+    // ----------------------------
+    async fn reassign_user_messages(
+        &self,
+        from_user: Uuid,
+        to_user: Uuid
+    ) -> Result<u64, Error> {
+        let res = sqlx::query(
+            r#"
+            UPDATE chat_messages
+            SET user_id = $2
+            WHERE user_id = $1
+            "#,
+        )
+            .bind(from_user)
+            .bind(to_user)
+            .execute(&self.pool)
+            .await?;
+
+        Ok(res.rows_affected())
     }
 }

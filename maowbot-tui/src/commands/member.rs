@@ -8,10 +8,19 @@ use maowbot_core::Error;
 
 /// Handle "member" subcommands:
 ///   member info <identifier>
-///   member chat <n> [platform [channel]] [p [pageSize]] [s <search text>]
+///   member chat <n> [platform [channel]] [p <pageNumber>] [s <search text>]
 ///   member list [p [pageSize]]
 ///   member search <query>
 ///   member note <identifier> <note text...>
+///   member merge <uuid1> <uuid2> [g <newGlobalUsername>]
+///
+/// - The new `merge` command merges two different user IDs into one:
+///     member merge <uuid1> <uuid2> [g <newGlobalUsername>]
+///
+///   Where:
+///     * uuid1 is the "target" user that remains after the merge.
+///     * uuid2 is merged into uuid1 and then removed.
+///     * If `g` is supplied, the next token is the new global username for the resulting user.
 pub async fn handle_member_command(args: &[&str], bot_api: &Arc<dyn BotApi>) -> String {
     if args.is_empty() {
         return show_member_usage();
@@ -25,10 +34,9 @@ pub async fn handle_member_command(args: &[&str], bot_api: &Arc<dyn BotApi>) -> 
             member_info(args[1], bot_api).await
         }
         "chat" => {
-            // Format: member chat <n> [platform [channel]] [p <pageNumber>] [s <search text>]
+            // Format: member chat <n> [platform [channel]] [p <pageNumber>] [s <search>]
             if args.len() < 2 {
-                return "Usage: member chat <numMessages> [platform] [channel] [p <pageNum>] [s <search>]"
-                    .to_string();
+                return "Usage: member chat <numMessages> [platform] [channel] [p <pageNum>] [s <search>]".to_string();
             }
             member_chat(&args[1..], bot_api).await
         }
@@ -51,6 +59,10 @@ pub async fn handle_member_command(args: &[&str], bot_api: &Arc<dyn BotApi>) -> 
             let note_text = args[2..].join(" ");
             member_note(identifier, &note_text, bot_api).await
         }
+        "merge" => {
+            // usage: member merge <uuid1> <uuid2> [g <newGlobalUsername>]
+            member_merge(&args[1..], bot_api).await
+        }
         _ => {
             format!(
                 "Unknown member subcommand '{}'.\n{}",
@@ -66,28 +78,23 @@ fn show_member_usage() -> String {
     r#"Member Command Usage:
 
   member info <usernameOrUUID>
-     Shows detailed information about that member (user row, platform identities, user_analysis)
+     Shows detailed information about that member.
 
   member chat <n> [platform [channel]] [p <pageNumber>] [s <search text>]
      Displays up to 'n' messages from this member, with optional platform/channel filter, paging, and a text filter.
-
-     Examples:
-       member chat 20
-       member chat 20 twitch #somechannel
-       member chat 20 p 2
-       member chat 10 s hello
-       member chat 10 twitch #somechannel p 2 s "hello"
+     (Prompts interactively for the user.)
 
   member list [p [pageSize]]
-     Lists all members (all users in the DB). Optionally paginated:
-       member list
-       member list p 25
+     Lists all members (optionally paged).
 
   member search <query>
-     Searches for members by partial match on name or user_id, etc.
+     Searches for members by partial match on name or user_id.
 
   member note <usernameOrUUID> <note text...>
      Appends or updates a moderator note on that member’s record.
+
+  member merge <uuid1> <uuid2> [g <newGlobalUsername>]
+     Merge user <uuid2> into <uuid1>, and optionally set a new global username for the merged user.
 "#
         .to_string()
 }
@@ -180,7 +187,7 @@ async fn member_chat(args: &[&str], bot_api: &Arc<dyn BotApi>) -> String {
         let token = args[idx].to_lowercase();
         match token.as_str() {
             "p" => {
-                // read next token as page or pageSize
+                // read next token as page
                 idx += 1;
                 if idx < args.len() {
                     if let Ok(pg) = args[idx].parse::<i64>() {
@@ -192,9 +199,6 @@ async fn member_chat(args: &[&str], bot_api: &Arc<dyn BotApi>) -> String {
                 // read next token(s) as search text
                 idx += 1;
                 if idx < args.len() {
-                    // Could be quoted from the CLI, but we only get them separated by spaces here.
-                    // We'll do a single token or re-join the rest if needed. For simplicity, just use next token.
-                    // In practice, you'd parse carefully. We'll do a naive approach:
                     search_opt = Some(args[idx].to_string());
                 }
             }
@@ -210,12 +214,7 @@ async fn member_chat(args: &[&str], bot_api: &Arc<dyn BotApi>) -> String {
         idx += 1;
     }
 
-    // We'll prompt for the user (identifier) now: we do not have a direct user param in the command syntax
-    // This might be an oversight in the specification, but let's do an interactive approach:
-    // Or we can clarify that the "identifier" wasn't part of the command?
-    // The instructions mention "Displays the n most recent messages from this member" but didn't show
-    // exactly how we parse. Possibly the user ID was omitted from the prompt.
-    // We'll do an interactive question:
+    // We'll prompt for the user (identifier) now:
     println!("Enter the member's usernameOrUUID to fetch chat messages for:");
     print!("> ");
     let _ = stdout().flush();
@@ -235,7 +234,7 @@ async fn member_chat(args: &[&str], bot_api: &Arc<dyn BotApi>) -> String {
     };
 
     // Now compute offset from page
-    // If "page" is 2 and limit=10 => offset= 10*(2-1)=10
+    // If "page"=2 and limit=10 => offset=10*(2-1)=10
     let offset = limit * (page - 1);
 
     // Fetch messages
@@ -293,7 +292,7 @@ async fn member_chat(args: &[&str], bot_api: &Arc<dyn BotApi>) -> String {
 
 /// Implementation of `member list [p [pageSize]]`
 async fn member_list(args: &[&str], bot_api: &Arc<dyn BotApi>) -> String {
-    // We'll call the existing "search_users("")" logic to get all, then optionally do pagination:
+    // We'll call the existing "search_users("")" to get all, then optionally do pagination:
     let all_users = match bot_api.search_users("").await {
         Ok(u) => u,
         Err(e) => return format!("Error listing members => {:?}", e),
@@ -417,6 +416,54 @@ async fn member_note(identifier: &str, note_text: &str, bot_api: &Arc<dyn BotApi
     match bot_api.append_moderator_note(user.user_id, note_text).await {
         Ok(_) => format!("Moderator note updated for user_id={}", user.user_id),
         Err(e) => format!("Error updating note => {:?}", e),
+    }
+}
+
+/// Implementation of `member merge <uuid1> <uuid2> [g <newGlobalUsername>]`
+async fn member_merge(args: &[&str], bot_api: &Arc<dyn BotApi>) -> String {
+    // Must have at least 2 UUIDs
+    if args.len() < 2 {
+        return "Usage: member merge <uuid1> <uuid2> [g <newGlobalUsername>]".to_string();
+    }
+    let uuid1_str = args[0];
+    let uuid2_str = args[1];
+
+    let user1_id = match Uuid::parse_str(uuid1_str) {
+        Ok(x) => x,
+        Err(e) => return format!("Error parsing uuid1: {e}"),
+    };
+    let user2_id = match Uuid::parse_str(uuid2_str) {
+        Ok(x) => x,
+        Err(e) => return format!("Error parsing uuid2: {e}"),
+    };
+
+    let mut new_global_name: Option<String> = None;
+    let mut idx = 2;
+    while idx < args.len() {
+        if args[idx].eq_ignore_ascii_case("g") {
+            idx += 1;
+            if idx < args.len() {
+                new_global_name = Some(args[idx].to_string());
+            }
+        }
+        idx += 1;
+    }
+
+    // Call our new BotApi method for merging
+    let res = bot_api.merge_users(user1_id, user2_id, new_global_name.as_deref()).await;
+    match res {
+        Ok(()) => {
+            let maybe_new = if let Some(n) = &new_global_name {
+                format!(" with new global username='{n}'")
+            } else {
+                "".to_string()
+            };
+            format!(
+                "Successfully merged user={} into user={}{}.",
+                uuid2_str, uuid1_str, maybe_new
+            )
+        }
+        Err(e) => format!("Error merging users => {e:?}"),
     }
 }
 
