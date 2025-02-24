@@ -8,7 +8,7 @@ Subcommands:
       in the global_username field.
 
   user remove <usernameOrUUID>
-      Deletes the user from DB. You can pass either the global_username or the user's UUID.
+      Deletes the user from the DB. You can pass either the global_username or the user's UUID.
 
   user edit <usernameOrUUID>
       Prompts to update certain fields (e.g., is_active) for that user.
@@ -21,6 +21,11 @@ Subcommands:
   user search <query>
       Finds all users whose username or UUID partially matches <query>.
 
+  user list [p [num]]
+      Lists all users in the database.
+      - If 'p' is provided (e.g. `user list p 50`), lists in pages with an optional page size (default=25).
+      - Press ENTER after each page to continue.
+
 Usage Examples:
   user add MyCoolUser
   user remove MyCoolUser
@@ -29,4 +34,7 @@ Usage Examples:
   user edit 11111111-2222-3333-4444-555555555555
   user info 11111111-2222-3333-4444-555555555555
   user search cat
+  user list
+  user list p
+  user list p 50
 "#;

@@ -1,5 +1,3 @@
-// File: maowbot-tui/src/commands/user.rs
-
 use std::sync::Arc;
 use std::io::{stdin, stdout, Write};
 use uuid::Uuid;
@@ -9,7 +7,7 @@ use maowbot_core::Error;
 
 pub async fn handle_user_command(args: &[&str], bot_api: &Arc<dyn BotApi>) -> String {
     if args.is_empty() {
-        return "Usage: user <add|remove|edit|info|search> [usernameOrUUID]".to_string();
+        return "Usage: user <add|remove|edit|info|search|list> [options]".to_string();
     }
 
     match args[0] {
@@ -44,7 +42,11 @@ pub async fn handle_user_command(args: &[&str], bot_api: &Arc<dyn BotApi>) -> St
             }
             user_search(args[1], bot_api).await
         }
-        _ => "Usage: user <add|remove|edit|info|search> [args]".to_string(),
+        "list" => {
+            // Format: user list [p [num]]
+            user_list(&args[1..], bot_api).await
+        }
+        _ => "Usage: user <add|remove|edit|info|search|list> [options]".to_string(),
     }
 }
 
@@ -168,5 +170,80 @@ async fn user_search(query: &str, bot_api: &Arc<dyn BotApi>) -> String {
             }
         }
         Err(e) => format!("Error searching users for '{}': {:?}", query, e),
+    }
+}
+
+/// Handles the "user list [p [num]]" logic:
+/// - If "p" is provided, enable pagination with optional "num" as page size (default=25).
+/// - If "p" not provided, simply list all users in one go.
+async fn user_list(args: &[&str], bot_api: &Arc<dyn BotApi>) -> String {
+    // We can attempt an "empty query" to fetch all users
+    let all_users = match bot_api.search_users("").await {
+        Ok(u) => u,
+        Err(e) => return format!("Error listing users => {:?}", e),
+    };
+
+    if all_users.is_empty() {
+        return "No users found in the database.".to_string();
+    }
+
+    // Check if "p" is the first argument => enable pagination
+    if !args.is_empty() && args[0].eq_ignore_ascii_case("p") {
+        // optional <num>
+        let mut per_page = 25usize;
+        if args.len() > 1 {
+            if let Ok(n) = args[1].parse::<usize>() {
+                per_page = n;
+            }
+        }
+
+        let total = all_users.len();
+        let mut output = String::new();
+        let total_pages = (total + per_page - 1) / per_page;
+
+        for (page_index, chunk) in all_users.chunks(per_page).enumerate() {
+            output.push_str(&format!(
+                "\n-- Page {}/{} (showing up to {} users) --\n",
+                page_index + 1,
+                total_pages,
+                chunk.len()
+            ));
+            for u in chunk {
+                output.push_str(&format!(
+                    " - user_id='{}' global_username='{:?}' is_active={}\n",
+                    u.user_id, u.global_username, u.is_active
+                ));
+            }
+
+            // If this is not the last page, prompt to continue
+            if page_index < total_pages - 1 {
+                output.push_str("\nPress ENTER to continue...");
+                println!("{}", output);
+                output.clear();
+                let mut line = String::new();
+                let _ = stdin().read_line(&mut line);
+            }
+        }
+
+        // After last page chunk, if there's anything left in "output", print it
+        if !output.is_empty() {
+            return output;
+        } else {
+            return format!(
+                "Done listing all {} user(s) in {} page(s).",
+                total, total_pages
+            );
+        }
+    } else {
+        // Non-paginated listing
+        let mut out = String::new();
+        out.push_str(&format!("Listing {} user(s):\n", all_users.len()));
+        for u in &all_users {
+            out.push_str(&format!(
+                " - user_id='{}' global_username='{:?}' is_active={}\n",
+                u.user_id, u.global_username, u.is_active
+            ));
+        }
+        out
     }
 }
