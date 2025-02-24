@@ -169,9 +169,9 @@ impl PlatformManager {
                 let text = msg_event.text;
                 let username = msg_event.username.clone();
 
-                let _ = user_svc
-                    .get_or_create_user("discord", &user_platform_id, Some(&username))
-                    .await;
+                // let _ = user_svc
+                //     .get_or_create_user("discord", &user_platform_id, Some(&username))
+                //     .await;
                 if let Err(e) = message_svc
                     .process_incoming_message(&platform_str_cloned, &channel, &username, &text)
                     .await
@@ -220,9 +220,9 @@ impl PlatformManager {
                 let text = msg_event.text;
                 let display_name = msg_event.display_name.clone();
 
-                let _ = user_svc
-                    .get_or_create_user("twitch", &user_platform_id, Some(&display_name))
-                    .await;
+                // let _ = user_svc
+                //     .get_or_create_user("twitch", &user_platform_id, Some(&display_name))
+                //     .await;
                 if let Err(e) = message_svc
                     .process_incoming_message(&platform_str_cloned, &channel, &display_name, &text)
                     .await
@@ -273,9 +273,9 @@ impl PlatformManager {
                 let text = evt.text;
                 let display_name = evt.vrchat_display_name.clone();
 
-                let _ = user_svc
-                    .get_or_create_user("vrchat", &user_platform_id, Some(&display_name))
-                    .await;
+                // let _ = user_svc
+                //     .get_or_create_user("vrchat", &user_platform_id, Some(&display_name))
+                //     .await;
                 if let Err(e) = message_svc
                     .process_incoming_message(&platform_str_cloned, "roomOrWorldId", &display_name, &text)
                     .await
@@ -323,9 +323,9 @@ impl PlatformManager {
                 let text = evt.text;
                 let user_name = evt.display_name.clone();
 
-                let _ = user_svc
-                    .get_or_create_user("twitch-irc", &user_platform_id, Some(&user_name))
-                    .await;
+                // let _ = user_svc
+                //     .get_or_create_user("twitch-irc", &user_platform_id, Some(&user_name))
+                //     .await;
                 if let Err(e) = message_svc
                     .process_incoming_message("twitch-irc", &channel, &user_name, &text)
                     .await
