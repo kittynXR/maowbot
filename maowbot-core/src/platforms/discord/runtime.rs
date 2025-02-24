@@ -1,3 +1,6 @@
+// ================
+// [UPDATED FILE] maowbot-core/src/platforms/discord/runtime.rs
+// ================
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -18,7 +21,7 @@ use twilight_gateway::{
 };
 use twilight_http::{Client as HttpClient};
 use twilight_http::client::ClientBuilder;
-use twilight_model::channel::{Channel as DiscordChannel, Channel, ChannelType};
+use twilight_model::channel::{Channel as DiscordChannel, ChannelType};
 use twilight_model::{
     gateway::event::Event,
     gateway::payload::incoming::MessageCreate,
@@ -26,9 +29,11 @@ use twilight_model::{
 };
 
 use crate::Error;
+use crate::eventbus::EventBus;
 use crate::platforms::{ConnectionStatus, PlatformAuth, PlatformIntegration};
 
 /// A simple struct holding minimal data from Discord messages.
+/// (We keep this for demonstration, but now we also directly publish to `EventBus`.)
 #[derive(Debug, Clone)]
 pub struct DiscordMessageEvent {
     pub channel: String,
@@ -37,61 +42,13 @@ pub struct DiscordMessageEvent {
     pub text: String,
 }
 
-pub struct DiscordPlatform {
-    token: String,
-    connection_status: ConnectionStatus,
-
-    /// Our unbounded receiver for newly-arrived Discord messages.
-    rx: Option<UnboundedReceiver<DiscordMessageEvent>>,
-
-    /// The list of shard tasks (one task per shard).
-    shard_tasks: Vec<JoinHandle<()>>,
-
-    /// Keep track of each shard’s "sender" so we can close them on shutdown.
-    shard_senders: Vec<MessageSender>,
-
-    /// An HTTP client for sending messages and fetching channel names.
-    pub(crate) http: Option<Arc<HttpClient>>,
-}
-
-impl DiscordPlatform {
-    /// Creates a new DiscordPlatform. The token should be the raw bot token.
-    pub fn new(token: String) -> Self {
-        // Mask the token in logs just to be safe:
-        let masked = if token.len() >= 6 {
-            let last6 = &token[token.len().saturating_sub(6)..];
-            format!("(startsWith=****, endsWith={})", last6)
-        } else {
-            "(tooShortToMask)".to_string()
-        };
-
-        info!("DiscordPlatform::new called with token={}", masked);
-        Self {
-            token,
-            connection_status: ConnectionStatus::Disconnected,
-            rx: None,
-            shard_tasks: Vec::new(),
-            shard_senders: Vec::new(),
-            http: None,
-        }
-    }
-
-    /// Returns the next DiscordMessageEvent from the internal channel.
-    pub async fn next_message_event(&mut self) -> Option<DiscordMessageEvent> {
-        if let Some(rx) = &mut self.rx {
-            rx.recv().await
-        } else {
-            None
-        }
-    }
-}
-
-/// Runs a shard’s event loop, sending user messages to `tx`.
-/// **We fetch the channel’s name** via HTTP before sending the event.
+/// Runs a shard’s event loop, sending user messages to `tx` and also publishing
+/// them to the event bus for our message service to store in the DB.
 pub async fn shard_runner(
     mut shard: Shard,
-    tx: tokio::sync::mpsc::UnboundedSender<DiscordMessageEvent>,
+    tx: UnboundedSender<DiscordMessageEvent>,
     http: Arc<HttpClient>,
+    event_bus: Option<Arc<EventBus>>, // <--- added
 ) {
     let shard_id = shard.id().number();
     info!("(ShardRunner) Shard {} started. Listening for events.", shard_id);
@@ -100,7 +57,7 @@ pub async fn shard_runner(
         match event_res {
             Ok(event) => match event {
                 // Example: "Ready" event
-                twilight_model::gateway::event::Event::Ready(ready) => {
+                Event::Ready(ready) => {
                     info!(
                         "(ShardRunner) Shard {} => READY as {}#{}",
                         shard_id, ready.user.name, ready.user.discriminator
@@ -108,7 +65,7 @@ pub async fn shard_runner(
                 }
 
                 // MessageCreate events
-                twilight_model::gateway::event::Event::MessageCreate(msg) => {
+                Event::MessageCreate(msg) => {
                     let msg: MessageCreate = *msg; // unbox
                     if msg.author.bot {
                         debug!(
@@ -121,7 +78,7 @@ pub async fn shard_runner(
                     // Attempt to retrieve the channel name/kind:
                     let channel_name = match http.channel(msg.channel_id).await {
                         Ok(response) => {
-                            // This is a `twilight_http::Response<Channel>`
+                            // This is a `twilight_http::Response<Channel>`.
                             match response.model().await {
                                 Ok(channel_obj) => match channel_obj.kind {
                                     ChannelType::GuildText
@@ -165,16 +122,23 @@ pub async fn shard_runner(
                         shard_id, text, username, channel_name
                     );
 
+                    // Send to our local unbounded channel (if some other part wants it).
                     let _ = tx.send(DiscordMessageEvent {
-                        channel: channel_name,
-                        user_id,
-                        username,
-                        text,
+                        channel: channel_name.clone(),
+                        user_id: user_id.clone(),
+                        username: username.clone(),
+                        text: text.clone(),
                     });
+
+                    // ------------- NEW: publish chat to the EventBus so it hits the DB -------------
+                    if let Some(bus) = &event_bus {
+                        // If you had roles, you could do "user_id|roles=xyz", but for now just no roles.
+                        bus.publish_chat("discord", &channel_name, &user_id, &text).await;
+                    }
                 }
 
                 // Example: joined a guild
-                twilight_model::gateway::event::Event::GuildCreate(gc) => {
+                Event::GuildCreate(gc) => {
                     let g = *gc; // unbox
                     info!(
                         "(ShardRunner) Shard {} => joined guild id={}",
@@ -194,6 +158,66 @@ pub async fn shard_runner(
     }
 
     warn!("(ShardRunner) Shard {} event loop ended.", shard_id);
+}
+
+/// Holds the Discord connection (shards, tasks, etc.).
+pub struct DiscordPlatform {
+    token: String,
+    connection_status: ConnectionStatus,
+
+    /// Our unbounded receiver for newly-arrived Discord messages (if you want to read them).
+    rx: Option<UnboundedReceiver<DiscordMessageEvent>>,
+
+    /// The list of shard tasks (one task per shard).
+    shard_tasks: Vec<JoinHandle<()>>,
+
+    /// Keep track of each shard’s "sender" so we can close them on shutdown.
+    shard_senders: Vec<MessageSender>,
+
+    /// An HTTP client for sending messages and fetching channel names.
+    pub(crate) http: Option<Arc<HttpClient>>,
+
+    /// OPTIONAL: We keep an Arc to the EventBus so we can publish messages for the DB.
+    pub event_bus: Option<Arc<EventBus>>,
+}
+
+impl DiscordPlatform {
+    /// Creates a new DiscordPlatform. The token should be the raw bot token.
+    pub fn new(token: String) -> Self {
+        // Mask the token in logs just to be safe:
+        let masked = if token.len() >= 6 {
+            let last6 = &token[token.len().saturating_sub(6)..];
+            format!("(startsWith=****, endsWith={})", last6)
+        } else {
+            "(tooShortToMask)".to_string()
+        };
+
+        info!("DiscordPlatform::new called with token={}", masked);
+        Self {
+            token,
+            connection_status: ConnectionStatus::Disconnected,
+            rx: None,
+            shard_tasks: Vec::new(),
+            shard_senders: Vec::new(),
+            http: None,
+            event_bus: None, // <--- newly added field, default None
+        }
+    }
+
+    /// If you want to store a reference to the EventBus, call this before connect().
+    pub fn set_event_bus(&mut self, bus: Arc<EventBus>) {
+        self.event_bus = Some(bus);
+    }
+
+    /// Returns the next DiscordMessageEvent from the internal channel.
+    /// Not strictly needed if we're just using EventBus to handle messages.
+    pub async fn next_message_event(&mut self) -> Option<DiscordMessageEvent> {
+        if let Some(rx) = &mut self.rx {
+            rx.recv().await
+        } else {
+            None
+        }
+    }
 }
 
 #[async_trait]
@@ -276,8 +300,9 @@ impl PlatformIntegration for DiscordPlatform {
             self.shard_senders.push(shard.sender());
             let tx_for_shard = tx.clone();
             let http_for_shard = http.clone();
+            let bus_for_shard = self.event_bus.clone(); // <--- new
             let handle = tokio::spawn(async move {
-                shard_runner(shard, tx_for_shard, http_for_shard).await;
+                shard_runner(shard, tx_for_shard, http_for_shard, bus_for_shard).await;
             });
             self.shard_tasks.push(handle);
         }
@@ -305,8 +330,7 @@ impl PlatformIntegration for DiscordPlatform {
     }
 
     async fn send_message(&self, channel: &str, message: &str) -> Result<(), Error> {
-        // In your design, `channel` is now a human-readable name. If you need a real
-        // numeric ID, you’ll have to parse or look up the channel by name.
+        // In your design, `channel` might be a human-readable name or numeric ID as a string.
         // For demonstration, we’ll just parse as a numeric ID:
         let channel_id_u64: u64 = channel.parse().map_err(|_| {
             Error::Platform(format!("Invalid channel ID or name '{channel}' (parsing as u64)"))
