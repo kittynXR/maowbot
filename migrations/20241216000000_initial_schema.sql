@@ -136,7 +136,7 @@ CREATE TABLE chat_messages (
     user_id    UUID   NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
     message_text TEXT NOT NULL,
     timestamp    TIMESTAMPTZ NOT NULL,
-    metadata     TEXT,
+    metadata     JSONB,
     PRIMARY KEY (message_id, timestamp)
 ) PARTITION BY RANGE (timestamp);
 

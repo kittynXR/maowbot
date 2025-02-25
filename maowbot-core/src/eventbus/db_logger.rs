@@ -1,7 +1,4 @@
-//! src/eventbus/db_logger.rs
-//!
-//! Spawns a task that subscribes to the EventBus, buffers `BotEvent::ChatMessage`,
-//! and flushes them to the DB. Drains the queue on shutdown, then does a final flush.
+// File: maowbot-core/src/eventbus/db_logger.rs
 
 use std::time::Duration;
 use tokio::sync::mpsc;
@@ -26,13 +23,10 @@ pub fn spawn_db_logger_task<T>(
 where
     T: AnalyticsRepo + 'static,
 {
-    // IMPORTANT: do not call block_on here
     let event_bus_cloned = event_bus.clone();
     let mut shutdown_rx = event_bus.shutdown_rx.clone();
 
-    let handle = tokio::spawn(async move {
-        // Previously was `futures_lite::future::block_on(...);`
-        // Replaced with a normal async .await:
+    tokio::spawn(async move {
         let mut rx = event_bus_cloned.subscribe(Some(buffer_size)).await;
 
         let mut buffer = Vec::with_capacity(buffer_size);
@@ -100,8 +94,7 @@ where
         }
 
         info!("DB logger task exited completely.");
-    });
-    handle
+    })
 }
 
 fn convert_to_chat_message(event: &BotEvent) -> Option<ChatMessage> {
@@ -113,13 +106,14 @@ fn convert_to_chat_message(event: &BotEvent) -> Option<ChatMessage> {
             user_id: user.parse().unwrap_or_else(|_| uuid::Uuid::nil()),
             message_text: text.clone(),
             timestamp: timestamp.to_utc(),
-            metadata: None,
+            metadata: None, // We can fill in metadata if we want
         })
     } else {
         None
     }
 }
 
+/// Bulk-insert the entire buffer at once.
 async fn insert_batch<T: AnalyticsRepo>(
     repo: &T,
     buffer: &mut Vec<ChatMessage>,
@@ -127,9 +121,8 @@ async fn insert_batch<T: AnalyticsRepo>(
     if buffer.is_empty() {
         return Ok(());
     }
-    for msg in buffer.iter() {
-        repo.insert_chat_message(msg).await?;
-    }
+    // Use the new bulk method
+    repo.insert_chat_messages(buffer).await?;
     buffer.clear();
     Ok(())
 }

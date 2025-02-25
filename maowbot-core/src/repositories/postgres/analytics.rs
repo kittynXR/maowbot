@@ -1,6 +1,8 @@
+// File: maowbot-core/src/repositories/postgres/analytics.rs
+
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use sqlx::{Pool, Postgres, Row, FromRow};
+use sqlx::{Pool, Postgres, FromRow, QueryBuilder, Row};
 use serde_json::Value;
 use uuid::Uuid;
 use crate::Error;
@@ -13,6 +15,8 @@ pub struct ChatMessage {
     pub user_id: Uuid,
     pub message_text: String,
     pub timestamp: DateTime<Utc>,
+
+    // Now stored as JSONB in the DB, so we directly store Option<Value>.
     pub metadata: Option<Value>,
 }
 
@@ -27,7 +31,6 @@ pub struct ChatSession {
     pub session_duration_seconds: Option<i64>,
 }
 
-/// Arbitrary bot event
 #[derive(Clone, Debug)]
 pub struct BotEvent {
     pub event_id: Uuid,
@@ -39,6 +42,8 @@ pub struct BotEvent {
 #[async_trait]
 pub trait AnalyticsRepo: Send + Sync {
     async fn insert_chat_message(&self, msg: &ChatMessage) -> Result<(), Error>;
+    async fn insert_chat_messages(&self, msgs: &[ChatMessage]) -> Result<(), Error>;
+
     async fn get_recent_messages(
         &self,
         platform: &str,
@@ -55,7 +60,6 @@ pub trait AnalyticsRepo: Send + Sync {
     ) -> Result<(), Error>;
 
     async fn insert_bot_event(&self, event: &BotEvent) -> Result<(), Error>;
-
     async fn update_daily_stats(
         &self,
         date_str: &str,
@@ -63,8 +67,6 @@ pub trait AnalyticsRepo: Send + Sync {
         new_visits: i64
     ) -> Result<(), Error>;
 
-    /// Fetch messages for a specific user_id with optional filters (platform, channel, LIKE search).
-    /// `limit` is how many messages we want, `offset` is for paging (like skip).
     async fn get_messages_for_user(
         &self,
         user_id: Uuid,
@@ -75,11 +77,6 @@ pub trait AnalyticsRepo: Send + Sync {
         maybe_search: Option<&str>,
     ) -> Result<Vec<ChatMessage>, Error>;
 
-    // ------------------------------------------------
-    // NEW: reassign_user_messages
-    // ------------------------------------------------
-    /// Reassign all chat_messages from one user_id to another.
-    /// Returns the count of messages updated.
     async fn reassign_user_messages(
         &self,
         from_user: Uuid,
@@ -100,12 +97,11 @@ impl PostgresAnalyticsRepository {
 
 #[async_trait]
 impl AnalyticsRepo for PostgresAnalyticsRepository {
-    async fn insert_chat_message(&self, msg: &ChatMessage) -> Result<(), Error> {
-        let metadata_str = match &msg.metadata {
-            Some(val) => val.to_string(),
-            None => "".to_string(),
-        };
 
+    // ----------------------------------------------------------------
+    // Single insert
+    // ----------------------------------------------------------------
+    async fn insert_chat_message(&self, msg: &ChatMessage) -> Result<(), Error> {
         sqlx::query(
             r#"
             INSERT INTO chat_messages (
@@ -121,9 +117,44 @@ impl AnalyticsRepo for PostgresAnalyticsRepository {
             .bind(msg.user_id)
             .bind(&msg.message_text)
             .bind(msg.timestamp)
-            .bind(metadata_str)
+            .bind(&msg.metadata)
             .execute(&self.pool)
             .await?;
+
+        Ok(())
+    }
+
+    // ----------------------------------------------------------------
+    // Bulk insert for many messages at once
+    // ----------------------------------------------------------------
+    async fn insert_chat_messages(&self, msgs: &[ChatMessage]) -> Result<(), Error> {
+        if msgs.is_empty() {
+            return Ok(());
+        }
+
+        // Construct the INSERT with columns:
+        let mut builder = QueryBuilder::new(
+            r#"INSERT INTO chat_messages (
+            message_id, platform, channel, user_id,
+            message_text, timestamp, metadata
+        ) "#
+        );
+
+        // Now we say `VALUES ` explicitly, then push each row via `push_values`:
+        // builder.push("VALUES ");
+        builder.push_values(msgs, |mut row, msg| {
+            row.push_bind(msg.message_id)
+                .push_bind(&msg.platform)
+                .push_bind(&msg.channel)
+                .push_bind(msg.user_id)
+                .push_bind(&msg.message_text)
+                .push_bind(msg.timestamp)
+                .push_bind(&msg.metadata);
+        });
+
+        // Build and execute
+        let query = builder.build();
+        query.execute(&self.pool).await?;
 
         Ok(())
     }
@@ -134,7 +165,7 @@ impl AnalyticsRepo for PostgresAnalyticsRepository {
         channel: &str,
         limit: i64
     ) -> Result<Vec<ChatMessage>, Error> {
-        let rows = sqlx::query(
+        let rows = sqlx::query_as::<_, ChatMessage>(
             r#"
             SELECT
                 message_id,
@@ -149,7 +180,7 @@ impl AnalyticsRepo for PostgresAnalyticsRepository {
               AND channel = $2
             ORDER BY timestamp DESC
             LIMIT $3
-            "#,
+            "#
         )
             .bind(platform)
             .bind(channel)
@@ -157,24 +188,7 @@ impl AnalyticsRepo for PostgresAnalyticsRepository {
             .fetch_all(&self.pool)
             .await?;
 
-        let mut messages = Vec::new();
-        for row in rows {
-            let meta_str: Option<String> = row.try_get("metadata")?;
-            let metadata = meta_str
-                .as_deref()
-                .and_then(|m| serde_json::from_str(m).ok());
-
-            messages.push(ChatMessage {
-                message_id: row.try_get("message_id")?,
-                platform: row.try_get("platform")?,
-                channel: row.try_get("channel")?,
-                user_id: row.try_get("user_id")?,
-                message_text: row.try_get("message_text")?,
-                timestamp: row.try_get("timestamp")?,
-                metadata,
-            });
-        }
-        Ok(messages)
+        Ok(rows)
     }
 
     async fn insert_chat_session(&self, session: &ChatSession) -> Result<(), Error> {
@@ -212,7 +226,7 @@ impl AnalyticsRepo for PostgresAnalyticsRepository {
             SET left_at = $1,
                 session_duration_seconds = $2
             WHERE session_id = $3
-            "#,
+            "#
         )
             .bind(left_at)
             .bind(duration_seconds)
@@ -224,7 +238,12 @@ impl AnalyticsRepo for PostgresAnalyticsRepository {
     }
 
     async fn insert_bot_event(&self, event: &BotEvent) -> Result<(), Error> {
-        let data_str = event.data.as_ref().map(|d| d.to_string()).unwrap_or_default();
+        // We'll store event.data as JSONB if you like, but for now it's TEXT in the schema.
+        // So we could do `.bind(&event.data)` if changed to JSONB.
+        let data_str = match &event.data {
+            Some(v) => v.to_string(),
+            None => String::new(),
+        };
 
         sqlx::query(
             r#"
@@ -277,7 +296,9 @@ impl AnalyticsRepo for PostgresAnalyticsRepository {
         maybe_channel: Option<&str>,
         maybe_search: Option<&str>,
     ) -> Result<Vec<ChatMessage>, Error> {
-        let base_sql = r#"
+        // We'll build dynamic conditions. Then we can just do a query_as! to ChatMessage.
+        let mut sql = String::from(
+            r#"
             SELECT
                 message_id,
                 platform,
@@ -288,64 +309,42 @@ impl AnalyticsRepo for PostgresAnalyticsRepository {
                 metadata
             FROM chat_messages
             WHERE user_id = $1
-        "#;
+            "#,
+        );
 
-        let mut conditions = String::new();
+        let mut binds: Vec<(usize, String)> = Vec::new();
         let mut bind_index = 2;
-        let mut binds: Vec<(usize, String)> = vec![];
 
-        if let Some(plat) = maybe_platform {
-            conditions.push_str(&format!(" AND LOWER(platform) = LOWER(${}) ", bind_index));
-            binds.push((bind_index, plat.to_string()));
+        if let Some(pl) = maybe_platform {
+            sql.push_str(&format!(" AND LOWER(platform) = LOWER(${})", bind_index));
+            binds.push((bind_index, pl.to_string()));
             bind_index += 1;
         }
-        if let Some(chan) = maybe_channel {
-            conditions.push_str(&format!(" AND channel = ${} ", bind_index));
-            binds.push((bind_index, chan.to_string()));
+        if let Some(ch) = maybe_channel {
+            sql.push_str(&format!(" AND channel = ${}", bind_index));
+            binds.push((bind_index, ch.to_string()));
             bind_index += 1;
         }
         if let Some(s) = maybe_search {
-            conditions.push_str(&format!(" AND message_text ILIKE ${} ", bind_index));
+            sql.push_str(&format!(" AND message_text ILIKE ${}", bind_index));
             binds.push((bind_index, format!("%{}%", s)));
             bind_index += 1;
         }
 
-        let final_sql = format!(
-            "{}{} ORDER BY timestamp DESC LIMIT ${} OFFSET ${}",
-            base_sql, conditions, bind_index, bind_index + 1
-        );
+        // ORDER + limit/offset
+        sql.push_str(&format!(" ORDER BY timestamp DESC LIMIT ${} OFFSET ${}", bind_index, bind_index + 1));
 
-        let mut query = sqlx::query(&final_sql).bind(user_id);
+        let mut query = sqlx::query_as::<_, ChatMessage>(&sql).bind(user_id);
 
-        for (bidx, val) in &binds {
+        for (i, val) in &binds {
             query = query.bind(val);
         }
         query = query.bind(limit).bind(offset);
 
         let rows = query.fetch_all(&self.pool).await?;
-        let mut messages = Vec::with_capacity(rows.len());
-        for row in rows {
-            let meta_str: Option<String> = row.try_get("metadata")?;
-            let metadata = meta_str
-                .as_deref()
-                .and_then(|m| serde_json::from_str(m).ok());
-
-            messages.push(ChatMessage {
-                message_id: row.try_get("message_id")?,
-                platform: row.try_get("platform")?,
-                channel: row.try_get("channel")?,
-                user_id: row.try_get("user_id")?,
-                message_text: row.try_get("message_text")?,
-                timestamp: row.try_get("timestamp")?,
-                metadata,
-            });
-        }
-        Ok(messages)
+        Ok(rows)
     }
 
-    // ----------------------------
-    // NEW method: reassign_user_messages
-    // ----------------------------
     async fn reassign_user_messages(
         &self,
         from_user: Uuid,

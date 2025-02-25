@@ -214,7 +214,7 @@ async fn generate_user_summaries(
         let (spam, intel, quality, horni, summary) = run_ai_scoring(&messages).await;
 
         // Insert a user_analysis_history entry
-        let hist_id = Uuid::new_v4().to_string();
+        let hist_id = Uuid::new_v4();
         let year_month = format!("{}-{:02}", Utc::now().year(), Utc::now().month());
         sqlx::query(
             r#"
