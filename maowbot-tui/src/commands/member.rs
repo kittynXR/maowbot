@@ -6,10 +6,10 @@ use maowbot_core::plugins::bot_api::BotApi;
 use maowbot_core::models::User;
 use maowbot_core::Error;
 
-
 pub async fn handle_member_command(args: &[&str], bot_api: &Arc<dyn BotApi>) -> String {
     if args.is_empty() {
-        return show_member_usage();
+        // Show short usage, or direct them to "help member".
+        return "Usage: member <info|chat|list|search|note|merge>".to_string();
     }
 
     match args[0] {
@@ -20,14 +20,15 @@ pub async fn handle_member_command(args: &[&str], bot_api: &Arc<dyn BotApi>) -> 
             member_info(args[1], bot_api).await
         }
         "chat" => {
-            // Format: member chat <n> [platform [channel]] [p <pageNumber>] [s <search>]
+            // Now the usage is:
+            //   member chat <usernameOrUUID> [numMessages] [platform] [channel] [p <pageNum>] [s <search>]
             if args.len() < 2 {
-                return "Usage: member chat <numMessages> [platform] [channel] [p <pageNum>] [s <search>]".to_string();
+                return "Usage: member chat <usernameOrUUID> [numMessages] [platform] [channel] [p <pageNum>] [s <search>]".to_string();
             }
             member_chat(&args[1..], bot_api).await
         }
         "list" => {
-            // Format: member list [p [pageSize]]
+            // Format: member list [p <pageSize>]
             member_list(&args[1..], bot_api).await
         }
         "search" => {
@@ -51,38 +52,11 @@ pub async fn handle_member_command(args: &[&str], bot_api: &Arc<dyn BotApi>) -> 
         }
         _ => {
             format!(
-                "Unknown member subcommand '{}'.\n{}",
-                args[0],
-                show_member_usage()
+                "Unknown member subcommand '{}'. Type 'help member' for details.",
+                args[0]
             )
         }
     }
-}
-
-/// Show usage for the `member` command group.
-fn show_member_usage() -> String {
-    r#"Member Command Usage:
-
-  member info <usernameOrUUID>
-     Shows detailed information about that member.
-
-  member chat <n> [platform [channel]] [p <pageNumber>] [s <search text>]
-     Displays up to 'n' messages from this member, with optional platform/channel filter, paging, and a text filter.
-     (Prompts interactively for the user.)
-
-  member list [p [pageSize]]
-     Lists all members (optionally paged).
-
-  member search <query>
-     Searches for members by partial match on name or user_id.
-
-  member note <usernameOrUUID> <note text...>
-     Appends or updates a moderator note on that member’s record.
-
-  member merge <uuid1> <uuid2> [g <newGlobalUsername>]
-     Merge user <uuid2> into <uuid1>, and optionally set a new global username for the merged user.
-"#
-        .to_string()
 }
 
 /// Implementation of `member info <identifier>`
@@ -150,26 +124,31 @@ async fn member_info(identifier: &str, bot_api: &Arc<dyn BotApi>) -> String {
     output
 }
 
-/// Implementation of `member chat <n> ...`
+/// Implementation of `member chat <usernameOrUUID> [numMessages] [platform] [channel] [p <pageNum>] [s <search>]`
 async fn member_chat(args: &[&str], bot_api: &Arc<dyn BotApi>) -> String {
-    // The first argument is the "n" (number of messages)
-    let n_str = args[0];
-    let limit = match n_str.parse::<i64>() {
-        Ok(x) => x,
-        Err(_) => {
-            return "Invalid number for <n> in 'member chat' command.".to_string();
-        }
-    };
+    // The first argument is always the user identifier:
+    let identifier = args[0];
 
-    // Potentially parse other optional arguments:
+    // Attempt to parse the second argument as an integer limit. If it fails, we assume it's platform.
+    let mut idx = 1;
+    let mut limit: i64 = i64::MAX; // If not specified, we'll fetch "all"
+    let parse_as_num = if args.len() > 1 {
+        args[1].parse::<i64>().ok()
+    } else {
+        None
+    };
+    if let Some(n) = parse_as_num {
+        limit = n;
+        idx += 1;
+    }
+
     let mut platform_opt: Option<String> = None;
     let mut channel_opt: Option<String> = None;
     let mut search_opt: Option<String> = None;
-    let mut page = 1i64; // default page is 1
-    let mut idx = 1;
+    let mut page = 1i64;
 
+    // Now parse the rest:
     while idx < args.len() {
-        // Check if "p" or "s"
         let token = args[idx].to_lowercase();
         match token.as_str() {
             "p" => {
@@ -200,28 +179,19 @@ async fn member_chat(args: &[&str], bot_api: &Arc<dyn BotApi>) -> String {
         idx += 1;
     }
 
-    // We'll prompt for the user (identifier) now:
-    println!("Enter the member's usernameOrUUID to fetch chat messages for:");
-    print!("> ");
-    let _ = stdout().flush();
-    let mut input = String::new();
-    if stdin().read_line(&mut input).is_err() {
-        return "Error reading user identifier from stdin.".to_string();
-    }
-    let identifier = input.trim();
-    if identifier.is_empty() {
-        return "No user identifier provided. Aborting.".to_string();
-    }
-
     // Resolve user
     let user = match resolve_user(identifier, bot_api).await {
         Ok(u) => u,
         Err(e) => return format!("Error: {:?}", e),
     };
 
-    // Now compute offset from page
-    // If "page"=2 and limit=10 => offset=10*(2-1)=10
-    let offset = limit * (page - 1);
+    // If limit is i64::MAX, we interpret that as "no limit"
+    // We can skip pagination logic if no limit, but let's keep it consistent:
+    let offset = if limit == i64::MAX {
+        0
+    } else {
+        limit.saturating_mul(page.saturating_sub(1))
+    };
 
     // Fetch messages
     let result = bot_api
@@ -246,10 +216,8 @@ async fn member_chat(args: &[&str], bot_api: &Arc<dyn BotApi>) -> String {
 
     let mut out = String::new();
     out.push_str(&format!(
-        "Showing up to {} messages for user='{:?}' (page={}), with optional filters:\n",
-        messages.len(),
-        user.global_username,
-        page,
+        "Showing messages for user='{:?}' with optional filters:\n",
+        user.global_username
     ));
     if let Some(ref plat) = platform_opt {
         out.push_str(&format!("  platform='{}'\n", plat));
@@ -260,23 +228,25 @@ async fn member_chat(args: &[&str], bot_api: &Arc<dyn BotApi>) -> String {
     if let Some(ref s) = search_opt {
         out.push_str(&format!("  search='{}'\n", s));
     }
+    if limit < i64::MAX {
+        out.push_str(&format!("  limit={}, page={}\n", limit, page));
+    } else {
+        out.push_str("  limit=ALL\n");
+    }
     out.push_str("\n");
 
     for (i, m) in messages.iter().enumerate() {
+        let n = i as i64 + 1 + offset;
         out.push_str(&format!(
             "[{}] {} {} {}: {}\n",
-            i + 1 + offset as usize,
-            m.timestamp,
-            m.platform,
-            m.channel,
-            m.message_text
+            n, m.timestamp, m.platform, m.channel, m.message_text
         ));
     }
 
     out
 }
 
-/// Implementation of `member list [p [pageSize]]`
+/// Implementation of `member list [p <pageSize>]`
 async fn member_list(args: &[&str], bot_api: &Arc<dyn BotApi>) -> String {
     // We'll call the existing "search_users("")" to get all, then optionally do pagination:
     let all_users = match bot_api.search_users("").await {
@@ -288,10 +258,9 @@ async fn member_list(args: &[&str], bot_api: &Arc<dyn BotApi>) -> String {
         return "No members found.".to_string();
     }
 
-    // Check for pagination
-    let mut idx = 0;
     let mut paging = false;
     let mut page_size = 25usize;
+    let mut idx = 0;
     while idx < args.len() {
         if args[idx].eq_ignore_ascii_case("p") {
             paging = true;
@@ -319,7 +288,7 @@ async fn member_list(args: &[&str], bot_api: &Arc<dyn BotApi>) -> String {
         return out;
     }
 
-    // Paginated
+    // Paginated:
     let total = all_users.len();
     let total_pages = (total + page_size - 1) / page_size;
     let mut out = String::new();
@@ -435,7 +404,7 @@ async fn member_merge(args: &[&str], bot_api: &Arc<dyn BotApi>) -> String {
         idx += 1;
     }
 
-    // Call our new BotApi method for merging
+    // Call the BotApi method for merging
     let res = bot_api.merge_users(user1_id, user2_id, new_global_name.as_deref()).await;
     match res {
         Ok(()) => {

@@ -5,11 +5,12 @@ pub mod help_account;
 pub mod help_connectivity;
 pub mod help_platform;
 pub mod help_plugin;
-pub mod help_user;
-
-// NEW: import our new TTV help
 pub mod help_ttv;
-mod help_vrchat;
+pub mod help_user;
+pub mod help_vrchat;
+
+// NEW:
+pub mod help_member;
 
 fn show_general_help() -> String {
     let text = r#"MaowBot TUI - Available Commands:
@@ -18,41 +19,44 @@ fn show_general_help() -> String {
     Show general help, or detailed help on a specific command.
 
   list
-    Lists all known (loaded or not) plugins by name.
+    Lists all known plugins by name.
 
   status [config]
-    Shows current uptime, connected plugins, etc.
-    Use "status config" to list all bot_config key/values.
+    Shows current uptime + connected plugins, etc.
+    'status config' includes bot_config key/values.
 
   plug <enable|disable|remove> <pluginName>
     Manage plugin connections or remove them from the system.
 
   platform <add|remove|list|show> ...
-    Add, remove, or inspect platform configurations (client_id, secret).
+    Add, remove, or inspect platform configurations.
 
-  account <add|remove|list|show> ...
+  account <add|remove|list|show|refresh> ...
     Manage user credentials for a given platform.
 
-  user <add|remove|edit|info|search> ...
+  user <add|remove|edit|info|search|list> ...
     Manage user records in the database.
 
+  member <info|chat|list|search|note|merge> ...
+    Manage members (extended user data, chat logs, merges).
+
   autostart <on/off> <platform> <account>
-    Toggle whether a certain platform+account pair autostarts on boot.
+    Toggle a (platform,account) autostart on boot.
 
-  start <platform> <account>
-    Start (connect) a platform runtime for a given user account.
+  start <platform> [account]
+    Connect a platform runtime for the given user account.
 
-  stop <platform> <account>
-    Stop (disconnect) a platform runtime for a given user account.
+  stop <platform> [account]
+    Disconnect a platform runtime for the given user account.
 
   chat <on/off> [platform] [account]
-    Enable/disable live chat display in the TUI, optionally filtered.
+    Enable or disable chat display in TUI (with optional filters).
 
-  ttv <subcommand> ...
-    Twitch IRC–specific commands (active, join, part, msg, chat, default).
+  ttv <active|join|part|msg|chat|default> ...
+    Twitch IRC commands, e.g. 'ttv join #channel', etc.
 
   quit
-    Shut down the TUI (and the whole bot system).
+    Shut down the TUI (and the entire bot).
 "#;
     text.to_owned()
 }
@@ -66,15 +70,16 @@ pub fn show_command_help(command: &str) -> String {
         "platform" => help_platform::PLATFORM_HELP_TEXT.to_owned(),
         "plug" => help_plugin::PLUGIN_HELP_TEXT.to_owned(),
         "user" => help_user::USER_HELP_TEXT.to_owned(),
-
-        // NEW: TTV
         "ttv" => help_ttv::TTV_HELP_TEXT.to_owned(),
+        "vrchat" => help_vrchat::VRCHAT_HELP_TEXT.to_owned(),
 
-        // fallback for recognized top-level commands that don't have big subcommands:
+        // NEW: "member" => show help_member
+        "member" => help_member::MEMBER_HELP_TEXT.to_owned(),
+
         "list" => {
             r#"List Command:
   Usage: list
-    Shows all known plugins (whether enabled, disabled, or not loaded).
+    Shows all known plugins (enabled or disabled).
 "#
                 .to_owned()
         },
@@ -82,7 +87,7 @@ pub fn show_command_help(command: &str) -> String {
             r#"Status Command:
   Usage: status [config]
     - status: shows uptime + connected plugin list
-    - status config: also shows all key-value pairs in bot_config
+    - status config: also shows all bot_config entries
 "#
                 .to_owned()
         },
@@ -94,7 +99,7 @@ pub fn show_command_help(command: &str) -> String {
                 .to_owned()
         },
 
-        // If not recognized
+        // fallback if not recognized
         other => format!("No detailed help found for '{}'. Type 'help' for an overview.", other),
     }
 }
