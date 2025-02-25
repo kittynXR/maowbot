@@ -33,6 +33,9 @@ use maowbot_core::services::message_service::MessageService;
 use maowbot_core::services::user_service::UserService;
 use maowbot_core::tasks::biweekly_maintenance::spawn_biweekly_maintenance_task;
 
+// [NEW] Make sure to import the db_logger spawn function:
+use maowbot_core::eventbus::db_logger::spawn_db_logger_task;
+
 use maowbot_core::plugins::bot_api::{BotApi};
 
 use tonic::transport::{Server, Identity, Certificate, ServerTlsConfig, Channel, ClientTlsConfig};
@@ -56,9 +59,6 @@ use maowbot_core::Error;
 use maowbot_core::platforms::twitch::TwitchAuthenticator;
 use maowbot_core::repositories::CredentialsRepository;
 use maowbot_core::tasks::autostart::run_autostart;
-
-// -- NEW: We'll import our new function:
-use maowbot_core::tasks::credential_refresh::refresh_all_refreshable_credentials;
 
 mod portable_postgres;
 use portable_postgres::*;
@@ -187,10 +187,17 @@ async fn run_server(args: Args) -> Result<(), Error> {
         bot_config_repo.clone(),
     );
 
+    // [NEW] We now spawn the DB logger so ChatMessage events actually get stored:
+    let _db_logger_task = spawn_db_logger_task(
+        &event_bus,
+        (*analytics_repo_arc).clone(),  // <--- fixes the error
+        100,
+        5,
+    );
+
     // User manager & message service
     let identity_repo = PlatformIdentityRepository::new(db.pool().clone());
     let analysis_repo = PostgresUserAnalysisRepository::new(db.pool().clone());
-
 
     let default_user_mgr = DefaultUserManager::new(
         user_repo_arc.clone(),
@@ -255,6 +262,7 @@ async fn run_server(args: Args) -> Result<(), Error> {
 
     // (A) => Immediately attempt to refresh all refreshable credentials on bot startup
     {
+        use maowbot_core::tasks::credential_refresh::refresh_all_refreshable_credentials;
         let mut lock = shared_auth_manager.lock().await;
         if let Err(e) = refresh_all_refreshable_credentials(
             creds_repo_arc.as_ref(),
@@ -265,6 +273,7 @@ async fn run_server(args: Args) -> Result<(), Error> {
     }
 
     // (B) => run the autostart logic
+    use maowbot_core::tasks::autostart::run_autostart;
     if let Err(e) = run_autostart(bot_config_repo.as_ref(), bot_api.clone()).await {
         error!("Autostart error => {:?}", e);
     }
