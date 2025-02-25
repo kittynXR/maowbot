@@ -6,21 +6,7 @@ use maowbot_core::plugins::bot_api::BotApi;
 use maowbot_core::models::User;
 use maowbot_core::Error;
 
-/// Handle "member" subcommands:
-///   member info <identifier>
-///   member chat <n> [platform [channel]] [p <pageNumber>] [s <search text>]
-///   member list [p [pageSize]]
-///   member search <query>
-///   member note <identifier> <note text...>
-///   member merge <uuid1> <uuid2> [g <newGlobalUsername>]
-///
-/// - The new `merge` command merges two different user IDs into one:
-///     member merge <uuid1> <uuid2> [g <newGlobalUsername>]
-///
-///   Where:
-///     * uuid1 is the "target" user that remains after the merge.
-///     * uuid2 is merged into uuid1 and then removed.
-///     * If `g` is supplied, the next token is the new global username for the resulting user.
+
 pub async fn handle_member_command(args: &[&str], bot_api: &Arc<dyn BotApi>) -> String {
     if args.is_empty() {
         return show_member_usage();
