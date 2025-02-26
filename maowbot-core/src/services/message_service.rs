@@ -38,28 +38,26 @@ impl MessageService {
         }
     }
 
-    /// `user_name_with_roles` might look like `"kittyncat|roles=mod,vip,subscriber"`
-    /// if it comes from Twitch or Discord. We parse any roles after "|roles=" and
-    /// store them in the DB as soon as we see the user.
+    /// Accept a new chat message from a given platform/channel. We store the numeric
+    /// platform_user_id, plus an optional `display_name` if provided, and the user roles.
+    ///
+    /// This method:
+    /// 1) Ensures there's a DB user row with `platform_user_id` in `platform_identities`.
+    ///    - If new, sets the `platform_username = display_name` (if given) and also sets
+    ///      the user’s `global_username = display_name` if user didn’t exist yet.
+    /// 2) Updates roles.
+    /// 3) Puts the message in the in-memory `ChatCache`.
+    /// 4) Publishes an event with the final DB user_id for logging.
     pub async fn process_incoming_message(
         &self,
         platform: &str,
         channel: &str,
-        user_name_with_roles: &str,
+        platform_user_id: &str,
+        maybe_display_name: Option<&str>,
+        roles_list: &[String],
         text: &str,
     ) -> Result<(), Error> {
-
-        // 1) Parse out the roles, if any:
-        let (raw_name, roles_list) = if let Some(idx) = user_name_with_roles.find("|roles=") {
-            let nm = &user_name_with_roles[..idx];
-            let roles_str = &user_name_with_roles[idx + 7..]; // skip "|roles="
-            (nm.trim().to_string(), roles_str.split(',').map(|s| s.trim().to_string()).collect::<Vec<_>>())
-        } else {
-            (user_name_with_roles.to_string(), vec![])
-        };
-        tracing::info!(?raw_name, ?roles_list, "parsed user & roles");
-
-        // 2) Convert to a known `Platform`
+        // 1) Convert to a known `Platform`
         let platform_enum = match platform {
             "twitch-irc" => Platform::TwitchIRC,
             "twitch" => Platform::Twitch,
@@ -69,40 +67,43 @@ impl MessageService {
             other => return Err(Error::Platform(format!("Unknown platform: {}", other))),
         };
 
-        // 3) Get/create the user in DB. We'll pass `raw_name` as the platform_user_id
-        //    and also store roles in platform_identities if present.
+        // 2) Create or retrieve the user in the DB. The numeric ID is stored in `platform_user_id`.
+        //    If the user is brand-new, we also use `maybe_display_name` to set global_username.
         let user = self.user_manager
-            .get_or_create_user(platform_enum.clone(), &raw_name, Some(&raw_name))
+            .get_or_create_user(platform_enum.clone(), platform_user_id, maybe_display_name)
             .await?;
 
-        // => unify the roles with the stored platform_identity
+        // 3) Update roles
         if !roles_list.is_empty() {
-            if let Err(e) = self.user_service.unify_platform_roles(user.user_id, platform_enum.clone(), &roles_list).await {
+            if let Err(e) = self.user_service
+                .unify_platform_roles(user.user_id, platform_enum.clone(), roles_list)
+                .await
+            {
                 error!("Failed to unify roles in DB: {:?}", e);
             }
         }
 
-        // 4) Insert the message into our in-memory ChatCache
+        // 4) Insert into our ChatCache
         let token_count = text.split_whitespace().count();
         let cached_msg = CachedMessage {
             platform: platform.to_string(),
             channel: channel.to_string(),
-            user_name: raw_name.clone(),
+            user_name: user.global_username.clone().unwrap_or_else(|| platform_user_id.to_string()),
             text: text.to_string(),
             timestamp: Utc::now(),
             token_count,
-            user_roles: roles_list.clone(),
+            user_roles: roles_list.to_vec(),
         };
         {
             let mut lock = self.chat_cache.lock().await;
             lock.add_message(cached_msg).await;
         }
 
-        // 5) Publish an event with the **user_id** so DB logger can store chat_messages.user_id
+        // 5) Publish the event with the real DB user’s UUID
         let event = BotEvent::ChatMessage {
             platform: platform.to_string(),
             channel: channel.to_string(),
-            user: user.user_id.to_string(),
+            user: user.user_id.to_string(), // the correct DB user_id
             text: text.to_string(),
             timestamp: Utc::now(),
         };

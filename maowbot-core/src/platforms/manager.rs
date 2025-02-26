@@ -18,6 +18,8 @@ use crate::platforms::vrchat_pipeline::runtime::VRChatPlatform;
 use crate::platforms::twitch_irc::runtime::TwitchIrcPlatform;
 use crate::platforms::twitch_eventsub::runtime::TwitchEventSubPlatform;
 
+/// Holds the JoinHandle for a running platform plus references
+/// to specialized objects (e.g. TwitchIrcPlatform instance).
 pub struct PlatformRuntimeHandle {
     pub join_handle: JoinHandle<()>,
     pub platform: String,
@@ -36,6 +38,7 @@ pub struct PlatformManager {
     event_bus: Arc<EventBus>,
     credentials_repo: Arc<dyn CredentialsRepository + Send + Sync>,
 
+    /// (platform, user_id) => runtime handle
     pub active_runtimes: tokio::sync::Mutex<HashMap<(String, String), PlatformRuntimeHandle>>,
 }
 
@@ -55,6 +58,8 @@ impl PlatformManager {
         }
     }
 
+    /// Start a platform runtime (Discord, Twitch, etc.) given the platform string and account_name.
+    /// For multi-account usage, the combination of (platform, user_id) is unique.
     pub async fn start_platform_runtime(
         &self,
         platform_str: &str,
@@ -109,6 +114,7 @@ impl PlatformManager {
         Ok(())
     }
 
+    /// Stop a running platform runtime if found.
     pub async fn stop_platform_runtime(
         &self,
         platform_str: &str,
@@ -124,14 +130,7 @@ impl PlatformManager {
             guard.remove(&key)
         };
         if let Some(rh) = handle_opt {
-            // If we need a graceful close, call it now:
-            if platform_str.eq_ignore_ascii_case("twitch-eventsub") {
-                // If desired, you can do a more elaborate approach here,
-                // like storing an Arc<Mutex<TwitchEventSubPlatform>> if
-                // you want a real .disconnect(). For now, the read loop
-                // will see the abort and close. Or see runtime's updated
-                // `disconnect()` usage.
-            }
+            // If we need a graceful close, do it now or simply abort:
             rh.join_handle.abort();
             info!("Stopped runtime for platform='{platform_str}', user_id={}", user.user_id);
         } else {
@@ -147,12 +146,10 @@ impl PlatformManager {
     async fn spawn_discord(&self, credential: PlatformCredential) -> Result<PlatformRuntimeHandle, Error> {
         let token = credential.primary_token.clone();
         let message_svc = Arc::clone(&self.message_svc);
-        let user_svc = Arc::clone(&self.user_svc);
 
         let platform_str = "discord".to_string();
         let user_id_str = credential.user_id.to_string();
 
-        let platform_str_cloned = platform_str.clone();
         let user_id_str_cloned = user_id_str.clone();
 
         let mut discord = DiscordPlatform::new(token);
@@ -163,18 +160,25 @@ impl PlatformManager {
         let join_handle = tokio::spawn(async move {
             while let Some(msg_event) = discord.next_message_event().await {
                 let channel = msg_event.channel;
-                let user_platform_id = msg_event.user_id;
+                let user_platform_id = msg_event.user_id.clone(); // numeric ID from Discord
+                let display_name = msg_event.username.clone();     // user’s server nickname or username
+                let roles = msg_event.user_roles.clone();
                 let text = msg_event.text;
-                let username = msg_event.username.clone();
 
-                // let _ = user_svc
-                //     .get_or_create_user("discord", &user_platform_id, Some(&username))
-                //     .await;
+                // NOTE: we do *not* call event_bus.publish_chat(...) ourselves.
+                // Instead, we rely on the message_service to do final publishing.
                 if let Err(e) = message_svc
-                    .process_incoming_message(&platform_str_cloned, &channel, &username, &text)
+                    .process_incoming_message(
+                        "discord",
+                        &channel,
+                        &user_platform_id,
+                        Some(&display_name),
+                        &roles,
+                        &text,
+                    )
                     .await
                 {
-                    error!("[Discord] process_incoming_message failed: {e:?}");
+                    error!("[Discord] process_incoming_message => {e:?}");
                 }
             }
 
@@ -192,12 +196,9 @@ impl PlatformManager {
 
     async fn spawn_twitch_helix(&self, credential: PlatformCredential) -> Result<PlatformRuntimeHandle, Error> {
         let message_svc = Arc::clone(&self.message_svc);
-        let user_svc = Arc::clone(&self.user_svc);
 
         let platform_str = "twitch".to_string();
         let user_id_str = credential.user_id.to_string();
-
-        let platform_str_cloned = platform_str.clone();
         let user_id_str_cloned = user_id_str.clone();
 
         let join_handle = tokio::spawn(async move {
@@ -214,18 +215,26 @@ impl PlatformManager {
 
             while let Some(msg_event) = twitch.next_message_event().await {
                 let channel = msg_event.channel;
-                let user_platform_id = msg_event.user_id;
+                // Helix events can include user_id or display_name. For demonstration:
                 let text = msg_event.text;
                 let display_name = msg_event.display_name.clone();
+                // We do *not* have a numeric user ID from Helix chat events the same way IRC does,
+                // so let's put an empty string or fallback.
+                let platform_user_id = msg_event.user_id; // If provided by your Helix logic
 
-                // let _ = user_svc
-                //     .get_or_create_user("twitch", &user_platform_id, Some(&display_name))
-                //     .await;
+                // We'll call the message_service:
                 if let Err(e) = message_svc
-                    .process_incoming_message(&platform_str_cloned, &channel, &display_name, &text)
+                    .process_incoming_message(
+                        "twitch",
+                        &channel,
+                        &platform_user_id, // e.g. "264653338" if you have it
+                        Some(&display_name),
+                        &[], // no roles from Helix for now
+                        &text,
+                    )
                     .await
                 {
-                    error!("[TwitchHelix] process_incoming_message failed: {e:?}");
+                    error!("[TwitchHelix] process_incoming_message => {e:?}");
                 }
             }
 
@@ -243,18 +252,14 @@ impl PlatformManager {
 
     async fn spawn_vrchat(&self, credential: PlatformCredential) -> Result<PlatformRuntimeHandle, Error> {
         let message_svc = Arc::clone(&self.message_svc);
-        let user_svc = Arc::clone(&self.user_svc);
 
         let platform_str = "vrchat".to_string();
         let user_id_str = credential.user_id.to_string();
-
-        let platform_str_cloned = platform_str.clone();
         let user_id_str_cloned = user_id_str.clone();
 
         let mut vrc = VRChatPlatform::new();
         vrc.credentials = Some(credential);
 
-        // We'll wrap it in an Arc<Mutex<>> so we can retrieve it for VRChat commands:
         let arc_vrc = Arc::new(Mutex::new(vrc));
 
         let cloned_vrc = Arc::clone(&arc_vrc);
@@ -267,15 +272,20 @@ impl PlatformManager {
             info!("[VRChat] Connected for user_id={user_id_str_cloned}");
 
             while let Some(evt) = lock.next_message_event().await {
-                let user_platform_id = evt.user_id;
-                let text = evt.text;
+                let channel = "roomOrWorldId"; // or wherever the event came from
+                let platform_user_id = evt.user_id.clone();
                 let display_name = evt.vrchat_display_name.clone();
+                let text = evt.text;
 
-                // let _ = user_svc
-                //     .get_or_create_user("vrchat", &user_platform_id, Some(&display_name))
-                //     .await;
                 if let Err(e) = message_svc
-                    .process_incoming_message(&platform_str_cloned, "roomOrWorldId", &display_name, &text)
+                    .process_incoming_message(
+                        "vrchat",
+                        channel,
+                        &platform_user_id,
+                        Some(&display_name),
+                        &[],
+                        &text,
+                    )
                     .await
                 {
                     error!("[VRChat] process_incoming_message => {e:?}");
@@ -296,13 +306,12 @@ impl PlatformManager {
 
     async fn spawn_twitch_irc(&self, credential: PlatformCredential) -> Result<PlatformRuntimeHandle, Error> {
         let message_svc = Arc::clone(&self.message_svc);
-        let user_svc = Arc::clone(&self.user_svc);
 
         let user_id_str = credential.user_id.to_string();
         let user_id_str_cloned = user_id_str.clone();
 
         let mut irc = TwitchIrcPlatform::new();
-        irc.set_credentials(credential.clone());
+        irc.set_credentials(credential);
 
         irc.set_event_bus(self.event_bus.clone());
         irc.connect().await?;
@@ -319,15 +328,20 @@ impl PlatformManager {
             let mut msg_rx = rx;
             while let Some(evt) = msg_rx.recv().await {
                 let channel = evt.channel;
-                let user_platform_id = evt.twitch_user_id.clone();
+                let platform_user_id = evt.twitch_user_id.clone(); // numeric user-id from tags
+                let display_name = evt.display_name.clone();       // e.g. "kittyncat"
+                let roles = evt.roles.clone();
                 let text = evt.text;
-                let user_name = evt.display_name.clone();
 
-                // let _ = user_svc
-                //     .get_or_create_user("twitch-irc", &user_platform_id, Some(&user_name))
-                //     .await;
                 if let Err(e) = message_svc
-                    .process_incoming_message("twitch-irc", &channel, &user_name, &text)
+                    .process_incoming_message(
+                        "twitch-irc",
+                        &channel,
+                        &platform_user_id,
+                        Some(&display_name),
+                        &roles,
+                        &text,
+                    )
                     .await
                 {
                     error!("[TwitchIRC] process_incoming_message => {e:?}");
@@ -350,14 +364,11 @@ impl PlatformManager {
         let user_id_str = credential.user_id.to_string();
         let user_id_str_cloned = user_id_str.clone();
 
-        // Create the platform object:
         let mut eventsub = TwitchEventSubPlatform::new();
-        eventsub.credentials = Some(credential.clone());
+        eventsub.credentials = Some(credential);
         eventsub.set_event_bus(event_bus);
 
-        // We'll spawn the real tungstenite loop inside the single manager task:
         let join_handle = tokio::spawn(async move {
-            // Start the socket read loop inline here
             match eventsub.start_loop().await {
                 Ok(_) => {
                     info!("[TwitchEventSub] start_loop returned OK for user_id={user_id_str_cloned}");
@@ -454,7 +465,6 @@ impl PlatformManager {
     // -------------------------------------------------------------
     // VRChat helper methods
     // -------------------------------------------------------------
-    /// Get the running VRChatPlatform for `account_name`, or error if not running.
     pub async fn get_vrchat_instance(&self, account_name: &str) -> Result<Arc<Mutex<VRChatPlatform>>, Error> {
         let user = self.user_svc.find_user_by_global_username(account_name).await?;
         let key = ("vrchat".to_string(), user.user_id.to_string());

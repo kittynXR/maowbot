@@ -157,7 +157,7 @@ impl PlatformIntegration for TwitchIrcPlatform {
                         // So the message_service can parse user=someString|roles=...
                         // We'll do:   "264653338|roles=mod,subscriber"
                         let combined = format!("{}|roles={}", user_id, roles_str);
-                        bus.publish_chat("twitch-irc", &channel, &combined, &text).await;
+                        // bus.publish_chat("twitch-irc", &channel, &combined, &text).await;
                     }
                 }
                 else {

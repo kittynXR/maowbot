@@ -15,8 +15,7 @@ use maowbot_core::Error;
 ///   member merge [<uuid1> <uuid2> [g <newGlobalUsername>]] OR [<username> [g <newGlobalUsername>]]
 ///   member roles <identifier> [add <platform> <rolename>] [remove <platform> <rolename>]
 ///
-/// New: The `member merge` command can also be invoked with just <username> to merge all
-/// duplicate user records that share that global username, merging them onto the oldest user.
+/// Updated to also show `platform_user_id` in `member info`.
 pub async fn handle_member_command(args: &[&str], bot_api: &Arc<dyn BotApi>) -> String {
     if args.is_empty() {
         return "Usage: member <info|chat|list|search|note|merge|roles>".to_string();
@@ -54,18 +53,9 @@ pub async fn handle_member_command(args: &[&str], bot_api: &Arc<dyn BotApi>) -> 
             member_note(identifier, &note_text, bot_api).await
         }
         "merge" => {
-            // Updated usage:
-            //   member merge <uuid1> <uuid2> [g <newGlobalUsername>]
-            //   OR
-            //   member merge <username> [g <newGlobalUsername>]
             member_merge(&args[1..], bot_api).await
         }
         "roles" => {
-            // usage:
-            //   member roles <userNameOrUUID>
-            //     => show all roles from each platform
-            //   member roles <userNameOrUUID> add <platform> <rolename>
-            //   member roles <userNameOrUUID> remove <platform> <rolename>
             member_roles(&args[1..], bot_api).await
         }
         _ => {
@@ -77,7 +67,7 @@ pub async fn handle_member_command(args: &[&str], bot_api: &Arc<dyn BotApi>) -> 
     }
 }
 
-/// `member info <identifier>`
+/// Display info for one user, including platform identities and roles.
 async fn member_info(identifier: &str, bot_api: &Arc<dyn BotApi>) -> String {
     let user = match resolve_user(identifier, bot_api).await {
         Ok(u) => u,
@@ -94,7 +84,7 @@ async fn member_info(identifier: &str, bot_api: &Arc<dyn BotApi>) -> String {
         user.is_active
     ));
 
-    // Now fetch platform identities
+    // Show the user’s platform identities (including roles)
     match bot_api.get_platform_identities_for_user(user.user_id).await {
         Ok(idens) => {
             if idens.is_empty() {
@@ -102,9 +92,14 @@ async fn member_info(identifier: &str, bot_api: &Arc<dyn BotApi>) -> String {
             } else {
                 output.push_str("-- platform_identities:\n");
                 for pid in idens {
+                    // UPDATED to display pid.platform_user_id as well.
                     output.push_str(&format!(
-                        " platform={:?} username={} display_name={:?} roles={:?}\n",
-                        pid.platform, pid.platform_username, pid.platform_display_name, pid.platform_roles
+                        " platform={:?} platform_user_id={} username={} display_name={:?} roles={:?}\n",
+                        pid.platform,
+                        pid.platform_user_id,
+                        pid.platform_username,
+                        pid.platform_display_name,
+                        pid.platform_roles
                     ));
                 }
                 output.push_str("\n");
@@ -118,7 +113,7 @@ async fn member_info(identifier: &str, bot_api: &Arc<dyn BotApi>) -> String {
         }
     }
 
-    // Fetch user_analysis
+    // Show user_analysis if present
     match bot_api.get_user_analysis(user.user_id).await {
         Ok(Some(analysis)) => {
             output.push_str("-- user_analysis:\n");
@@ -138,6 +133,23 @@ async fn member_info(identifier: &str, bot_api: &Arc<dyn BotApi>) -> String {
     }
 
     output
+}
+
+/// Retrieve a user by name or UUID.
+async fn resolve_user(identifier: &str, bot_api: &Arc<dyn BotApi>) -> Result<User, Error> {
+    match Uuid::parse_str(identifier) {
+        Ok(uuid_val) => {
+            if let Some(u) = bot_api.get_user(uuid_val).await? {
+                Ok(u)
+            } else {
+                Err(Error::Database(sqlx::Error::RowNotFound))
+            }
+        }
+        Err(_) => {
+            // Fall back to looking up by global_username
+            bot_api.find_user_by_name(identifier).await
+        }
+    }
 }
 
 /// `member chat <usernameOrUUID> [numMessages] [platform] [channel] [p <pageNum>] [s <search>]`
@@ -289,7 +301,7 @@ async fn member_list(args: &[&str], bot_api: &Arc<dyn BotApi>) -> String {
         return out;
     }
 
-    // Paginated
+    // Paginated listing
     let total = all_users.len();
     let total_pages = (total + page_size - 1) / page_size;
     let mut out = String::new();
@@ -359,7 +371,7 @@ async fn member_search(query: &str, bot_api: &Arc<dyn BotApi>) -> String {
     out
 }
 
-/// `member note <identifier> <note text...>`
+/// `member note <usernameOrUUID> <note text...>`
 async fn member_note(identifier: &str, note_text: &str, bot_api: &Arc<dyn BotApi>) -> String {
     let user = match resolve_user(identifier, bot_api).await {
         Ok(u) => u,
@@ -372,23 +384,17 @@ async fn member_note(identifier: &str, note_text: &str, bot_api: &Arc<dyn BotApi
     }
 }
 
-/// NEW usage for merges:
-/// 1) `member merge <uuid1> <uuid2> [g <newGlobalUsername>]` (classic mode)
-/// 2) `member merge <username> [g <newGlobalUsername>]` merges all duplicates for that name
-///    into the oldest user by creation time. If only one match, does nothing.
+/// `member merge` subcommand
 async fn member_merge(args: &[&str], bot_api: &Arc<dyn BotApi>) -> String {
-    // If user typed no arguments: show usage
     if args.is_empty() {
         return "Usage:\n  member merge <uuid1> <uuid2> [g <newGlobalUsername>]\n  member merge <username> [g <newGlobalUsername>]".to_string();
     }
 
-    // Attempt to parse the first argument as a UUID. If it works and we also
-    // have a second argument, we'll do the classic merge approach.
     let first_arg = args[0];
     let try_uuid = Uuid::parse_str(first_arg);
 
     if try_uuid.is_ok() && args.len() >= 2 {
-        // => old usage approach
+        // classic usage: member merge <uuid1> <uuid2> ...
         let uuid1_str = first_arg;
         let uuid2_str = args[1];
 
@@ -401,7 +407,7 @@ async fn member_merge(args: &[&str], bot_api: &Arc<dyn BotApi>) -> String {
             Err(e) => return format!("Error parsing second uuid: {e}"),
         };
 
-        // Check if there's an optional "g <newGlobalUsername>"
+        // See if optional "g <newGlobalUsername>"
         let mut new_global_name: Option<String> = None;
         let mut idx = 2;
         while idx < args.len() {
@@ -414,23 +420,26 @@ async fn member_merge(args: &[&str], bot_api: &Arc<dyn BotApi>) -> String {
             idx += 1;
         }
 
-        // Per requirement: "default behavior is to merge the new member IDs onto the oldest one."
-        // => let's figure out which user is older. We'll override user1_id if needed.
-        let older_id_opt = find_older_user(user1_id, user2_id, bot_api).await;
-        if let Ok(Some((older, newer))) = older_id_opt {
-            // If user1_id != older, we swap them so that user2 merges onto user1
-            if user1_id != older {
-                // now user1 is older, user2 is newer
-                return do_merge(bot_api, older, newer, new_global_name).await;
+        match find_older_user(user1_id, user2_id, bot_api).await {
+            Ok(Some((older, newer))) => {
+                // Merge 'newer' onto 'older'
+                match bot_api.merge_users(older, newer, new_global_name.as_deref()).await {
+                    Ok(()) => {
+                        let extra = if let Some(n) = new_global_name {
+                            format!(" with new name='{}'", n)
+                        } else {
+                            "".to_string()
+                        };
+                        format!("Merged user={} into user={}{}", newer, older, extra)
+                    }
+                    Err(e) => format!("Error merging => {:?}", e),
+                }
             }
-            return do_merge(bot_api, user1_id, user2_id, new_global_name).await;
+            Ok(None) => "No older user found; one of them not in DB?".to_string(),
+            Err(e) => format!("Error => {:?}", e),
         }
-        // fallback if something went wrong
-        return "Could not determine which user was older. Possibly missing from DB.".to_string();
-
     } else {
-        // => new usage: user typed a single username (plus optional "g <newName>") => unify all duplicates
-        // We'll parse any optional arguments for "g <newName>"
+        // new usage: member merge <username> [g <newGlobalUsername>]
         let mut new_global_name: Option<String> = None;
         let mut idx = 1;
         while idx < args.len() {
@@ -444,13 +453,11 @@ async fn member_merge(args: &[&str], bot_api: &Arc<dyn BotApi>) -> String {
         }
 
         let username = first_arg;
-        // We'll do a search ignoring case
         let all_matches = match bot_api.search_users(username).await {
             Ok(list) => list,
-            Err(e) => return format!("Error searching for username='{}' => {:?}", username, e),
+            Err(e) => return format!("Error searching username='{}' => {:?}", username, e),
         };
 
-        // Filter to exact match ignoring case on global_username
         let matching: Vec<User> = all_matches
             .into_iter()
             .filter(|u| {
@@ -466,74 +473,56 @@ async fn member_merge(args: &[&str], bot_api: &Arc<dyn BotApi>) -> String {
             return format!("No users found with global_username='{}'", username);
         }
         if matching.len() == 1 {
-            // nothing to merge
-            return format!(
-                "Only one user found with that name. No duplicates to merge."
-            );
+            return "Only one user found. No duplicates to merge.".to_string();
         }
 
-        // We have multiple matches => unify them. We'll pick the oldest (by created_at) as the
-        // "destination" user, and merge all the others onto it.
-        // We'll call "merge_users()" in a loop.
         let mut sorted = matching.clone();
-        // sort ascending by created_at
         sorted.sort_by_key(|u| u.created_at);
         let oldest = sorted[0].clone();
         let others = &sorted[1..];
 
-        let oldest_id = oldest.user_id;
+        // Merge each duplicate onto the oldest
         for dup in others {
-            // We always want to ensure the default: "the older ID remains, newer merges into it."
-            // But we already sorted by date, so oldest is the first element. Just do the merges.
-            match bot_api.merge_users(oldest_id, dup.user_id, None).await {
-                Ok(_) => {}
-                Err(e) => {
-                    return format!(
-                        "Error merging user {} => {}: {e:?}",
-                        dup.user_id, oldest_id
-                    );
-                }
+            if let Err(e) = bot_api.merge_users(oldest.user_id, dup.user_id, None).await {
+                return format!("Error merging user {} => {}: {e:?}", dup.user_id, oldest.user_id);
             }
         }
 
-        // If the caller specified a new global username, set it now (only once at the end).
         if let Some(ref new_name) = new_global_name {
-            match bot_api.merge_users(oldest_id, oldest_id, Some(new_name)).await {
+            match bot_api.merge_users(oldest.user_id, oldest.user_id, Some(new_name)).await {
                 Ok(_) => {
                     return format!(
                         "Merged {} duplicates into user_id={} and set global_username='{}'.",
                         others.len(),
-                        oldest_id,
+                        oldest.user_id,
                         new_name
                     );
                 }
                 Err(e) => {
                     return format!(
-                        "Merged {} duplicates, but error setting new global_username => {:?}",
-                        others.len(),
-                        e
+                        "Merged duplicates but error setting new global_username => {e:?}",
                     );
                 }
             }
         }
 
-        format!("Successfully merged {} duplicates into user_id={}.", others.len(), oldest_id)
+        format!("Merged {} duplicates into user_id={}.", others.len(), oldest.user_id)
     }
 }
 
-/// Finds which user is older (by created_at), returning (olderUserId, newerUserId).
+/// For merges: find which user is older by created_at.
 async fn find_older_user(
     user1_id: Uuid,
     user2_id: Uuid,
-    bot_api: &Arc<dyn BotApi>,
+    bot_api: &Arc<dyn BotApi>
 ) -> Result<Option<(Uuid, Uuid)>, Error> {
-    let user1 = bot_api.get_user(user1_id).await?;
-    let user2 = bot_api.get_user(user2_id).await?;
-    if user1.is_none() || user2.is_none() {
+    let u1_opt = bot_api.get_user(user1_id).await?;
+    let u2_opt = bot_api.get_user(user2_id).await?;
+    if u1_opt.is_none() || u2_opt.is_none() {
         return Ok(None);
     }
-    let u1 = user1.unwrap();
-    let u2 = user2.unwrap();
+    let u1 = u1_opt.unwrap();
+    let u2 = u2_opt.unwrap();
     if u1.created_at <= u2.created_at {
         Ok(Some((u1.user_id, u2.user_id)))
     } else {
@@ -541,27 +530,7 @@ async fn find_older_user(
     }
 }
 
-/// Actually calls the merge API
-async fn do_merge(
-    bot_api: &Arc<dyn BotApi>,
-    older_id: Uuid,
-    newer_id: Uuid,
-    new_name: Option<String>
-) -> String {
-    match bot_api.merge_users(older_id, newer_id, new_name.as_deref()).await {
-        Ok(()) => {
-            let extra = if let Some(n) = new_name {
-                format!(" with new name='{}'", n)
-            } else {
-                "".to_string()
-            };
-            format!("Merged user={} into user={}{}", newer_id, older_id, extra)
-        }
-        Err(e) => format!("Error merging => {:?}", e),
-    }
-}
-
-/// `member roles <identifier>`
+/// `member roles <identifier> ...`
 async fn member_roles(args: &[&str], bot_api: &Arc<dyn BotApi>) -> String {
     if args.is_empty() {
         return "Usage: member roles <userNameOrUUID> [add <platform> <rolename>] [remove <platform> <rolename>]".to_string();
@@ -573,10 +542,9 @@ async fn member_roles(args: &[&str], bot_api: &Arc<dyn BotApi>) -> String {
         Err(e) => return format!("Error: {:?}", e),
     };
 
-    // If no extra args => list all roles
+    // If no extra args => show all platform roles
     if args.len() == 1 {
-        let mut out = String::new();
-        out.push_str(&format!("User roles for user_id={}:\n", user.user_id));
+        let mut out = format!("User roles for user_id={}:\n", user.user_id);
         match bot_api.get_platform_identities_for_user(user.user_id).await {
             Ok(idens) => {
                 if idens.is_empty() {
@@ -584,8 +552,10 @@ async fn member_roles(args: &[&str], bot_api: &Arc<dyn BotApi>) -> String {
                 } else {
                     for pid in idens {
                         out.push_str(&format!(
-                            "  Platform={:?}: roles={:?}\n",
-                            pid.platform, pid.platform_roles
+                            "  Platform={:?}: platform_user_id={} roles={:?}\n",
+                            pid.platform,
+                            pid.platform_user_id,
+                            pid.platform_roles
                         ));
                     }
                 }
@@ -597,7 +567,6 @@ async fn member_roles(args: &[&str], bot_api: &Arc<dyn BotApi>) -> String {
         return out;
     }
 
-    // We have sub-subcommands: add or remove
     if args.len() < 4 {
         return "Usage: member roles <userNameOrUUID> [add <platform> <rolename>] [remove <platform> <rolename>]".to_string();
     }
@@ -610,35 +579,19 @@ async fn member_roles(args: &[&str], bot_api: &Arc<dyn BotApi>) -> String {
         "add" => {
             let res = bot_api.add_role_to_user_identity(user.user_id, platform_str, rolename).await;
             match res {
-                Ok(_) => format!("Added role '{}' on platform='{}' for user={}", rolename, platform_str, user.user_id),
+                Ok(_) => format!("Added role '{}' on platform='{}' for user_id={}", rolename, platform_str, user.user_id),
                 Err(e) => format!("Error adding role => {:?}", e),
             }
         }
         "remove" => {
             let res = bot_api.remove_role_from_user_identity(user.user_id, platform_str, rolename).await;
             match res {
-                Ok(_) => format!("Removed role '{}' on platform='{}' for user={}", rolename, platform_str, user.user_id),
+                Ok(_) => format!("Removed role '{}' on platform='{}' for user_id={}", rolename, platform_str, user.user_id),
                 Err(e) => format!("Error removing role => {:?}", e),
             }
         }
         _ => {
             "Usage: member roles <userNameOrUUID> [add <platform> <rolename>] [remove <platform> <rolename>]".to_string()
-        }
-    }
-}
-
-/// Helper to resolve user by either name or UUID
-async fn resolve_user(identifier: &str, bot_api: &Arc<dyn BotApi>) -> Result<User, Error> {
-    match Uuid::parse_str(identifier) {
-        Ok(uuid_val) => {
-            if let Some(u) = bot_api.get_user(uuid_val).await? {
-                Ok(u)
-            } else {
-                Err(Error::Database(sqlx::Error::RowNotFound))
-            }
-        }
-        Err(_) => {
-            bot_api.find_user_by_name(identifier).await
         }
     }
 }

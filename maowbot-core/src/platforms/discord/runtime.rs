@@ -148,7 +148,7 @@ pub async fn shard_runner(
                         };
                         let combined_user_str = format!("{}{}", user_id, joined_roles);
 
-                        bus.publish_chat("discord", &channel_name, &combined_user_str, &text).await;
+                        // bus.publish_chat("discord", &channel_name, &combined_user_str, &text).await;
                     }
                 }
 
