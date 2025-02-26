@@ -155,14 +155,12 @@ impl PlatformManager {
         let platform_str_cloned = platform_str.clone();
         let user_id_str_cloned = user_id_str.clone();
 
-        let join_handle = tokio::spawn(async move {
-            let mut discord = DiscordPlatform::new(token);
-            if let Err(err) = discord.connect().await {
-                error!("[Discord] connect error: {err:?}");
-                return;
-            }
-            info!("[Discord] Connected for user_id={user_id_str_cloned}");
+        let mut discord = DiscordPlatform::new(token);
+        discord.set_event_bus(self.event_bus.clone());
+        discord.connect().await?;
+        info!("[Discord] Connected for user_id={user_id_str_cloned}");
 
+        let join_handle = tokio::spawn(async move {
             while let Some(msg_event) = discord.next_message_event().await {
                 let channel = msg_event.channel;
                 let user_platform_id = msg_event.user_id;
@@ -305,7 +303,10 @@ impl PlatformManager {
 
         let mut irc = TwitchIrcPlatform::new();
         irc.set_credentials(credential.clone());
+
+        irc.set_event_bus(self.event_bus.clone());
         irc.connect().await?;
+        info!("[TwitchIRC] connected ... starting read loop");
 
         let rx_opt = irc.rx.take();
         let rx = match rx_opt {
@@ -315,7 +316,6 @@ impl PlatformManager {
         let arc_irc = Arc::new(Mutex::new(irc));
 
         let join_handle = tokio::spawn(async move {
-            info!("[TwitchIRC] connected ... starting read loop");
             let mut msg_rx = rx;
             while let Some(evt) = msg_rx.recv().await {
                 let channel = evt.channel;
