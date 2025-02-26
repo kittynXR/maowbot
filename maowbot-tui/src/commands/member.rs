@@ -12,9 +12,11 @@ use maowbot_core::Error;
 ///   member list ...
 ///   member search <query>
 ///   member note <identifier> <text>
-///   member merge <uuid1> <uuid2> ...
+///   member merge [<uuid1> <uuid2> [g <newGlobalUsername>]] OR [<username> [g <newGlobalUsername>]]
 ///   member roles <identifier> [add <platform> <rolename>] [remove <platform> <rolename>]
 ///
+/// New: The `member merge` command can also be invoked with just <username> to merge all
+/// duplicate user records that share that global username, merging them onto the oldest user.
 pub async fn handle_member_command(args: &[&str], bot_api: &Arc<dyn BotApi>) -> String {
     if args.is_empty() {
         return "Usage: member <info|chat|list|search|note|merge|roles>".to_string();
@@ -52,6 +54,10 @@ pub async fn handle_member_command(args: &[&str], bot_api: &Arc<dyn BotApi>) -> 
             member_note(identifier, &note_text, bot_api).await
         }
         "merge" => {
+            // Updated usage:
+            //   member merge <uuid1> <uuid2> [g <newGlobalUsername>]
+            //   OR
+            //   member merge <username> [g <newGlobalUsername>]
             member_merge(&args[1..], bot_api).await
         }
         "roles" => {
@@ -366,53 +372,196 @@ async fn member_note(identifier: &str, note_text: &str, bot_api: &Arc<dyn BotApi
     }
 }
 
-/// `member merge <uuid1> <uuid2> [g <newGlobalUsername>]`
+/// NEW usage for merges:
+/// 1) `member merge <uuid1> <uuid2> [g <newGlobalUsername>]` (classic mode)
+/// 2) `member merge <username> [g <newGlobalUsername>]` merges all duplicates for that name
+///    into the oldest user by creation time. If only one match, does nothing.
 async fn member_merge(args: &[&str], bot_api: &Arc<dyn BotApi>) -> String {
-    if args.len() < 2 {
-        return "Usage: member merge <uuid1> <uuid2> [g <newGlobalUsername>]".to_string();
+    // If user typed no arguments: show usage
+    if args.is_empty() {
+        return "Usage:\n  member merge <uuid1> <uuid2> [g <newGlobalUsername>]\n  member merge <username> [g <newGlobalUsername>]".to_string();
     }
-    let uuid1_str = args[0];
-    let uuid2_str = args[1];
 
-    let user1_id = match Uuid::parse_str(uuid1_str) {
-        Ok(x) => x,
-        Err(e) => return format!("Error parsing uuid1: {e}"),
-    };
-    let user2_id = match Uuid::parse_str(uuid2_str) {
-        Ok(x) => x,
-        Err(e) => return format!("Error parsing uuid2: {e}"),
-    };
+    // Attempt to parse the first argument as a UUID. If it works and we also
+    // have a second argument, we'll do the classic merge approach.
+    let first_arg = args[0];
+    let try_uuid = Uuid::parse_str(first_arg);
 
-    let mut new_global_name: Option<String> = None;
-    let mut idx = 2;
-    while idx < args.len() {
-        if args[idx].eq_ignore_ascii_case("g") {
+    if try_uuid.is_ok() && args.len() >= 2 {
+        // => old usage approach
+        let uuid1_str = first_arg;
+        let uuid2_str = args[1];
+
+        let user1_id = match Uuid::parse_str(uuid1_str) {
+            Ok(x) => x,
+            Err(e) => return format!("Error parsing first uuid: {e}"),
+        };
+        let user2_id = match Uuid::parse_str(uuid2_str) {
+            Ok(x) => x,
+            Err(e) => return format!("Error parsing second uuid: {e}"),
+        };
+
+        // Check if there's an optional "g <newGlobalUsername>"
+        let mut new_global_name: Option<String> = None;
+        let mut idx = 2;
+        while idx < args.len() {
+            if args[idx].eq_ignore_ascii_case("g") {
+                idx += 1;
+                if idx < args.len() {
+                    new_global_name = Some(args[idx].to_string());
+                }
+            }
             idx += 1;
-            if idx < args.len() {
-                new_global_name = Some(args[idx].to_string());
+        }
+
+        // Per requirement: "default behavior is to merge the new member IDs onto the oldest one."
+        // => let's figure out which user is older. We'll override user1_id if needed.
+        let older_id_opt = find_older_user(user1_id, user2_id, bot_api).await;
+        if let Ok(Some((older, newer))) = older_id_opt {
+            // If user1_id != older, we swap them so that user2 merges onto user1
+            if user1_id != older {
+                // now user1 is older, user2 is newer
+                return do_merge(bot_api, older, newer, new_global_name).await;
+            }
+            return do_merge(bot_api, user1_id, user2_id, new_global_name).await;
+        }
+        // fallback if something went wrong
+        return "Could not determine which user was older. Possibly missing from DB.".to_string();
+
+    } else {
+        // => new usage: user typed a single username (plus optional "g <newName>") => unify all duplicates
+        // We'll parse any optional arguments for "g <newName>"
+        let mut new_global_name: Option<String> = None;
+        let mut idx = 1;
+        while idx < args.len() {
+            if args[idx].eq_ignore_ascii_case("g") {
+                idx += 1;
+                if idx < args.len() {
+                    new_global_name = Some(args[idx].to_string());
+                }
+            }
+            idx += 1;
+        }
+
+        let username = first_arg;
+        // We'll do a search ignoring case
+        let all_matches = match bot_api.search_users(username).await {
+            Ok(list) => list,
+            Err(e) => return format!("Error searching for username='{}' => {:?}", username, e),
+        };
+
+        // Filter to exact match ignoring case on global_username
+        let matching: Vec<User> = all_matches
+            .into_iter()
+            .filter(|u| {
+                if let Some(g) = &u.global_username {
+                    g.to_lowercase() == username.to_lowercase()
+                } else {
+                    false
+                }
+            })
+            .collect();
+
+        if matching.is_empty() {
+            return format!("No users found with global_username='{}'", username);
+        }
+        if matching.len() == 1 {
+            // nothing to merge
+            return format!(
+                "Only one user found with that name. No duplicates to merge."
+            );
+        }
+
+        // We have multiple matches => unify them. We'll pick the oldest (by created_at) as the
+        // "destination" user, and merge all the others onto it.
+        // We'll call "merge_users()" in a loop.
+        let mut sorted = matching.clone();
+        // sort ascending by created_at
+        sorted.sort_by_key(|u| u.created_at);
+        let oldest = sorted[0].clone();
+        let others = &sorted[1..];
+
+        let oldest_id = oldest.user_id;
+        for dup in others {
+            // We always want to ensure the default: "the older ID remains, newer merges into it."
+            // But we already sorted by date, so oldest is the first element. Just do the merges.
+            match bot_api.merge_users(oldest_id, dup.user_id, None).await {
+                Ok(_) => {}
+                Err(e) => {
+                    return format!(
+                        "Error merging user {} => {}: {e:?}",
+                        dup.user_id, oldest_id
+                    );
+                }
             }
         }
-        idx += 1;
-    }
 
-    let res = bot_api.merge_users(user1_id, user2_id, new_global_name.as_deref()).await;
-    match res {
-        Ok(()) => {
-            let maybe_new = if let Some(n) = &new_global_name {
-                format!(" with new global username='{n}'")
-            } else {
-                "".to_string()
-            };
-            format!(
-                "Successfully merged user={} into user={}{}.",
-                uuid2_str, uuid1_str, maybe_new
-            )
+        // If the caller specified a new global username, set it now (only once at the end).
+        if let Some(ref new_name) = new_global_name {
+            match bot_api.merge_users(oldest_id, oldest_id, Some(new_name)).await {
+                Ok(_) => {
+                    return format!(
+                        "Merged {} duplicates into user_id={} and set global_username='{}'.",
+                        others.len(),
+                        oldest_id,
+                        new_name
+                    );
+                }
+                Err(e) => {
+                    return format!(
+                        "Merged {} duplicates, but error setting new global_username => {:?}",
+                        others.len(),
+                        e
+                    );
+                }
+            }
         }
-        Err(e) => format!("Error merging users => {e:?}"),
+
+        format!("Successfully merged {} duplicates into user_id={}.", others.len(), oldest_id)
     }
 }
 
-/// NEW SUBCOMMAND: `member roles <identifier>`
+/// Finds which user is older (by created_at), returning (olderUserId, newerUserId).
+async fn find_older_user(
+    user1_id: Uuid,
+    user2_id: Uuid,
+    bot_api: &Arc<dyn BotApi>,
+) -> Result<Option<(Uuid, Uuid)>, Error> {
+    let user1 = bot_api.get_user(user1_id).await?;
+    let user2 = bot_api.get_user(user2_id).await?;
+    if user1.is_none() || user2.is_none() {
+        return Ok(None);
+    }
+    let u1 = user1.unwrap();
+    let u2 = user2.unwrap();
+    if u1.created_at <= u2.created_at {
+        Ok(Some((u1.user_id, u2.user_id)))
+    } else {
+        Ok(Some((u2.user_id, u1.user_id)))
+    }
+}
+
+/// Actually calls the merge API
+async fn do_merge(
+    bot_api: &Arc<dyn BotApi>,
+    older_id: Uuid,
+    newer_id: Uuid,
+    new_name: Option<String>
+) -> String {
+    match bot_api.merge_users(older_id, newer_id, new_name.as_deref()).await {
+        Ok(()) => {
+            let extra = if let Some(n) = new_name {
+                format!(" with new name='{}'", n)
+            } else {
+                "".to_string()
+            };
+            format!("Merged user={} into user={}{}", newer_id, older_id, extra)
+        }
+        Err(e) => format!("Error merging => {:?}", e),
+    }
+}
+
+/// `member roles <identifier>`
 async fn member_roles(args: &[&str], bot_api: &Arc<dyn BotApi>) -> String {
     if args.is_empty() {
         return "Usage: member roles <userNameOrUUID> [add <platform> <rolename>] [remove <platform> <rolename>]".to_string();
