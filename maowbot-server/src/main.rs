@@ -196,7 +196,11 @@ async fn run_server(args: Args) -> Result<(), Error> {
     );
 
     // User manager & message service
-    let identity_repo = PlatformIdentityRepository::new(db.pool().clone());
+    let platform_identity_repo = Arc::new(
+        PlatformIdentityRepository::new(db.pool().clone())
+    );
+
+    let identity_repo = platform_identity_repo.clone();
     let analysis_repo = PostgresUserAnalysisRepository::new(db.pool().clone());
 
     let default_user_mgr = DefaultUserManager::new(
@@ -205,8 +209,13 @@ async fn run_server(args: Args) -> Result<(), Error> {
         analysis_repo,
     );
     let user_manager = Arc::new(default_user_mgr);
-    let user_service = Arc::new(UserService::new(user_manager.clone()));
 
+    let user_service = Arc::new(
+        UserService::new(
+            user_manager.clone(),
+            platform_identity_repo.clone(),
+        )
+    );
     let trim_policy = TrimPolicy {
         max_age_seconds: Some(24 * 3600),
         spam_score_cutoff: Some(5.0),
@@ -219,8 +228,15 @@ async fn run_server(args: Args) -> Result<(), Error> {
         CacheConfig { trim_policy },
     );
     let chat_cache = Arc::new(Mutex::new(chat_cache));
-    let message_service = Arc::new(MessageService::new(chat_cache, event_bus.clone(), user_manager.clone()));
 
+    let message_service = Arc::new(
+        MessageService::new(
+            chat_cache,            // e.g. Arc<Mutex<ChatCache<...>>>
+            event_bus.clone(),
+            user_manager.clone(),
+            user_service.clone(),
+        )
+    );
     // Platform manager
     use maowbot_core::platforms::manager::PlatformManager;
     let platform_manager = Arc::new(PlatformManager::new(
@@ -238,6 +254,7 @@ async fn run_server(args: Args) -> Result<(), Error> {
         user_analysis_repo_arc.clone(),
         platform_identity_repo_arc.clone(),
         platform_manager.clone(),
+        user_service.clone(),
     );
     plugin_manager.subscribe_to_event_bus(event_bus.clone());
     plugin_manager.set_event_bus(event_bus.clone());

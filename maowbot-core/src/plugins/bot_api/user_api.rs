@@ -60,4 +60,19 @@ pub trait UserApi: Send + Sync {
         user2_id: Uuid,
         new_global_name: Option<&str>
     ) -> Result<(), Error>;
+
+    async fn add_role_to_user_identity(
+        &self,
+        user_id: Uuid,
+        platform: &str,
+        role: &str,
+    ) -> Result<(), Error>;
+
+    /// Remove a single role from the user’s platform identity.
+    async fn remove_role_from_user_identity(
+        &self,
+        user_id: Uuid,
+        platform: &str,
+        role: &str,
+    ) -> Result<(), Error>;
 }

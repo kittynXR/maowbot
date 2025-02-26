@@ -25,6 +25,7 @@ use twilight_model::channel::{Channel as DiscordChannel, ChannelType};
 use twilight_model::{
     gateway::event::Event,
     gateway::payload::incoming::MessageCreate,
+    guild::Member,
     id::Id,
 };
 
@@ -40,6 +41,9 @@ pub struct DiscordMessageEvent {
     pub user_id: String,
     pub username: String,
     pub text: String,
+    /// Optionally store "roles" from the guild member if present.
+    /// In Discord, these are role IDs, but we store them as strings.
+    pub user_roles: Vec<String>,
 }
 
 /// Runs a shard’s event loop, sending user messages to `tx` and also publishing
@@ -48,7 +52,7 @@ pub async fn shard_runner(
     mut shard: Shard,
     tx: UnboundedSender<DiscordMessageEvent>,
     http: Arc<HttpClient>,
-    event_bus: Option<Arc<EventBus>>, // <--- added
+    event_bus: Option<Arc<EventBus>>,
 ) {
     let shard_id = shard.id().number();
     info!("(ShardRunner) Shard {} started. Listening for events.", shard_id);
@@ -78,14 +82,12 @@ pub async fn shard_runner(
                     // Attempt to retrieve the channel name/kind:
                     let channel_name = match http.channel(msg.channel_id).await {
                         Ok(response) => {
-                            // This is a `twilight_http::Response<Channel>`.
                             match response.model().await {
                                 Ok(channel_obj) => match channel_obj.kind {
                                     ChannelType::GuildText
                                     | ChannelType::GuildVoice
                                     | ChannelType::GuildForum
                                     | ChannelType::GuildStageVoice => {
-                                        // For typical guild channels, try channel_obj.name
                                         channel_obj
                                             .name
                                             .unwrap_or_else(|| msg.channel_id.to_string())
@@ -98,7 +100,6 @@ pub async fn shard_runner(
                                         // Group DM
                                         "(Group DM)".to_string()
                                     }
-                                    // For threads or other channel kinds, fallback:
                                     _ => msg.channel_id.to_string(),
                                 },
                                 Err(e) => {
@@ -117,9 +118,15 @@ pub async fn shard_runner(
                     let username = msg.author.name.clone();
                     let text = msg.content.clone();
 
+                    // Attempt to read roles from the "member" object if present:
+                    let user_roles: Vec<String> = match &msg.member {
+                        Some(mem) => mem.roles.iter().map(|rid| rid.to_string()).collect(),
+                        None => vec![],
+                    };
+
                     debug!(
-                        "(ShardRunner) Shard {} => msg '{}' from {} in '{}'",
-                        shard_id, text, username, channel_name
+                        "(ShardRunner) Shard {} => msg '{}' from {} in '{}'; roles={:?}",
+                        shard_id, text, username, channel_name, user_roles
                     );
 
                     // Send to our local unbounded channel (if some other part wants it).
@@ -128,12 +135,20 @@ pub async fn shard_runner(
                         user_id: user_id.clone(),
                         username: username.clone(),
                         text: text.clone(),
+                        user_roles: user_roles.clone(),
                     });
 
-                    // ------------- NEW: publish chat to the EventBus so it hits the DB -------------
+                    // Also publish a ChatMessage to the event bus:
                     if let Some(bus) = &event_bus {
-                        // If you had roles, you could do "user_id|roles=xyz", but for now just no roles.
-                        bus.publish_chat("discord", &channel_name, &user_id, &text).await;
+                        // We'll embed roles the same way TwitchIRC does: "user_id|roles=r1,r2"
+                        let joined_roles = if !user_roles.is_empty() {
+                            format!("|roles={}", user_roles.join(","))
+                        } else {
+                            "".to_string()
+                        };
+                        let combined_user_str = format!("{}{}", user_id, joined_roles);
+
+                        bus.publish_chat("discord", &channel_name, &combined_user_str, &text).await;
                     }
                 }
 
@@ -177,14 +192,13 @@ pub struct DiscordPlatform {
     /// An HTTP client for sending messages and fetching channel names.
     pub(crate) http: Option<Arc<HttpClient>>,
 
-    /// OPTIONAL: We keep an Arc to the EventBus so we can publish messages for the DB.
+    /// An Arc to the EventBus so we can publish messages for DB, etc.
     pub event_bus: Option<Arc<EventBus>>,
 }
 
 impl DiscordPlatform {
     /// Creates a new DiscordPlatform. The token should be the raw bot token.
     pub fn new(token: String) -> Self {
-        // Mask the token in logs just to be safe:
         let masked = if token.len() >= 6 {
             let last6 = &token[token.len().saturating_sub(6)..];
             format!("(startsWith=****, endsWith={})", last6)
@@ -200,7 +214,7 @@ impl DiscordPlatform {
             shard_tasks: Vec::new(),
             shard_senders: Vec::new(),
             http: None,
-            event_bus: None, // <--- newly added field, default None
+            event_bus: None,
         }
     }
 
@@ -300,7 +314,7 @@ impl PlatformIntegration for DiscordPlatform {
             self.shard_senders.push(shard.sender());
             let tx_for_shard = tx.clone();
             let http_for_shard = http.clone();
-            let bus_for_shard = self.event_bus.clone(); // <--- new
+            let bus_for_shard = self.event_bus.clone();
             let handle = tokio::spawn(async move {
                 shard_runner(shard, tx_for_shard, http_for_shard, bus_for_shard).await;
             });
@@ -330,8 +344,6 @@ impl PlatformIntegration for DiscordPlatform {
     }
 
     async fn send_message(&self, channel: &str, message: &str) -> Result<(), Error> {
-        // In your design, `channel` might be a human-readable name or numeric ID as a string.
-        // For demonstration, we’ll just parse as a numeric ID:
         let channel_id_u64: u64 = channel.parse().map_err(|_| {
             Error::Platform(format!("Invalid channel ID or name '{channel}' (parsing as u64)"))
         })?;

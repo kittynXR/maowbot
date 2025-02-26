@@ -40,7 +40,7 @@ struct CachedUser {
 
 pub struct DefaultUserManager {
     pub(crate) user_repo: Arc<UserRepository>,
-    identity_repo: PlatformIdentityRepository,
+    identity_repo: Arc<PlatformIdentityRepository>,
     analysis_repo: PostgresUserAnalysisRepository,
     pub user_cache: DashMap<(Platform, String), CachedUser>,
 }
@@ -50,7 +50,7 @@ const CACHE_MAX_AGE_SECS: i64 = 24 * 3600;
 impl DefaultUserManager {
     pub fn new(
         user_repo: Arc<UserRepository>,
-        identity_repo: PlatformIdentityRepository,
+        identity_repo: Arc<PlatformIdentityRepository>,
         analysis_repo: PostgresUserAnalysisRepository,
     ) -> Self {
         Self {

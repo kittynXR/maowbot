@@ -6,10 +6,18 @@ use maowbot_core::plugins::bot_api::BotApi;
 use maowbot_core::models::User;
 use maowbot_core::Error;
 
+/// This handles all `member` subcommands:
+///   member info <identifier>
+///   member chat <identifier> ...
+///   member list ...
+///   member search <query>
+///   member note <identifier> <text>
+///   member merge <uuid1> <uuid2> ...
+///   member roles <identifier> [add <platform> <rolename>] [remove <platform> <rolename>]
+///
 pub async fn handle_member_command(args: &[&str], bot_api: &Arc<dyn BotApi>) -> String {
     if args.is_empty() {
-        // Show short usage, or direct them to "help member".
-        return "Usage: member <info|chat|list|search|note|merge>".to_string();
+        return "Usage: member <info|chat|list|search|note|merge|roles>".to_string();
     }
 
     match args[0] {
@@ -20,15 +28,12 @@ pub async fn handle_member_command(args: &[&str], bot_api: &Arc<dyn BotApi>) -> 
             member_info(args[1], bot_api).await
         }
         "chat" => {
-            // Now the usage is:
-            //   member chat <usernameOrUUID> [numMessages] [platform] [channel] [p <pageNum>] [s <search>]
             if args.len() < 2 {
                 return "Usage: member chat <usernameOrUUID> [numMessages] [platform] [channel] [p <pageNum>] [s <search>]".to_string();
             }
             member_chat(&args[1..], bot_api).await
         }
         "list" => {
-            // Format: member list [p <pageSize>]
             member_list(&args[1..], bot_api).await
         }
         "search" => {
@@ -47,8 +52,15 @@ pub async fn handle_member_command(args: &[&str], bot_api: &Arc<dyn BotApi>) -> 
             member_note(identifier, &note_text, bot_api).await
         }
         "merge" => {
-            // usage: member merge <uuid1> <uuid2> [g <newGlobalUsername>]
             member_merge(&args[1..], bot_api).await
+        }
+        "roles" => {
+            // usage:
+            //   member roles <userNameOrUUID>
+            //     => show all roles from each platform
+            //   member roles <userNameOrUUID> add <platform> <rolename>
+            //   member roles <userNameOrUUID> remove <platform> <rolename>
+            member_roles(&args[1..], bot_api).await
         }
         _ => {
             format!(
@@ -59,15 +71,13 @@ pub async fn handle_member_command(args: &[&str], bot_api: &Arc<dyn BotApi>) -> 
     }
 }
 
-/// Implementation of `member info <identifier>`
+/// `member info <identifier>`
 async fn member_info(identifier: &str, bot_api: &Arc<dyn BotApi>) -> String {
-    // Attempt to resolve to a user
     let user = match resolve_user(identifier, bot_api).await {
         Ok(u) => u,
         Err(e) => return format!("Error: {:?}", e),
     };
 
-    // Show user row
     let mut output = String::new();
     output.push_str(&format!(
         "user_id={}\nglobal_username={:?}\ncreated_at={}\nlast_seen={}\nis_active={}\n\n",
@@ -124,22 +134,17 @@ async fn member_info(identifier: &str, bot_api: &Arc<dyn BotApi>) -> String {
     output
 }
 
-/// Implementation of `member chat <usernameOrUUID> [numMessages] [platform] [channel] [p <pageNum>] [s <search>]`
+/// `member chat <usernameOrUUID> [numMessages] [platform] [channel] [p <pageNum>] [s <search>]`
 async fn member_chat(args: &[&str], bot_api: &Arc<dyn BotApi>) -> String {
-    // The first argument is always the user identifier:
     let identifier = args[0];
 
-    // Attempt to parse the second argument as an integer limit. If it fails, we assume it's platform.
     let mut idx = 1;
-    let mut limit: i64 = i64::MAX; // If not specified, we'll fetch "all"
-    let parse_as_num = if args.len() > 1 {
-        args[1].parse::<i64>().ok()
-    } else {
-        None
-    };
-    if let Some(n) = parse_as_num {
-        limit = n;
-        idx += 1;
+    let mut limit: i64 = i64::MAX;
+    if args.len() > 1 {
+        if let Ok(n) = args[1].parse::<i64>() {
+            limit = n;
+            idx += 1;
+        }
     }
 
     let mut platform_opt: Option<String> = None;
@@ -147,12 +152,10 @@ async fn member_chat(args: &[&str], bot_api: &Arc<dyn BotApi>) -> String {
     let mut search_opt: Option<String> = None;
     let mut page = 1i64;
 
-    // Now parse the rest:
     while idx < args.len() {
         let token = args[idx].to_lowercase();
         match token.as_str() {
             "p" => {
-                // read next token as page
                 idx += 1;
                 if idx < args.len() {
                     if let Ok(pg) = args[idx].parse::<i64>() {
@@ -161,14 +164,12 @@ async fn member_chat(args: &[&str], bot_api: &Arc<dyn BotApi>) -> String {
                 }
             }
             "s" => {
-                // read next token(s) as search text
                 idx += 1;
                 if idx < args.len() {
                     search_opt = Some(args[idx].to_string());
                 }
             }
             _ => {
-                // Could be platform or channel
                 if platform_opt.is_none() {
                     platform_opt = Some(args[idx].to_string());
                 } else if channel_opt.is_none() {
@@ -179,21 +180,17 @@ async fn member_chat(args: &[&str], bot_api: &Arc<dyn BotApi>) -> String {
         idx += 1;
     }
 
-    // Resolve user
     let user = match resolve_user(identifier, bot_api).await {
         Ok(u) => u,
         Err(e) => return format!("Error: {:?}", e),
     };
 
-    // If limit is i64::MAX, we interpret that as "no limit"
-    // We can skip pagination logic if no limit, but let's keep it consistent:
     let offset = if limit == i64::MAX {
         0
     } else {
         limit.saturating_mul(page.saturating_sub(1))
     };
 
-    // Fetch messages
     let result = bot_api
         .get_user_chat_messages(
             user.user_id,
@@ -246,9 +243,8 @@ async fn member_chat(args: &[&str], bot_api: &Arc<dyn BotApi>) -> String {
     out
 }
 
-/// Implementation of `member list [p <pageSize>]`
+/// `member list [p <pageSize>]`
 async fn member_list(args: &[&str], bot_api: &Arc<dyn BotApi>) -> String {
-    // We'll call the existing "search_users("")" to get all, then optionally do pagination:
     let all_users = match bot_api.search_users("").await {
         Ok(u) => u,
         Err(e) => return format!("Error listing members => {:?}", e),
@@ -275,7 +271,6 @@ async fn member_list(args: &[&str], bot_api: &Arc<dyn BotApi>) -> String {
     }
 
     if !paging {
-        // Print all
         let mut out = format!("Listing {} members:\n", all_users.len());
         for u in &all_users {
             out.push_str(&format!(
@@ -288,7 +283,7 @@ async fn member_list(args: &[&str], bot_api: &Arc<dyn BotApi>) -> String {
         return out;
     }
 
-    // Paginated:
+    // Paginated
     let total = all_users.len();
     let total_pages = (total + page_size - 1) / page_size;
     let mut out = String::new();
@@ -315,7 +310,6 @@ async fn member_list(args: &[&str], bot_api: &Arc<dyn BotApi>) -> String {
         }
 
         if page_num < total_pages {
-            // prompt user to continue or press 'q' to quit
             out.push_str("\nPress ENTER to continue, or 'q' to stop listing...");
             println!("{}", out);
             out.clear();
@@ -338,7 +332,7 @@ async fn member_list(args: &[&str], bot_api: &Arc<dyn BotApi>) -> String {
     }
 }
 
-/// Implementation of `member search <query>`
+/// `member search <query>`
 async fn member_search(query: &str, bot_api: &Arc<dyn BotApi>) -> String {
     let results = match bot_api.search_users(query).await {
         Ok(r) => r,
@@ -359,24 +353,21 @@ async fn member_search(query: &str, bot_api: &Arc<dyn BotApi>) -> String {
     out
 }
 
-/// Implementation of `member note <identifier> <note text...>`
+/// `member note <identifier> <note text...>`
 async fn member_note(identifier: &str, note_text: &str, bot_api: &Arc<dyn BotApi>) -> String {
-    // Resolve user
     let user = match resolve_user(identifier, bot_api).await {
         Ok(u) => u,
         Err(e) => return format!("Error: {:?}", e),
     };
 
-    // Attempt to append or update the note
     match bot_api.append_moderator_note(user.user_id, note_text).await {
         Ok(_) => format!("Moderator note updated for user_id={}", user.user_id),
         Err(e) => format!("Error updating note => {:?}", e),
     }
 }
 
-/// Implementation of `member merge <uuid1> <uuid2> [g <newGlobalUsername>]`
+/// `member merge <uuid1> <uuid2> [g <newGlobalUsername>]`
 async fn member_merge(args: &[&str], bot_api: &Arc<dyn BotApi>) -> String {
-    // Must have at least 2 UUIDs
     if args.len() < 2 {
         return "Usage: member merge <uuid1> <uuid2> [g <newGlobalUsername>]".to_string();
     }
@@ -404,7 +395,6 @@ async fn member_merge(args: &[&str], bot_api: &Arc<dyn BotApi>) -> String {
         idx += 1;
     }
 
-    // Call the BotApi method for merging
     let res = bot_api.merge_users(user1_id, user2_id, new_global_name.as_deref()).await;
     match res {
         Ok(()) => {
@@ -422,11 +412,76 @@ async fn member_merge(args: &[&str], bot_api: &Arc<dyn BotApi>) -> String {
     }
 }
 
+/// NEW SUBCOMMAND: `member roles <identifier>`
+async fn member_roles(args: &[&str], bot_api: &Arc<dyn BotApi>) -> String {
+    if args.is_empty() {
+        return "Usage: member roles <userNameOrUUID> [add <platform> <rolename>] [remove <platform> <rolename>]".to_string();
+    }
+
+    let identifier = args[0];
+    let user = match resolve_user(identifier, bot_api).await {
+        Ok(u) => u,
+        Err(e) => return format!("Error: {:?}", e),
+    };
+
+    // If no extra args => list all roles
+    if args.len() == 1 {
+        let mut out = String::new();
+        out.push_str(&format!("User roles for user_id={}:\n", user.user_id));
+        match bot_api.get_platform_identities_for_user(user.user_id).await {
+            Ok(idens) => {
+                if idens.is_empty() {
+                    out.push_str("  (no platform identities)\n");
+                } else {
+                    for pid in idens {
+                        out.push_str(&format!(
+                            "  Platform={:?}: roles={:?}\n",
+                            pid.platform, pid.platform_roles
+                        ));
+                    }
+                }
+            }
+            Err(e) => {
+                out.push_str(&format!("Error fetching platform_identities => {:?}", e));
+            }
+        }
+        return out;
+    }
+
+    // We have sub-subcommands: add or remove
+    if args.len() < 4 {
+        return "Usage: member roles <userNameOrUUID> [add <platform> <rolename>] [remove <platform> <rolename>]".to_string();
+    }
+
+    let subcmd = args[1].to_lowercase();
+    let platform_str = args[2];
+    let rolename = args[3];
+
+    match subcmd.as_str() {
+        "add" => {
+            let res = bot_api.add_role_to_user_identity(user.user_id, platform_str, rolename).await;
+            match res {
+                Ok(_) => format!("Added role '{}' on platform='{}' for user={}", rolename, platform_str, user.user_id),
+                Err(e) => format!("Error adding role => {:?}", e),
+            }
+        }
+        "remove" => {
+            let res = bot_api.remove_role_from_user_identity(user.user_id, platform_str, rolename).await;
+            match res {
+                Ok(_) => format!("Removed role '{}' on platform='{}' for user={}", rolename, platform_str, user.user_id),
+                Err(e) => format!("Error removing role => {:?}", e),
+            }
+        }
+        _ => {
+            "Usage: member roles <userNameOrUUID> [add <platform> <rolename>] [remove <platform> <rolename>]".to_string()
+        }
+    }
+}
+
 /// Helper to resolve user by either name or UUID
 async fn resolve_user(identifier: &str, bot_api: &Arc<dyn BotApi>) -> Result<User, Error> {
     match Uuid::parse_str(identifier) {
         Ok(uuid_val) => {
-            // fetch by user_id
             if let Some(u) = bot_api.get_user(uuid_val).await? {
                 Ok(u)
             } else {
@@ -434,7 +489,6 @@ async fn resolve_user(identifier: &str, bot_api: &Arc<dyn BotApi>) -> Result<Use
             }
         }
         Err(_) => {
-            // fetch by name
             bot_api.find_user_by_name(identifier).await
         }
     }

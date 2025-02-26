@@ -6,7 +6,7 @@ use std::sync::Arc;
 use uuid::Uuid;
 use async_trait::async_trait;
 use crate::Error;
-use crate::models::{User, PlatformIdentity, UserAnalysis};
+use crate::models::{User, PlatformIdentity, UserAnalysis, Platform};
 use crate::plugins::bot_api::user_api::UserApi;
 use crate::plugins::manager::core::PluginManager;
 use crate::repositories::postgres::user::UserRepo;
@@ -202,6 +202,57 @@ impl UserApi for PluginManager {
 
         // 6) Finally, remove user2 from the DB
         user_repo.delete(user2_id).await?;
+
+        Ok(())
+    }
+
+    async fn add_role_to_user_identity(
+        &self,
+        user_id: Uuid,
+        platform: &str,
+        role: &str,
+    ) -> Result<(), Error> {
+        // 1) parse the platform string
+        let parsed_platform = match platform.parse::<Platform>() {
+            Ok(p) => p,
+            Err(e) => return Err(Error::Platform(format!("Invalid platform '{}': {}", platform, e))),
+        };
+
+        // 2) unify (union) a single new role with existing roles
+        let new_roles = vec![role.to_string()];
+        self.user_service
+            .unify_platform_roles(user_id, parsed_platform, &new_roles)
+            .await
+    }
+
+    async fn remove_role_from_user_identity(
+        &self,
+        user_id: Uuid,
+        platform: &str,
+        role: &str,
+    ) -> Result<(), Error> {
+        // 1) parse the platform string
+        let parsed_platform = match platform.parse::<Platform>() {
+            Ok(p) => p,
+            Err(e) => return Err(Error::Platform(format!("Invalid platform '{}': {}", platform, e))),
+        };
+
+        // 2) fetch the identity
+        let maybe_pid = self.platform_identity_repo
+            .get_by_user_and_platform(user_id, &parsed_platform)
+            .await?;
+
+        if let Some(mut pid) = maybe_pid {
+            let before_count = pid.platform_roles.len();
+            pid.platform_roles.retain(|existing| existing != role);
+
+            if pid.platform_roles.len() < before_count {
+                // means we removed the role, so update DB
+                pid.last_updated = chrono::Utc::now();
+                self.platform_identity_repo.update(&pid).await?;
+            }
+            // if the role wasn't present, do nothing
+        }
 
         Ok(())
     }

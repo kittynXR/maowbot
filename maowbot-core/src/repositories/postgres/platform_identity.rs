@@ -21,6 +21,12 @@ pub trait PlatformIdentityRepo {
 
     async fn get_all_for_user(&self, user_id: Uuid)
                               -> Result<Vec<PlatformIdentity>, Error>;
+
+    async fn get_by_user_and_platform(
+        &self,
+        user_id: Uuid,
+        platform: &Platform,
+    ) -> Result<Option<PlatformIdentity>, Error>;
 }
 
 pub struct PlatformIdentityRepository {
@@ -246,5 +252,58 @@ impl PlatformIdentityRepo for PlatformIdentityRepository {
             identities.push(pi);
         }
         Ok(identities)
+    }
+
+    async fn get_by_user_and_platform(
+        &self,
+        user_id: Uuid,
+        platform: &Platform,
+    ) -> Result<Option<PlatformIdentity>, Error> {
+        let platform_str = platform.to_string();
+        let row = sqlx::query(
+            r#"
+            SELECT
+                platform_identity_id,
+                user_id,
+                platform,
+                platform_user_id,
+                platform_username,
+                platform_display_name,
+                platform_roles,     -- jsonb
+                platform_data,      -- jsonb
+                created_at,
+                last_updated
+            FROM platform_identities
+            WHERE user_id = $1
+              AND platform = $2
+            LIMIT 1
+            "#,
+        )
+            .bind(user_id)
+            .bind(platform_str)
+            .fetch_optional(&self.pool)
+            .await?;
+
+        if let Some(r) = row {
+            let roles_val: serde_json::Value = r.try_get("platform_roles")?;
+            let data_val: serde_json::Value  = r.try_get("platform_data")?;
+            let roles_vec: Vec<String> = serde_json::from_value(roles_val)?;
+
+            let pi = PlatformIdentity {
+                platform_identity_id: r.try_get("platform_identity_id")?,
+                user_id: r.try_get("user_id")?,
+                platform: Platform::from(r.try_get::<String, _>("platform")?),
+                platform_user_id: r.try_get("platform_user_id")?,
+                platform_username: r.try_get("platform_username")?,
+                platform_display_name: r.try_get("platform_display_name")?,
+                platform_roles: roles_vec,
+                platform_data: data_val,
+                created_at: r.try_get("created_at")?,
+                last_updated: r.try_get("last_updated")?,
+            };
+            Ok(Some(pi))
+        } else {
+            Ok(None)
+        }
     }
 }
