@@ -27,6 +27,7 @@ use crate::plugins::types::{
 };
 use crate::repositories::postgres::user::{UserRepo, UserRepository};
 use crate::auth::AuthManager;
+use crate::eventbus::db_logger_handle::DbLoggerControl;
 use crate::models::User;
 use crate::platforms::manager::PlatformManager;
 use crate::services::message_service::MessageService;
@@ -54,6 +55,7 @@ pub struct PluginManager {
     /// The time we started (for uptime).
     pub start_time: Instant,
 
+    pub(crate) db_logger_handle: Option<Arc<DbLoggerControl>>,
     /// The global event bus, if set.
     pub event_bus: Option<Arc<EventBus>>,
 
@@ -91,6 +93,7 @@ impl PluginManager {
             plugin_records: Arc::new(Mutex::new(Vec::new())),
             passphrase,
             start_time: Instant::now(),
+            db_logger_handle: None,
             event_bus: None,
             persist_path: PathBuf::from("plugs/plugins_state.json"),
             auth_manager: None,
@@ -109,6 +112,10 @@ impl PluginManager {
     /// Sets the global AuthManager if you want to support OAuth flows or credential logic.
     pub fn set_auth_manager(&mut self, am: Arc<tokio::sync::Mutex<AuthManager>>) {
         self.auth_manager = Some(am);
+    }
+
+    pub fn set_db_logger_handle(&mut self, handle: Arc<DbLoggerControl>) {
+        self.db_logger_handle = Some(handle);
     }
 
     /// Attaches a shared `EventBus`.

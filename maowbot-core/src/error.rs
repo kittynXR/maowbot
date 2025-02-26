@@ -70,6 +70,9 @@ pub enum Error {
 
     #[error("Uuid error: {0}")]
     Uuid(#[from] uuid::Error),
+
+    #[error("Event bus error: {0}")]
+    EventBus(String),
 }
 
 

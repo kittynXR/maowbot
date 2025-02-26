@@ -1,32 +1,40 @@
 // File: maowbot-core/src/eventbus/db_logger.rs
-
 use std::time::Duration;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, watch};
 use tokio::time::{sleep, Instant};
 use tokio::task::JoinHandle;
-use tracing::{info, error};
+use tracing::{info, error, debug};
 
 use chrono::Utc;
 use crate::Error;
 use crate::eventbus::{EventBus, BotEvent};
 use crate::repositories::postgres::analytics::{AnalyticsRepo, ChatMessage};
 
+use super::db_logger_handle::{DbLoggerControl, DbLoggerCommand};
+
 /// Spawns an asynchronous task to receive events from the bus
-/// and batch-write them to the database. Returns a `JoinHandle<()>`
-/// so the caller can `.await` the final flush in tests or shutdown logic.
+/// and batch-write them to the database. Returns both:
+///   - The `JoinHandle<()>` for the spawned task
+///   - A `DbLoggerControl` handle, so other code can force flushes at any time.
 pub fn spawn_db_logger_task<T>(
     event_bus: &EventBus,
     analytics_repo: T,
     buffer_size: usize,
     flush_interval_sec: u64,
-) -> JoinHandle<()>
+) -> (JoinHandle<()>, DbLoggerControl)
 where
     T: AnalyticsRepo + 'static,
 {
     let event_bus_cloned = event_bus.clone();
     let mut shutdown_rx = event_bus.shutdown_rx.clone();
 
-    tokio::spawn(async move {
+    // We'll create a control channel for flush commands
+    let (cmd_tx, mut cmd_rx) = mpsc::channel::<DbLoggerCommand>(8);
+
+    // The control handle we can give to others
+    let control_handle = DbLoggerControl::new(cmd_tx);
+
+    let join_handle = tokio::spawn(async move {
         let mut rx = event_bus_cloned.subscribe(Some(buffer_size)).await;
 
         let mut buffer = Vec::with_capacity(buffer_size);
@@ -43,6 +51,7 @@ where
             tokio::select! {
                 biased;
 
+                // 1) Chat messages from the event bus
                 maybe_event = rx.recv() => {
                     match maybe_event {
                         Some(event) => {
@@ -62,12 +71,35 @@ where
                         }
                     }
                 },
+
+                // 2) External control commands
+                Some(cmd) = cmd_rx.recv() => {
+                    match cmd {
+                        // synchronous forced flush request
+                        DbLoggerCommand::FlushNow(reply_tx) => {
+                            debug!("db_logger: got FlushNow command");
+                            let res = if !buffer.is_empty() {
+                                insert_batch(&analytics_repo, &mut buffer).await
+                            } else {
+                                Ok(())
+                            };
+                            if let Err(e) = reply_tx.send(res) {
+                                error!("db_logger: flush_now => oneshot send error: {:?}", e);
+                            }
+                            last_flush = Instant::now();
+                        }
+                    }
+                },
+
+                // 3) Shutdown
                 Ok(_) = shutdown_rx.changed() => {
                     if *shutdown_rx.borrow() {
                         info!("DB logger shutting down => break from loop.");
                         break;
                     }
                 },
+
+                // 4) Periodic flush
                 _ = sleep(flush_interval) => {
                     if !buffer.is_empty() && last_flush.elapsed() >= flush_interval {
                         if let Err(e) = insert_batch(&analytics_repo, &mut buffer).await {
@@ -94,7 +126,9 @@ where
         }
 
         info!("DB logger task exited completely.");
-    })
+    });
+
+    (join_handle, control_handle)
 }
 
 fn convert_to_chat_message(event: &BotEvent) -> Option<ChatMessage> {

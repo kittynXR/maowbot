@@ -148,60 +148,38 @@ impl UserApi for PluginManager {
         user2_id: Uuid,
         new_global_name: Option<&str>
     ) -> Result<(), Error> {
-        let user_repo = self.user_repo.clone();
-        let pi_repo = self.platform_identity_repo.clone();
-        let analysis_repo = self.user_analysis_repo.clone();
-        let analytics_repo = self.analytics_repo.clone();
-
-        // 1) Verify both users exist
-        let mut user1 = match user_repo.get(user1_id).await? {
-            Some(u) => u,
-            None => return Err(Error::Database(sqlx::Error::RowNotFound)),
-        };
-        let user2 = match user_repo.get(user2_id).await? {
-            Some(u) => u,
-            None => return Err(Error::Database(sqlx::Error::RowNotFound)),
-        };
-
-        if user1_id == user2_id {
-            return Err(Error::Auth("Cannot merge the same user ID with itself.".into()));
+        // [1] Force flush the db_logger buffer so we don't have any pending references to user2
+        if let Some(ref handle) = self.db_logger_handle {
+            // We ignore the result or you can handle the error if you want
+            let _ = handle.flush_now().await;
         }
 
-        // 2) Reassign platform_identities from user2 -> user1
-        let identities = pi_repo.get_all_for_user(user2_id).await?;
+        // [2] Actually reassign platform identities
+        let identities = self.platform_identity_repo.get_all_for_user(user2_id).await?;
         for mut ident in identities {
             ident.user_id = user1_id;
             ident.last_updated = chrono::Utc::now();
-            pi_repo.update(&ident).await?;
+            self.platform_identity_repo.update(&ident).await?;
         }
 
-        // 3) Reassign chat_messages from user2 -> user1
-        let updated_count = analytics_repo.reassign_user_messages(user2_id, user1_id).await?;
-        // (we could do a debug log here if desired)
+        // [3] Reassign chat_messages from user2 -> user1 in the database
+        let updated_count = self.analytics_repo.reassign_user_messages(user2_id, user1_id).await?;
+        // (debug logging if desired)
         // eprintln!("Reassigned {} messages from user2 => user1", updated_count);
 
-        // 4) If user2 has user_analysis row, you can decide how to handle it:
-        //    - Option A: just remove user2’s user_analysis
-        //    - Option B: attempt to combine them somehow.
-        //    For simplicity, let's just remove user2’s analysis if it exists.
-        if let Some(ua2) = analysis_repo.get_analysis(user2_id).await? {
-            // We'll delete it.
-            // (Alternatively, you might choose to preserve or merge it.)
-            // analysis_repo.delete_analysis(ua2.user_analysis_id).await?; // if we had a delete method
-            // There's no provided "delete_analysis" in the interface. So we can leave it or do a manual query if needed.
-            // We'll skip for now. We'll do nothing unless there's a method to remove it.
-        }
+        // [4] If user2 has user_analysis row, you might remove or ignore it. We'll skip.
 
-        // 5) If new_global_name was provided, set it on user1
+        // [5] If new_global_name was provided, set it on user1
         if let Some(new_name) = new_global_name {
-            user1.global_username = Some(new_name.trim().to_string());
+            if let Some(mut u1) = self.user_repo.get(user1_id).await? {
+                u1.global_username = Some(new_name.trim().to_string());
+                u1.last_seen = chrono::Utc::now();
+                self.user_repo.update(&u1).await?;
+            }
         }
-        // Update user1
-        user1.last_seen = chrono::Utc::now();
-        user_repo.update(&user1).await?;
 
-        // 6) Finally, remove user2 from the DB
-        user_repo.delete(user2_id).await?;
+        // [6] Finally, remove user2 from the DB
+        self.user_repo.delete(user2_id).await?;
 
         Ok(())
     }

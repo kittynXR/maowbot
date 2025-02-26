@@ -188,9 +188,9 @@ async fn run_server(args: Args) -> Result<(), Error> {
     );
 
     // [NEW] We now spawn the DB logger so ChatMessage events actually get stored:
-    let _db_logger_task = spawn_db_logger_task(
+    let (db_logger_task, db_logger_handle) = spawn_db_logger_task(
         &event_bus,
-        (*analytics_repo_arc).clone(),  // <--- fixes the error
+        (*analytics_repo_arc).clone(),
         100,
         5,
     );
@@ -200,11 +200,12 @@ async fn run_server(args: Args) -> Result<(), Error> {
         PlatformIdentityRepository::new(db.pool().clone())
     );
 
+    let user_repo = user_repo_arc.clone();
     let identity_repo = platform_identity_repo.clone();
     let analysis_repo = PostgresUserAnalysisRepository::new(db.pool().clone());
 
     let default_user_mgr = DefaultUserManager::new(
-        user_repo_arc.clone(),
+        user_repo,
         identity_repo,
         analysis_repo,
     );
@@ -231,7 +232,7 @@ async fn run_server(args: Args) -> Result<(), Error> {
 
     let message_service = Arc::new(
         MessageService::new(
-            chat_cache,            // e.g. Arc<Mutex<ChatCache<...>>>
+            chat_cache,
             event_bus.clone(),
             user_manager.clone(),
             user_service.clone(),
@@ -256,6 +257,10 @@ async fn run_server(args: Args) -> Result<(), Error> {
         platform_manager.clone(),
         user_service.clone(),
     );
+
+    // give it the db_logger_handle so we can flush during merges
+    plugin_manager.set_db_logger_handle(Arc::new(db_logger_handle));
+
     plugin_manager.subscribe_to_event_bus(event_bus.clone());
     plugin_manager.set_event_bus(event_bus.clone());
 

@@ -4,6 +4,7 @@
 //! to multiple subscribers via bounded MPSC queues.
 
 pub mod db_logger;
+pub mod db_logger_handle;
 
 use std::sync::Arc;
 use tokio::sync::{mpsc, watch, Mutex};
