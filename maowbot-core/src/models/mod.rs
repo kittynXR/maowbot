@@ -9,7 +9,12 @@ use sqlx::FromRow;
 use uuid::Uuid;
 
 pub mod user_analysis;
+pub mod command;
+pub mod redeem;
+
 pub use user_analysis::UserAnalysis;
+pub use command::{Command, CommandUsage};
+pub use redeem::{Redeem, RedeemUsage};
 
 #[derive(Debug, Serialize, Deserialize, Clone, sqlx::FromRow)]
 pub struct User {

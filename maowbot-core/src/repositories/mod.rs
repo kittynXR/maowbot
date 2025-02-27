@@ -39,5 +39,17 @@ pub use postgres::credentials::{
 pub use postgres::bot_config::{BotConfigRepository, PostgresBotConfigRepository};
 pub use postgres::platform_config::{PlatformConfigRepository, PostgresPlatformConfigRepository};
 
-// The rest of your repository modules:
+pub use postgres::commands::{
+    CommandRepository, PostgresCommandRepository
+};
+pub use postgres::command_usage::{
+    CommandUsageRepository, PostgresCommandUsageRepository
+};
+pub use postgres::redeems::{
+    RedeemRepository, PostgresRedeemRepository
+};
+pub use postgres::redeem_usage::{
+    RedeemUsageRepository, PostgresRedeemUsageRepository
+};
+
 pub mod postgres;

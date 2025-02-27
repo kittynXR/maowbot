@@ -9,6 +9,17 @@ pub mod credentials_api_impl;
 pub mod platform_api_impl;
 pub mod twitch_api_impl;
 pub mod vrchat_api_impl;
+pub mod command_api_impl;
+pub mod redeem_api_impl;
 
-// Make PluginManager accessible via `use manager::PluginManager;`
 pub use core::PluginManager;
+
+use std::sync::Arc;
+use crate::Error;
+use crate::services::{
+    CommandService, RedeemService,
+};
+use crate::repositories::{
+    PostgresCommandRepository, PostgresCommandUsageRepository,
+    PostgresRedeemRepository, PostgresRedeemUsageRepository,
+};

@@ -31,11 +31,14 @@ use crate::eventbus::db_logger_handle::DbLoggerControl;
 use crate::models::User;
 use crate::platforms::manager::PlatformManager;
 use crate::services::message_service::MessageService;
-use crate::plugins::manager::plugin_api_impl::build_status_response; // or you can keep the function local
+use crate::plugins::manager::plugin_api_impl::build_status_response;
+use crate::repositories::{CommandUsageRepository, RedeemUsageRepository};
+// or you can keep the function local
 use crate::repositories::postgres::bot_config::BotConfigRepository;
 use crate::repositories::postgres::credentials::CredentialsRepository;
 use crate::repositories::postgres::platform_config::PlatformConfigRepository;
 use crate::repositories::postgres::{PlatformIdentityRepository, PostgresAnalyticsRepository, PostgresUserAnalysisRepository};
+use crate::services::{CommandService, RedeemService};
 use crate::services::user_service::UserService;
 
 /// The main manager that loads/stores plugins, spawns connections,
@@ -75,6 +78,11 @@ pub struct PluginManager {
     pub user_analysis_repo: Arc<PostgresUserAnalysisRepository>,
     pub platform_identity_repo: Arc<PlatformIdentityRepository>,
     pub user_service: Arc<UserService>,
+
+    pub command_service: Arc<CommandService>,
+    pub redeem_service: Arc<RedeemService>,
+    pub command_usage_repo: Arc<dyn CommandUsageRepository + Send + Sync>,
+    pub redeem_usage_repo: Arc<dyn RedeemUsageRepository + Send + Sync>,
 }
 
 impl PluginManager {
@@ -87,6 +95,10 @@ impl PluginManager {
         platform_identity_repo: Arc<PlatformIdentityRepository>,
         platform_manager: Arc<PlatformManager>,
         user_service: Arc<UserService>,
+        command_service: Arc<CommandService>,
+        redeem_service: Arc<RedeemService>,
+        cmd_usage_repo: Arc<dyn CommandUsageRepository + Send + Sync>,
+        redeem_usage_repo: Arc<dyn RedeemUsageRepository + Send + Sync>,
     ) -> Self {
         let manager = Self {
             plugins: Arc::new(AsyncMutex::new(Vec::new())),
@@ -104,6 +116,11 @@ impl PluginManager {
             user_analysis_repo,
             platform_identity_repo,
             user_service,
+
+            command_service,
+            redeem_service,
+            command_usage_repo: cmd_usage_repo,
+            redeem_usage_repo,
         };
         manager.load_plugin_states();
         manager

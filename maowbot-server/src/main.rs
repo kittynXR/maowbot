@@ -57,7 +57,8 @@ use tokio::time;
 
 use maowbot_core::Error;
 use maowbot_core::platforms::twitch::TwitchAuthenticator;
-use maowbot_core::repositories::CredentialsRepository;
+use maowbot_core::repositories::{CredentialsRepository, PostgresCommandRepository, PostgresCommandUsageRepository, PostgresRedeemRepository, PostgresRedeemUsageRepository};
+use maowbot_core::services::{CommandService, RedeemService};
 use maowbot_core::tasks::autostart::run_autostart;
 
 mod portable_postgres;
@@ -181,6 +182,11 @@ async fn run_server(args: Args) -> Result<(), Error> {
     let user_analysis_repo_arc = Arc::new(PostgresUserAnalysisRepository::new(db.pool().clone()));
     let platform_identity_repo_arc = Arc::new(PlatformIdentityRepository::new(db.pool().clone()));
 
+    let cmd_repo = Arc::new(PostgresCommandRepository::new(db.pool().clone()));
+    let cmd_usage_repo = Arc::new(PostgresCommandUsageRepository::new(db.pool().clone()));
+    let redeem_repo = Arc::new(PostgresRedeemRepository::new(db.pool().clone()));
+    let redeem_usage_repo = Arc::new(PostgresRedeemUsageRepository::new(db.pool().clone()));
+
     let auth_manager = AuthManager::new(
         creds_repo_arc.clone(),
         platform_config_repo,
@@ -238,6 +244,19 @@ async fn run_server(args: Args) -> Result<(), Error> {
             user_service.clone(),
         )
     );
+
+    let command_svc = Arc::new(CommandService::new(
+        cmd_repo.clone(),
+        cmd_usage_repo.clone(),
+        user_service.clone()
+    ));
+
+    let redeem_svc = Arc::new(RedeemService::new(
+        redeem_repo.clone(),
+        redeem_usage_repo.clone(),
+        user_service.clone()
+    ));
+
     // Platform manager
     use maowbot_core::platforms::manager::PlatformManager;
     let platform_manager = Arc::new(PlatformManager::new(
@@ -256,6 +275,10 @@ async fn run_server(args: Args) -> Result<(), Error> {
         platform_identity_repo_arc.clone(),
         platform_manager.clone(),
         user_service.clone(),
+        command_svc.clone(),
+        redeem_svc.clone(),
+        cmd_usage_repo.clone(),
+        redeem_usage_repo.clone(),
     );
 
     // give it the db_logger_handle so we can flush during merges

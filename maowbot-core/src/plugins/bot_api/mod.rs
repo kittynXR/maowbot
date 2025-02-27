@@ -8,6 +8,8 @@ pub mod credentials_api;
 pub mod platform_api;
 pub mod twitch_api;
 pub mod vrchat_api;
+pub mod command_api;
+pub mod redeem_api;
 
 // Bring sub-traits into scope:
 use plugin_api::PluginApi;
@@ -16,6 +18,8 @@ use credentials_api::CredentialsApi;
 use platform_api::PlatformApi;
 use twitch_api::TwitchApi;
 use vrchat_api::VrchatApi;
+use command_api::CommandApi;
+use redeem_api::RedeemApi;
 
 /// The new umbrella trait `BotApi` that extends all the sub-traits.
 /// Any type implementing all those sub-traits automatically implements `BotApi`.
@@ -26,6 +30,8 @@ PluginApi
 + PlatformApi
 + TwitchApi
 + VrchatApi
++ CommandApi
++ RedeemApi
 {
 }
 
@@ -37,6 +43,8 @@ where
     + PlatformApi
     + TwitchApi
     + VrchatApi
+    + CommandApi
+    + RedeemApi
 {
     // No extra methods; it’s just a “marker” for convenience.
 }

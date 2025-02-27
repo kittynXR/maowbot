@@ -2,6 +2,9 @@ use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum Error {
+    #[error("Not foudn error: {0}")]
+    NotFound(String),
+
     // Existing variants:
     #[error("Database error: {0}")]
     Database(#[from] sqlx::Error),

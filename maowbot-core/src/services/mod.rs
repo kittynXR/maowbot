@@ -3,5 +3,9 @@
 
 pub mod user_service;
 pub mod message_service;
+pub mod command_service;
+pub mod redeem_service;
 
-// You could add other “service” modules here if needed.
+// pub use user_service::UserService;
+pub use command_service::CommandService;
+pub use redeem_service::RedeemService;

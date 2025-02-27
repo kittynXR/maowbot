@@ -190,3 +190,57 @@ CREATE TABLE user_analysis_history (
     ai_notes                 TEXT,
     created_at               TIMESTAMPTZ NOT NULL
 );
+
+DROP TABLE IF EXISTS commands CASCADE;
+CREATE TABLE commands (
+    command_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    platform   TEXT NOT NULL,
+    command_name TEXT NOT NULL,
+    min_role   TEXT NOT NULL DEFAULT 'everyone',
+    is_active  BOOLEAN NOT NULL DEFAULT true,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- You can ensure each (platform, command_name) is unique:
+CREATE UNIQUE INDEX ON commands (platform, LOWER(command_name));
+
+
+DROP TABLE IF EXISTS command_usage CASCADE;
+CREATE TABLE command_usage (
+   usage_id   UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+   command_id UUID NOT NULL REFERENCES commands(command_id) ON DELETE CASCADE,
+   user_id    UUID NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+   used_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+   channel    TEXT NOT NULL,
+   usage_text TEXT,
+   metadata   JSONB
+);
+
+
+DROP TABLE IF EXISTS redeems CASCADE;
+CREATE TABLE redeems (
+     redeem_id  UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+     platform   TEXT NOT NULL,
+     reward_id  TEXT NOT NULL,
+     reward_name TEXT NOT NULL,
+     cost       INT  NOT NULL,
+     is_active  BOOLEAN NOT NULL DEFAULT true,
+     dynamic_pricing BOOLEAN NOT NULL DEFAULT false,
+     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- You can ensure uniqueness for (platform, reward_id):
+CREATE UNIQUE INDEX ON redeems (platform, reward_id);
+
+
+DROP TABLE IF EXISTS redeem_usage CASCADE;
+CREATE TABLE redeem_usage (
+      usage_id   UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+      redeem_id  UUID NOT NULL REFERENCES redeems(redeem_id) ON DELETE CASCADE,
+      user_id    UUID NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+      used_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+      channel    TEXT,
+      usage_data JSONB
+);
