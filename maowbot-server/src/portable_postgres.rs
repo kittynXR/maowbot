@@ -1,5 +1,4 @@
 // maowbot-server/src/portable_postgres.rs
-
 use std::path::Path;
 use std::process::Command;
 use std::io::Result as IoResult;
@@ -37,8 +36,6 @@ pub fn ensure_db_initialized(pg_bin_dir: &str, data_dir: &str) -> IoResult<()> {
 }
 
 /// Start Postgres on the given port, logging to server.log in data_dir.
-///
-/// No changes here except clarifying the output for debugging.
 pub fn start_postgres(pg_bin_dir: &str, data_dir: &str, port: u16) -> IoResult<()> {
     let pg_ctl_path = format!("{}/pg_ctl", pg_bin_dir);
     let log_file = format!("{}/server.log", data_dir);
@@ -56,7 +53,6 @@ pub fn start_postgres(pg_bin_dir: &str, data_dir: &str, port: u16) -> IoResult<(
         error!("pg_ctl start failed with status: {:?}", status);
     } else {
         info!("Postgres started on port {}.", port);
-        // Optionally wait a moment to ensure startup.
         thread::sleep(Duration::from_secs(1));
     }
 
@@ -64,23 +60,28 @@ pub fn start_postgres(pg_bin_dir: &str, data_dir: &str, port: u16) -> IoResult<(
 }
 
 /// Creates (or ensures) a database named `db_name`. We add `-E UTF8` so the DB is UTF-8 encoded.
-///
-/// If the database already exists, it logs a warning but continues.
+/// We also add `--template=template0` so the new database is created from template0 rather than template1.
+/// This avoids the encoding mismatch error.
 pub fn create_database(pg_bin_dir: &str, port: u16, db_name: &str) -> std::io::Result<()> {
     let createdb_path = format!("{}/createdb", pg_bin_dir);
     info!("Ensuring database '{}' exists with UTF-8 encoding...", db_name);
 
-    // Add -E UTF8 to force database creation in UTF-8 encoding.
+    // Add --template=template0 and -E UTF8 to force the new database to be UTF-8.
     let status = Command::new(&createdb_path)
-        .args(["-U", "maow", "-p", &port.to_string(), "-E", "UTF8", db_name])
+        .args([
+            "-U", "maow",
+            "-p", &port.to_string(),
+            "--template=template0",   // <-- Use template0 for UTF8 support
+            "-E", "UTF8",
+            db_name,
+        ])
         .status()?;
 
     if status.success() {
         info!("Database '{}' created (UTF-8).", db_name);
     } else {
-        // If it fails because the DB already exists, we just log and proceed.
         info!(
-            "Database '{}' may already exist or cannot be created (exit status: {:?}). Continuing...",
+            "Database '{}' may already exist or could not be created (exit status: {:?}). Continuing...",
             db_name, status
         );
     }
@@ -88,8 +89,6 @@ pub fn create_database(pg_bin_dir: &str, port: u16, db_name: &str) -> std::io::R
 }
 
 /// Stop Postgres gracefully.
-///
-/// No changes needed aside from logging improvements.
 pub fn stop_postgres(pg_bin_dir: &str, data_dir: &str) -> IoResult<()> {
     let pg_ctl_path = format!("{}/pg_ctl", pg_bin_dir);
     info!("Stopping Postgres...");

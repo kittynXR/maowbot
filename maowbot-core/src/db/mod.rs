@@ -19,6 +19,11 @@ impl Database {
             .connect(database_url)
             .await?;
 
+        // Force the client encoding to UTF8 to avoid WIN1252 conversion issues
+        sqlx::query("SET client_encoding = 'UTF8'")
+            .execute(&pool)
+            .await?;
+
         println!("Connected to Postgres at {}", database_url);
         Ok(Self { pool })
     }

@@ -1,10 +1,8 @@
-// twitch_irc/runtime.rs
-
 use async_trait::async_trait;
 use std::sync::Arc;
 use tokio::sync::mpsc::Sender;
 use tokio::task::JoinHandle;
-use tracing::{debug, error, info, trace};
+use tracing::{debug, error, info, warn};
 
 use crate::Error;
 use crate::eventbus::EventBus;
@@ -56,25 +54,6 @@ impl TwitchIrcPlatform {
 
     pub fn set_event_bus(&mut self, bus: Arc<EventBus>) {
         self.event_bus = Some(bus);
-    }
-
-    /// (Legacy) Helper to determine if an IRC command is a control message.
-    /// This checks for PING/PONG/KEEPALIVE/HEARTBEAT.
-    fn is_irc_control(command: &str) -> bool {
-        let lower = command.to_ascii_lowercase();
-        lower == "ping" || lower == "pong" || lower == "keepalive" || lower == "heartbeat"
-    }
-
-    /// Returns true if the IRC command is exactly PING or PONG.
-    fn is_ping_or_pong(command: &str) -> bool {
-        let lower = command.to_ascii_lowercase();
-        lower == "ping" || lower == "pong"
-    }
-
-    /// Determines if we should log ping/pong messages.
-    /// Only returns true if trace-level logging is enabled.
-    fn should_log_ping_pong() -> bool {
-        tracing::enabled!(tracing::Level::TRACE)
     }
 
     pub async fn next_message_event(&mut self) -> Option<TwitchIrcMessageEvent> {
@@ -140,14 +119,10 @@ impl PlatformIntegration for TwitchIrcPlatform {
         self.client = Some(client);
         self.connection_status = ConnectionStatus::Connected;
 
-        // Spawn a read loop to process incoming IRC events.
-        let mut irc_incoming = self
-            .client
-            .as_mut()
-            .unwrap()
-            .incoming
-            .take()
-            .ok_or_else(|| Error::Platform("No incoming channel in TwitchIrcClient".into()))?;
+        // Now spawn a read loop that picks from the client's "incoming"
+        let mut irc_incoming = self.client.as_mut().unwrap().incoming.take().ok_or_else(|| {
+            Error::Platform("No incoming channel in TwitchIrcClient".into())
+        })?;
 
         let tx_for_task = self.tx.as_ref().unwrap().clone();
         let event_bus_for_task = self.event_bus.clone();
@@ -157,18 +132,13 @@ impl PlatformIntegration for TwitchIrcPlatform {
                 if evt.command.eq_ignore_ascii_case("privmsg") {
                     // Must have a user-id to unify the identity in DB. If missing, skip.
                     if evt.twitch_user_id.is_none() {
-                        debug!(
-                            "(TwitchIrcPlatform) ignoring message without user-id => {:?}",
-                            evt.raw_line
-                        );
+                        debug!("(TwitchIrcPlatform) ignoring message without user-id => {:?}", evt.raw_line);
                         continue;
                     }
 
                     let channel = evt.channel.unwrap_or_default();
                     let user_id = evt.twitch_user_id.clone().unwrap_or_default();
-                    let display = evt
-                        .display_name
-                        .unwrap_or_else(|| user_id.clone());
+                    let display = evt.display_name.unwrap_or_else(|| user_id.clone());
                     let text = evt.text.unwrap_or_default();
 
                     let parsed = TwitchIrcMessageEvent {
@@ -181,26 +151,17 @@ impl PlatformIntegration for TwitchIrcPlatform {
 
                     let _ = tx_for_task.send(parsed.clone()).await;
 
-                    // Optionally publish on EventBus.
+                    // Optionally publish on EventBus. We'll combine user-id + roles in a single string:
                     if let Some(bus) = &event_bus_for_task {
                         let roles_str = evt.roles.join(",");
-                        // e.g. "264653338|roles=mod,subscriber"
+                        // So the message_service can parse user=someString|roles=...
+                        // We'll do:   "264653338|roles=mod,subscriber"
                         let combined = format!("{}|roles={}", user_id, roles_str);
                         // bus.publish_chat("twitch-irc", &channel, &combined, &text).await;
                     }
-                } else if Self::is_ping_or_pong(&evt.command) {
-                    // Only log ping/pong messages if trace logging is enabled.
-                    if Self::should_log_ping_pong() {
-                        trace!(
-                            "(TwitchIrcPlatform) control message received: {}",
-                            evt.command
-                        );
-                    }
-                } else {
-                    debug!(
-                        "(TwitchIrcPlatform) ignoring non-PRIVMSG => {}",
-                        evt.command
-                    );
+                }
+                else {
+                    debug!("(TwitchIrcPlatform) ignoring non-PRIVMSG => {}", evt.command);
                 }
             }
             info!("(TwitchIrcPlatform) read loop ended.");

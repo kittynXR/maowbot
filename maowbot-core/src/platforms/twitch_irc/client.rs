@@ -8,7 +8,7 @@ use tokio::task::JoinHandle;
 
 use tokio_native_tls::native_tls;
 use tokio_native_tls::TlsConnector;
-use tracing::{info, warn, error, debug};
+use tracing::{info, warn, error, debug, trace};
 
 /// Minimal representation of a parsed IRC message from Twitch.
 #[derive(Debug, Clone)]
@@ -228,7 +228,7 @@ impl TwitchIrcClient {
                     if command == "PING" {
                         if let Some(trail) = parsed.trailing {
                             tx_outgoing.send(format!("PONG :{}", trail)).ok();
-                            debug!("Auto PONG -> {}", trail);
+                            trace!("Auto PONG -> {}", trail);
                         }
                         continue;
                     }
