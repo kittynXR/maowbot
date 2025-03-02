@@ -1,9 +1,11 @@
+// twitch_eventsub/runtime.rs
+
 use async_trait::async_trait;
 use futures_util::StreamExt;
 use tokio::time::{sleep, Duration};
 use tokio_tungstenite::tungstenite::protocol::Message;
 use tokio_tungstenite::connect_async;
-use tracing::{error, info, warn, debug};
+use tracing::{error, info, warn, debug, trace};
 use std::sync::Arc;
 use reqwest::Client as ReqwestClient;
 use serde_json::json;
@@ -37,6 +39,37 @@ impl TwitchEventSubPlatform {
         self.event_bus = Some(event_bus);
     }
 
+    /// Helper method to check if a WebSocket message is a control frame
+    /// (close, ping, or pong).
+    fn is_ws_control(msg: &Message) -> bool {
+        msg.is_close() || msg.is_ping() || msg.is_pong()
+    }
+
+    /// Helper method to determine if a parsed TEXT message is a health check,
+    /// i.e. a pong/keepalive/heartbeat message.
+    fn is_health_check_message(parsed: &serde_json::Value) -> bool {
+        parsed.get("metadata")
+            .and_then(|m| m.get("message_type"))
+            .and_then(|v| v.as_str())
+            .map(|msg_type| {
+                msg_type == "session_keepalive" || msg_type == "pong" || msg_type == "heartbeat"
+            })
+            .unwrap_or(false)
+    }
+
+    /// Helper method to log a TEXT message based on its type.
+    /// Health check messages are logged only at trace level (if trace is enabled)
+    /// while all other messages are logged at debug level.
+    fn log_text_message(txt: &str, parsed: &serde_json::Value) {
+        if Self::is_health_check_message(parsed) {
+            if tracing::enabled!(tracing::Level::TRACE) {
+                trace!("[TwitchEventSub] Received TEXT (health check): {}", txt);
+            }
+        } else {
+            debug!("[TwitchEventSub] Received TEXT: {}", txt);
+        }
+    }
+
     /// The main loop that attempts to connect to wss://eventsub.wss.twitch.tv/ws
     /// and handle keepalives, notifications, etc.
     pub async fn start_loop(&mut self) -> Result<(), Error> {
@@ -58,7 +91,7 @@ impl TwitchEventSubPlatform {
             info!("[TwitchEventSub] Connected to {}. Starting read loop...", url);
             self.connection_status = ConnectionStatus::Connected;
 
-            // run_read_loop returns Ok(bool) => "bool indicates session_reconnect"
+            // run_read_loop returns Ok(bool) where the bool indicates "session_reconnect"
             let read_loop_result = self.run_read_loop(&mut ws).await;
 
             match read_loop_result {
@@ -99,9 +132,11 @@ impl TwitchEventSubPlatform {
                 }
             };
 
-            // handle control frames
-            if msg.is_close() || msg.is_ping() || msg.is_pong() {
-                debug!("[TwitchEventSub] WS control frame: {:?}", msg);
+            // Use helper method to check for WebSocket control frames.
+            if Self::is_ws_control(&msg) {
+                if tracing::enabled!(tracing::Level::TRACE) {
+                    trace!("[TwitchEventSub] WS control frame: {:?}", msg);
+                }
                 if msg.is_close() {
                     // remote closed
                     return Ok(false);
@@ -111,7 +146,6 @@ impl TwitchEventSubPlatform {
 
             // handle text messages
             if let Message::Text(txt) = msg {
-                debug!("[TwitchEventSub] Received TEXT: {}", txt);
                 let parsed: serde_json::Value = match serde_json::from_str(&txt) {
                     Ok(v) => v,
                     Err(e) => {
@@ -119,6 +153,9 @@ impl TwitchEventSubPlatform {
                         continue;
                     }
                 };
+
+                // Log TEXT message using helper method that filters health check messages.
+                Self::log_text_message(&txt, &parsed);
 
                 let msg_type = parsed
                     .get("metadata")
@@ -130,7 +167,8 @@ impl TwitchEventSubPlatform {
                         info!("[TwitchEventSub] session_welcome => connected OK.");
 
                         let session_id = parsed
-                            .get("payload").and_then(|p| p.get("session"))
+                            .get("payload")
+                            .and_then(|p| p.get("session"))
                             .and_then(|s| s.get("id"))
                             .and_then(|id| id.as_str())
                             .unwrap_or("");
@@ -142,7 +180,8 @@ impl TwitchEventSubPlatform {
                         }
                     }
                     Some("session_keepalive") => {
-                        debug!("[TwitchEventSub] keepalive => no action needed");
+                        // Health check message; already logged in log_text_message if trace is enabled.
+                        trace!("[TwitchEventSub] session_keepalive => no action needed");
                     }
                     Some("session_reconnect") => {
                         warn!("[TwitchEventSub] session_reconnect => must reconnect soon.");

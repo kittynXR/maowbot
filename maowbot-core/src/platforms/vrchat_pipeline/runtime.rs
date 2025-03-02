@@ -16,7 +16,7 @@ use tokio_tungstenite::tungstenite::{
     http::{Request, Uri, header}
 };
 use tokio_tungstenite::{connect_async_tls_with_config, Connector};
-
+use tracing::{info, trace, warn};
 use crate::Error;
 use crate::models::PlatformCredential;
 use crate::platforms::{ConnectionStatus, PlatformAuth, PlatformIntegration};
@@ -137,38 +137,38 @@ impl VRChatPlatform {
                                 if let Some(evt) = parse_vrchat_json_event(&txt) {
                                     let _ = tx_evt.send(evt);
                                 } else {
-                                    tracing::debug!("(VRChat) unhandled JSON: {}", txt);
+                                    trace!("(VRChat) unhandled JSON: {}", txt);
                                 }
                             }
                             Some(Ok(WsMessage::Binary(bin))) => {
-                                tracing::debug!("(VRChat) got binary message: len={}", bin.len());
+                                trace!("(VRChat) got binary message: len={}", bin.len());
                             }
                             Some(Ok(WsMessage::Close(frame))) => {
-                                tracing::info!("(VRChat) WebSocket closed by server: {:?}", frame);
+                                info!("(VRChat) WebSocket closed by server: {:?}", frame);
                                 break;
                             }
                             Some(Ok(_other)) => {
                                 // ping/pong or other messages
                             }
                             Some(Err(e)) => {
-                                tracing::warn!("(VRChat) WebSocket error => {}", e);
+                                warn!("(VRChat) WebSocket error => {}", e);
                                 break;
                             }
                             None => {
                                 // Stream ended
-                                tracing::info!("(VRChat) WebSocket stream ended.");
+                                info!("(VRChat) WebSocket stream ended.");
                                 break;
                             }
                         }
                     }
                     _ = &mut shutdown_rx => {
-                        tracing::info!("(VRChat) Received shutdown signal. Closing read loop.");
+                        info!("(VRChat) Received shutdown signal. Closing read loop.");
                         break;
                     }
                 }
             }
 
-            tracing::info!("[VRChat] WebSocket read task ended.");
+            info!("[VRChat] WebSocket read task ended.");
         });
 
         self.read_task = Some(handle);

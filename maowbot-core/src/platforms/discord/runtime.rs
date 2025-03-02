@@ -1,13 +1,12 @@
-// ================
-// [UPDATED FILE] maowbot-core/src/platforms/discord/runtime.rs
-// ================
+// maowbot-core/src/platforms/discord/runtime.rs
+
 use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tokio::task::JoinHandle;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info, trace, warn};
 
 use twilight_gateway::{
     self as gateway,
@@ -163,7 +162,7 @@ pub async fn shard_runner(
 
                 // Fallback
                 other => {
-                    debug!("(ShardRunner) Shard {} => Unhandled event: {:?}", shard_id, other);
+                    trace!("(ShardRunner) Shard {} => Unhandled event: {:?}", shard_id, other);
                 }
             },
             Err(err) => {

@@ -1,8 +1,10 @@
+// twitch_irc/runtime.rs
+
 use async_trait::async_trait;
 use std::sync::Arc;
 use tokio::sync::mpsc::Sender;
 use tokio::task::JoinHandle;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info, warn, trace};
 
 use crate::Error;
 use crate::eventbus::EventBus;
@@ -54,6 +56,12 @@ impl TwitchIrcPlatform {
 
     pub fn set_event_bus(&mut self, bus: Arc<EventBus>) {
         self.event_bus = Some(bus);
+    }
+
+    /// Helper to determine if an IRC command is a control message.
+    fn is_irc_control(command: &str) -> bool {
+        let lower = command.to_ascii_lowercase();
+        lower == "ping" || lower == "pong" || lower == "keepalive" || lower == "heartbeat"
     }
 
     pub async fn next_message_event(&mut self) -> Option<TwitchIrcMessageEvent> {
@@ -159,8 +167,12 @@ impl PlatformIntegration for TwitchIrcPlatform {
                         let combined = format!("{}|roles={}", user_id, roles_str);
                         // bus.publish_chat("twitch-irc", &channel, &combined, &text).await;
                     }
-                }
-                else {
+                } else if Self::is_irc_control(&evt.command) {
+                    // Log control messages only if trace level is enabled.
+                    if tracing::enabled!(tracing::Level::TRACE) {
+                        trace!("(TwitchIrcPlatform) control message received: {}", evt.command);
+                    }
+                } else {
                     debug!("(TwitchIrcPlatform) ignoring non-PRIVMSG => {}", evt.command);
                 }
             }
