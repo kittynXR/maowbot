@@ -12,9 +12,9 @@ INSERT INTO commands (
     stream_offline_only
 )
 VALUES
-    ('twitch-irc', '!ping',      'everyone', true, now(), now(), 0, false, false, false),
-    ('twitch-irc', '!followage', 'everyone', true, now(), now(), 0, false, false, false),
-    ('vrchat',     '!world',     'everyone', true, now(), now(), 0, false, false, false),
-    ('vrchat',     '!instance',  'everyone', true, now(), now(), 0, false, false, false),
-    ('vrchat',     '!vrchat',    'mod',      true, now(), now(), 0, false, false, false)
+    ('twitch-irc', 'ping',      'everyone', true, now(), now(), 0, false, false, false),
+    ('twitch-irc', 'followage', 'everyone', true, now(), now(), 0, false, false, false),
+    ('vrchat',     'world',     'everyone', true, now(), now(), 0, false, false, false),
+    ('vrchat',     'instance',  'everyone', true, now(), now(), 0, false, false, false),
+    ('vrchat',     'vrchat',    'mod',      true, now(), now(), 0, false, false, false)
     ON CONFLICT (platform, LOWER(command_name)) DO NOTHING;

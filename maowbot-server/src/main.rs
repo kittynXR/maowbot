@@ -1,6 +1,5 @@
 // =============================================================================
 // maowbot-server/src/main.rs
-//   Single global #[tokio::main] for everything (server + TUI).
 // =============================================================================
 
 use clap::Parser;
@@ -31,13 +30,18 @@ use maowbot_core::crypto::Encryptor;
 use maowbot_core::cache::{CacheConfig, ChatCache, TrimPolicy};
 use maowbot_core::services::message_service::MessageService;
 use maowbot_core::services::user_service::UserService;
+use maowbot_core::services::{CommandService, RedeemService};
 use maowbot_core::tasks::biweekly_maintenance::spawn_biweekly_maintenance_task;
-
-// [NEW] Make sure to import the db_logger spawn function:
+use maowbot_core::plugins::bot_api::BotApi;
 use maowbot_core::eventbus::db_logger::spawn_db_logger_task;
-
-use maowbot_core::plugins::bot_api::{BotApi};
-
+use maowbot_core::platforms::manager::PlatformManager;  // (updated constructor)
+use maowbot_core::repositories::{
+    CredentialsRepository,
+    PostgresCommandRepository,
+    PostgresCommandUsageRepository,
+    PostgresRedeemRepository,
+    PostgresRedeemUsageRepository,
+};
 use tonic::transport::{Server, Identity, Certificate, ServerTlsConfig, Channel, ClientTlsConfig};
 use maowbot_proto::plugs::plugin_service_server::PluginServiceServer;
 use maowbot_proto::plugs::{
@@ -56,9 +60,6 @@ use sqlx::types::uuid;
 use tokio::time;
 
 use maowbot_core::Error;
-use maowbot_core::platforms::twitch::TwitchAuthenticator;
-use maowbot_core::repositories::{CredentialsRepository, PostgresCommandRepository, PostgresCommandUsageRepository, PostgresRedeemRepository, PostgresRedeemUsageRepository};
-use maowbot_core::services::{CommandService, RedeemService};
 use maowbot_core::tasks::autostart::run_autostart;
 
 mod portable_postgres;
@@ -108,7 +109,8 @@ struct Args {
 
 fn init_tracing(level: &str) {
     let default_filter = format!("maowbot={0},twitch_irc={0}", level);
-    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(default_filter));
+    let filter = EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| EnvFilter::new(default_filter));
     let sub = tracing_subscriber::fmt().with_env_filter(filter).finish();
     tracing::subscriber::set_global_default(sub)
         .expect("Failed to set global subscriber");
@@ -161,7 +163,7 @@ async fn run_server(args: Args) -> Result<(), Error> {
 
     maybe_create_owner_user(&db).await?;
 
-    // Event bus & maintenance task
+    // EventBus & maintenance
     let event_bus = Arc::new(EventBus::new());
     let _maintenance_handle = spawn_biweekly_maintenance_task(
         db.clone(),
@@ -169,7 +171,7 @@ async fn run_server(args: Args) -> Result<(), Error> {
         event_bus.clone(),
     );
 
-    // Build Repos & Auth
+    // Repositories & Auth
     let key = get_master_key()?;
     let encryptor = Encryptor::new(&key)?;
 
@@ -178,7 +180,9 @@ async fn run_server(args: Args) -> Result<(), Error> {
     let bot_config_repo = Arc::new(PostgresBotConfigRepository::new(db.pool().clone()));
     let user_repo_arc = Arc::new(UserRepository::new(db.pool().clone()));
 
-    let analytics_repo_arc = Arc::new(maowbot_core::repositories::postgres::analytics::PostgresAnalyticsRepository::new(db.pool().clone()));
+    let analytics_repo_arc = Arc::new(
+        maowbot_core::repositories::postgres::analytics::PostgresAnalyticsRepository::new(db.pool().clone())
+    );
     let user_analysis_repo_arc = Arc::new(PostgresUserAnalysisRepository::new(db.pool().clone()));
     let platform_identity_repo_arc = Arc::new(PlatformIdentityRepository::new(db.pool().clone()));
 
@@ -193,7 +197,7 @@ async fn run_server(args: Args) -> Result<(), Error> {
         bot_config_repo.clone(),
     );
 
-    // [NEW] We now spawn the DB logger so ChatMessage events actually get stored:
+    // DB Logger
     let (db_logger_task, db_logger_handle) = spawn_db_logger_task(
         &event_bus,
         (*analytics_repo_arc).clone(),
@@ -201,28 +205,22 @@ async fn run_server(args: Args) -> Result<(), Error> {
         5,
     );
 
-    // User manager & message service
-    let platform_identity_repo = Arc::new(
-        PlatformIdentityRepository::new(db.pool().clone())
-    );
-
+    // User Manager / Services
     let user_repo = user_repo_arc.clone();
-    let identity_repo = platform_identity_repo.clone();
-    let analysis_repo = PostgresUserAnalysisRepository::new(db.pool().clone());
-
     let default_user_mgr = DefaultUserManager::new(
         user_repo,
-        identity_repo,
-        analysis_repo,
+        platform_identity_repo_arc.clone(),
+        PostgresUserAnalysisRepository::new(db.pool().clone())
     );
     let user_manager = Arc::new(default_user_mgr);
 
     let user_service = Arc::new(
         UserService::new(
             user_manager.clone(),
-            platform_identity_repo.clone(),
+            platform_identity_repo_arc.clone(),
         )
     );
+
     let trim_policy = TrimPolicy {
         max_age_seconds: Some(24 * 3600),
         spam_score_cutoff: Some(5.0),
@@ -236,34 +234,42 @@ async fn run_server(args: Args) -> Result<(), Error> {
     );
     let chat_cache = Arc::new(Mutex::new(chat_cache));
 
+    // First, create CommandService with 4 args:
+    let command_svc = Arc::new(CommandService::new(
+        cmd_repo.clone(),
+        cmd_usage_repo.clone(),
+        creds_repo_arc.clone(),
+        user_service.clone(),
+    ));
+
+    // Next, create the PlatformManager WITHOUT passing the message_service:
+    let platform_manager = Arc::new(PlatformManager::new(
+        user_service.clone(),
+        event_bus.clone(),
+        creds_repo_arc.clone(),
+    ));
+
+    // Now create MessageService with 7 args:
     let message_service = Arc::new(
         MessageService::new(
             chat_cache,
             event_bus.clone(),
             user_manager.clone(),
             user_service.clone(),
+            command_svc.clone(),
+            platform_manager.clone(),
+            creds_repo_arc.clone(),
         )
     );
 
-    let command_svc = Arc::new(CommandService::new(
-        cmd_repo.clone(),
-        cmd_usage_repo.clone(),
-        user_service.clone()
-    ));
+    // Then finalize the link so the platform_manager can call message_service
+    platform_manager.set_message_service(message_service.clone());
 
+    // RedeemService
     let redeem_svc = Arc::new(RedeemService::new(
         redeem_repo.clone(),
         redeem_usage_repo.clone(),
         user_service.clone()
-    ));
-
-    // Platform manager
-    use maowbot_core::platforms::manager::PlatformManager;
-    let platform_manager = Arc::new(PlatformManager::new(
-        message_service.clone(),
-        user_service.clone(),
-        event_bus.clone(),
-        creds_repo_arc.clone(),
     ));
 
     // Plugin manager
@@ -281,13 +287,11 @@ async fn run_server(args: Args) -> Result<(), Error> {
         redeem_usage_repo.clone(),
     );
 
-    // give it the db_logger_handle so we can flush during merges
     plugin_manager.set_db_logger_handle(Arc::new(db_logger_handle));
-
     plugin_manager.subscribe_to_event_bus(event_bus.clone());
     plugin_manager.set_event_bus(event_bus.clone());
 
-    // Wrap the auth_manager in Arc<Mutex<>> so plugin_manager can use it
+    // Arc<Mutex<AuthManager>>
     let shared_auth_manager = Arc::new(Mutex::new(auth_manager));
     plugin_manager.set_auth_manager(shared_auth_manager.clone());
 
@@ -297,7 +301,7 @@ async fn run_server(args: Args) -> Result<(), Error> {
             error!("Failed to load in‑process plugin from {}: {:?}", path, e);
         }
     }
-    // Load all in-process plugins in "plugs" folder
+    // Load all .so/dll in "plugs"
     if let Err(e) = plugin_manager.load_plugins_from_folder("plugs").await {
         error!("Failed to load plugins from folder 'plugs': {:?}", e);
     }
@@ -305,20 +309,16 @@ async fn run_server(args: Args) -> Result<(), Error> {
     // Expose BotApi
     let bot_api: Arc<dyn BotApi> = Arc::new(plugin_manager.clone());
 
-    // (A) => Immediately attempt to refresh all refreshable credentials on bot startup
+    // (A) => Immediately try refreshing all credentials
     {
         use maowbot_core::tasks::credential_refresh::refresh_all_refreshable_credentials;
         let mut lock = shared_auth_manager.lock().await;
-        if let Err(e) = refresh_all_refreshable_credentials(
-            creds_repo_arc.as_ref(),
-            &mut *lock
-        ).await {
+        if let Err(e) = refresh_all_refreshable_credentials(creds_repo_arc.as_ref(), &mut *lock).await {
             error!("Failed to refresh credentials on startup => {:?}", e);
         }
     }
 
-    // (B) => run the autostart logic
-    use maowbot_core::tasks::autostart::run_autostart;
+    // (B) => Autostart
     if let Err(e) = run_autostart(bot_config_repo.as_ref(), bot_api.clone()).await {
         error!("Autostart error => {:?}", e);
     }
@@ -329,7 +329,7 @@ async fn run_server(args: Args) -> Result<(), Error> {
         raw_tui.spawn_tui_thread().await;
     }
 
-    // Now set BotApi on all loaded plugins
+    // Let active plugins see the BotApi
     {
         let lock = plugin_manager.plugins.lock().await;
         for p in lock.iter() {

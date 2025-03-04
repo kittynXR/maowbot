@@ -1,3 +1,5 @@
+// File: maowbot-core/src/services/builtin_commands/vrchat_commands.rs
+
 use crate::Error;
 use crate::models::{Command, User};
 use crate::services::command_service::CommandContext;
@@ -5,15 +7,16 @@ use tracing::{info, warn};
 
 pub async fn handle_world(
     cmd: &Command,
-    ctx: &CommandContext<'_>, // <-- Add lifetime
+    ctx: &CommandContext<'_>,
     user: &User,
     _raw_args: &str,
 ) -> Result<String, Error> {
-    let account_name = if let Some(acc) = ctx.responding_account_name() {
-        acc
-    } else {
-        "default_vrchat_account"
-    };
+    // Instead of ctx.responding_account_name(), use respond_credential_name.as_deref()
+    let account_name = ctx
+        .respond_credential_name
+        .as_deref()
+        .unwrap_or("default_vrchat_account");
+
     info!("(Stub) handle_world => account_name='{}'", account_name);
 
     let result_stub = "World: 'Furry World' by 'FurAuthor', capacity=32, created=2020-10-12, updated=2022-11-05";
@@ -22,20 +25,26 @@ pub async fn handle_world(
 
 pub async fn handle_instance(
     cmd: &Command,
-    ctx: &CommandContext<'_>, // <-- Add lifetime
+    ctx: &CommandContext<'_>,
     user: &User,
     _raw_args: &str,
 ) -> Result<String, Error> {
-    let account_name = ctx.responding_account_name().unwrap_or("default_vrchat_account");
+    let account_name = ctx
+        .respond_credential_name
+        .as_deref()
+        .unwrap_or("default_vrchat_account");
     info!("(Stub) handle_instance => account_name='{}'", account_name);
 
     let instance_url = "vrchat://launch?ref=somewhere&worldId=wrld_123&instanceId=1234~public";
-    Ok(format!("Currently in wrld_123:1234~public - join link: {}", instance_url))
+    Ok(format!(
+        "Currently in wrld_123:1234~public - join link: {}",
+        instance_url
+    ))
 }
 
 pub async fn handle_vrchat_online_offline(
     cmd: &Command,
-    ctx: &CommandContext<'_>, // <-- Add lifetime
+    ctx: &CommandContext<'_>,
     user: &User,
     raw_args: &str,
 ) -> Result<String, Error> {

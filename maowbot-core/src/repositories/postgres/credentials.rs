@@ -13,6 +13,7 @@ use uuid::Uuid;
 pub trait CredentialsRepository: Send + Sync {
     async fn store_credentials(&self, creds: &PlatformCredential) -> Result<(), Error>;
     async fn get_credentials(&self, platform: &Platform, user_id: Uuid) -> Result<Option<PlatformCredential>, Error>;
+    async fn get_credential_by_id(&self, credential_id: Uuid) -> Result<Option<PlatformCredential>, Error>;
     async fn update_credentials(&self, creds: &PlatformCredential) -> Result<(), Error>;
     async fn delete_credentials(&self, platform: &Platform, user_id: Uuid) -> Result<(), Error>;
     async fn get_expiring_credentials(&self, within: Duration) -> Result<Vec<PlatformCredential>, Error>;
@@ -163,6 +164,23 @@ impl CredentialsRepository for PostgresCredentialsRepository {
             Ok(None)
         }
     }
+
+    async fn get_credential_by_id(&self, credential_id: Uuid) -> Result<Option<PlatformCredential>, Error> {
+        let row_opt = sqlx::query_as::<_, PlatformCredential>(
+            r#"
+            SELECT *
+            FROM platform_credentials
+            WHERE credential_id = $1
+            LIMIT 1
+            "#,
+        )
+            .bind(credential_id)
+            .fetch_optional(&self.pool)
+            .await?;
+
+        Ok(row_opt)
+    }
+
 
     async fn update_credentials(&self, creds: &PlatformCredential) -> Result<(), Error> {
         let platform_str = creds.platform.to_string();

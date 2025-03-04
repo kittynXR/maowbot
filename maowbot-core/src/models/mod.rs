@@ -76,6 +76,7 @@ impl From<String> for Platform {
 /// with a unit variant for interactive 2FA.
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, sqlx::Type)]
 #[sqlx(type_name = "TEXT")]
+#[sqlx(rename_all = "lowercase")]
 pub enum CredentialType {
     OAuth2,
     APIKey,
