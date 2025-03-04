@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use sqlx::{Pool, Postgres, Row};
 use uuid::Uuid;
-use chrono::{Utc};
+use chrono::Utc;
 use crate::Error;
 use crate::models::Command;
 
@@ -33,10 +33,22 @@ impl CommandRepository for PostgresCommandRepository {
         sqlx::query(
             r#"
             INSERT INTO commands (
-                command_id, platform, command_name, min_role,
-                is_active, created_at, updated_at
+                command_id,
+                platform,
+                command_name,
+                min_role,
+                is_active,
+                created_at,
+                updated_at,
+
+                cooldown_seconds,
+                cooldown_warnonce,
+                respond_with_credential,
+                stream_online_only,
+                stream_offline_only
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7)
+            VALUES ($1, $2, $3, $4, $5, $6, $7,
+                    $8, $9, $10, $11, $12)
             "#,
         )
             .bind(cmd.command_id)
@@ -46,6 +58,13 @@ impl CommandRepository for PostgresCommandRepository {
             .bind(cmd.is_active)
             .bind(cmd.created_at)
             .bind(cmd.updated_at)
+
+            .bind(cmd.cooldown_seconds)
+            .bind(cmd.cooldown_warnonce)
+            .bind(cmd.respond_with_credential)
+            .bind(cmd.stream_online_only)
+            .bind(cmd.stream_offline_only)
+
             .execute(&self.pool)
             .await?;
 
@@ -55,8 +74,21 @@ impl CommandRepository for PostgresCommandRepository {
     async fn get_command_by_id(&self, command_id: Uuid) -> Result<Option<Command>, Error> {
         let row_opt = sqlx::query(
             r#"
-            SELECT command_id, platform, command_name, min_role,
-                   is_active, created_at, updated_at
+            SELECT
+                command_id,
+                platform,
+                command_name,
+                min_role,
+                is_active,
+                created_at,
+                updated_at,
+
+                cooldown_seconds,
+                cooldown_warnonce,
+                respond_with_credential,
+                stream_online_only,
+                stream_offline_only
+
             FROM commands
             WHERE command_id = $1
             "#,
@@ -74,6 +106,12 @@ impl CommandRepository for PostgresCommandRepository {
                 is_active: row.try_get("is_active")?,
                 created_at: row.try_get("created_at")?,
                 updated_at: row.try_get("updated_at")?,
+
+                cooldown_seconds: row.try_get("cooldown_seconds")?,
+                cooldown_warnonce: row.try_get("cooldown_warnonce")?,
+                respond_with_credential: row.try_get("respond_with_credential")?,
+                stream_online_only: row.try_get("stream_online_only")?,
+                stream_offline_only: row.try_get("stream_offline_only")?,
             };
             Ok(Some(cmd))
         } else {
@@ -84,8 +122,21 @@ impl CommandRepository for PostgresCommandRepository {
     async fn get_command_by_name(&self, platform: &str, command_name: &str) -> Result<Option<Command>, Error> {
         let row_opt = sqlx::query(
             r#"
-            SELECT command_id, platform, command_name, min_role,
-                   is_active, created_at, updated_at
+            SELECT
+                command_id,
+                platform,
+                command_name,
+                min_role,
+                is_active,
+                created_at,
+                updated_at,
+
+                cooldown_seconds,
+                cooldown_warnonce,
+                respond_with_credential,
+                stream_online_only,
+                stream_offline_only
+
             FROM commands
             WHERE platform = $1
               AND LOWER(command_name) = LOWER($2)
@@ -105,6 +156,12 @@ impl CommandRepository for PostgresCommandRepository {
                 is_active: row.try_get("is_active")?,
                 created_at: row.try_get("created_at")?,
                 updated_at: row.try_get("updated_at")?,
+
+                cooldown_seconds: row.try_get("cooldown_seconds")?,
+                cooldown_warnonce: row.try_get("cooldown_warnonce")?,
+                respond_with_credential: row.try_get("respond_with_credential")?,
+                stream_online_only: row.try_get("stream_online_only")?,
+                stream_offline_only: row.try_get("stream_offline_only")?,
             };
             Ok(Some(cmd))
         } else {
@@ -115,8 +172,20 @@ impl CommandRepository for PostgresCommandRepository {
     async fn list_commands(&self, platform: &str) -> Result<Vec<Command>, Error> {
         let rows = sqlx::query(
             r#"
-            SELECT command_id, platform, command_name, min_role,
-                   is_active, created_at, updated_at
+            SELECT
+                command_id,
+                platform,
+                command_name,
+                min_role,
+                is_active,
+                created_at,
+                updated_at,
+
+                cooldown_seconds,
+                cooldown_warnonce,
+                respond_with_credential,
+                stream_online_only,
+                stream_offline_only
             FROM commands
             WHERE platform = $1
             ORDER BY command_name ASC
@@ -136,6 +205,12 @@ impl CommandRepository for PostgresCommandRepository {
                 is_active: row.try_get("is_active")?,
                 created_at: row.try_get("created_at")?,
                 updated_at: row.try_get("updated_at")?,
+
+                cooldown_seconds: row.try_get("cooldown_seconds")?,
+                cooldown_warnonce: row.try_get("cooldown_warnonce")?,
+                respond_with_credential: row.try_get("respond_with_credential")?,
+                stream_online_only: row.try_get("stream_online_only")?,
+                stream_offline_only: row.try_get("stream_offline_only")?,
             };
             cmds.push(cmd);
         }
@@ -146,15 +221,30 @@ impl CommandRepository for PostgresCommandRepository {
         sqlx::query(
             r#"
             UPDATE commands
-            SET min_role = $1,
+            SET
+                min_role = $1,
                 is_active = $2,
-                updated_at = $3
-            WHERE command_id = $4
+                updated_at = $3,
+
+                cooldown_seconds = $4,
+                cooldown_warnonce = $5,
+                respond_with_credential = $6,
+                stream_online_only = $7,
+                stream_offline_only = $8
+
+            WHERE command_id = $9
             "#,
         )
             .bind(&cmd.min_role)
             .bind(cmd.is_active)
             .bind(cmd.updated_at)
+
+            .bind(cmd.cooldown_seconds)
+            .bind(cmd.cooldown_warnonce)
+            .bind(cmd.respond_with_credential)
+            .bind(cmd.stream_online_only)
+            .bind(cmd.stream_offline_only)
+
             .bind(cmd.command_id)
             .execute(&self.pool)
             .await?;

@@ -12,6 +12,12 @@ pub struct Command {
     pub is_active: bool,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+
+    pub cooldown_seconds: i32,
+    pub cooldown_warnonce: bool,
+    pub respond_with_credential: Option<Uuid>,
+    pub stream_online_only: bool,
+    pub stream_offline_only: bool,
 }
 
 /// Log record when a user invokes a command.
@@ -22,6 +28,6 @@ pub struct CommandUsage {
     pub user_id: Uuid,
     pub used_at: DateTime<Utc>,
     pub channel: String,
-    pub usage_text: Option<String>, // the raw text after the command
+    pub usage_text: Option<String>,
     pub metadata: Option<serde_json::Value>,
 }

@@ -5,6 +5,7 @@ pub mod user_service;
 pub mod message_service;
 pub mod command_service;
 pub mod redeem_service;
+mod builtin_commands;
 
 // pub use user_service::UserService;
 pub use command_service::CommandService;

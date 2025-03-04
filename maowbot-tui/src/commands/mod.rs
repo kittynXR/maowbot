@@ -16,6 +16,7 @@ mod vrchat;
 
 // NEW:
 mod member;
+mod command;
 
 /// Asynchronous command dispatcher. Returns (quit_requested, optional_output_message).
 pub async fn dispatch_async(
@@ -135,6 +136,12 @@ pub async fn dispatch_async(
         // NEW: "member" command
         "member" => {
             let msg = member::handle_member_command(args, bot_api).await;
+            (false, Some(msg))
+        }
+
+        // NEW: "command" command - opens the command editor / management functionality.
+        "command" => {
+            let msg = command::handle_command_command(args, bot_api).await;
             (false, Some(msg))
         }
 

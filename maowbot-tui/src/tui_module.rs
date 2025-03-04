@@ -1,3 +1,5 @@
+// src/tui_module.rs
+
 use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},

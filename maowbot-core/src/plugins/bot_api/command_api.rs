@@ -15,4 +15,6 @@ pub trait CommandApi: Send + Sync {
     // For usage logs, you might provide queries:
     async fn get_usage_for_command(&self, command_id: Uuid, limit: i64) -> Result<Vec<CommandUsage>, Error>;
     async fn get_usage_for_user(&self, user_id: Uuid, limit: i64) -> Result<Vec<CommandUsage>, Error>;
+
+    async fn update_command(&self, updated_cmd: &Command) -> Result<(), Error>;
 }

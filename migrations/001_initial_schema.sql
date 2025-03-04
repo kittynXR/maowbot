@@ -194,13 +194,22 @@ CREATE TABLE user_analysis_history (
 DROP TABLE IF EXISTS commands CASCADE;
 CREATE TABLE commands (
     command_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    platform   TEXT NOT NULL,
+    platform TEXT NOT NULL,
     command_name TEXT NOT NULL,
-    min_role   TEXT NOT NULL DEFAULT 'everyone',
-    is_active  BOOLEAN NOT NULL DEFAULT true,
+    min_role TEXT NOT NULL DEFAULT 'everyone',
+    is_active BOOLEAN NOT NULL DEFAULT true,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    cooldown_seconds INTEGER NOT NULL DEFAULT 0,
+    cooldown_warnonce BOOLEAN NOT NULL DEFAULT false,
+    respond_with_credential UUID NULL,
+    stream_online_only BOOLEAN NOT NULL DEFAULT false,
+    stream_offline_only BOOLEAN NOT NULL DEFAULT false,
+    CONSTRAINT fk_respond_credential FOREIGN KEY (respond_with_credential)
+        REFERENCES platform_credentials (credential_id)
+        ON DELETE SET NULL
 );
+
 
 -- You can ensure each (platform, command_name) is unique:
 CREATE UNIQUE INDEX ON commands (platform, LOWER(command_name));

@@ -50,6 +50,12 @@ impl CommandApi for PluginManager {
         };
         usage_repo.list_usage_for_user(user_id, limit).await
     }
+
+    async fn update_command(&self, updated_cmd: &Command) -> Result<(), Error> {
+        let cmd_service = self.resolve_command_service()?;
+        // We'll add a new function in CommandService that updates all fields:
+        cmd_service.update_full_command(updated_cmd).await
+    }
 }
 
 // Helper method on PluginManager to get CommandService
