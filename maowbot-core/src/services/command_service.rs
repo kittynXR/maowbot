@@ -84,7 +84,7 @@ impl CommandService {
             return Ok(None);
         }
 
-        // 2) Parse command and arguments.
+        // 2) Parse command and arguments (removing leading '!')
         let parts: Vec<&str> = message_text.trim().split_whitespace().collect();
         let cmd_part = parts[0].trim_start_matches('!');
         let args = if parts.len() > 1 {
@@ -94,7 +94,8 @@ impl CommandService {
         };
         debug!("Parsed command: '{}', args: '{}'", cmd_part, args);
 
-        // 3) Look up command in database.
+        // 3) Look up command in database. If your DB stores "ping", then this call
+        //    needs to pass "ping" (not "!ping").
         let cmd_opt = self.command_repo.get_command_by_name(platform, cmd_part).await?;
         let cmd = match cmd_opt {
             Some(c) => c,
@@ -111,7 +112,7 @@ impl CommandService {
             return Ok(None);
         }
 
-        // 5) Verify user role.
+        // 5) Verify user role, if needed.
         if cmd.min_role.to_lowercase() != "everyone" {
             let needed = cmd.min_role.to_lowercase();
             let has_role = user_roles.iter().any(|r| r.to_lowercase() == needed);
@@ -146,7 +147,7 @@ impl CommandService {
             }));
         }
 
-        // 7) Enforce cooldown.
+        // 7) Enforce global cooldown.
         let now = Utc::now();
         {
             let mut cd_lock = self.cooldowns.lock().unwrap();
@@ -184,7 +185,7 @@ impl CommandService {
             debug!("Command usage logged.");
         }
 
-        // 9) Retrieve user for context.
+        // 9) Retrieve user for context (optional).
         let user_opt = self.user_service.user_manager.user_repo.get(user_id).await?;
         let user = match user_opt {
             Some(u) => u,
@@ -211,6 +212,7 @@ impl CommandService {
             respond_credential_name: None,
         };
 
+        // If respond_with_credential was set, load that credential so we know which account to reply from.
         if let Some(cid) = cmd.respond_with_credential {
             debug!("Looking up respond credential with id: {:?}", cid);
             if let Ok(Some(cred)) = self.credentials_repo.get_credential_by_id(cid).await {
@@ -233,7 +235,7 @@ impl CommandService {
             }));
         }
 
-        debug!("Command '{}' recognized, but no built-in logic provided.", cmd.command_name);
+        debug!("Command '{}' recognized, but no built-in logic implemented.", cmd.command_name);
         Ok(Some(CommandResponse {
             text: format!("Command {} recognized, but no built-in logic implemented.", cmd.command_name),
             respond_credential_id: cmd.respond_with_credential,
