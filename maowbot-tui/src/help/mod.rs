@@ -3,14 +3,15 @@
 
 pub mod help_account;
 pub mod help_connectivity;
+pub mod help_member;
 pub mod help_platform;
 pub mod help_plugin;
 pub mod help_ttv;
 pub mod help_user;
 pub mod help_vrchat;
 
-// NEW:
-pub mod help_member;
+// NEW FILE:
+pub mod help_command;  // <--- newly added for the "command" subcommand
 
 fn show_general_help() -> String {
     let text = r#"MaowBot TUI - Available Commands:
@@ -37,8 +38,11 @@ fn show_general_help() -> String {
   user <add|remove|edit|info|search|list> ...
     Manage user records in the database.
 
-  member <info|chat|list|search|note|merge> ...
-    Manage members (extended user data, chat logs, merges).
+  member <info|chat|list|search|note|merge|roles> ...
+    Manage members (extended user data, merges, roles, chat logs).
+
+  command <list|setcooldown|setwarnonce|setrespond|enable|disable>
+    Manage built-in or custom commands, including cooldowns and response credentials.
 
   autostart <on/off> <platform> <account>
     Toggle a (platform,account) autostart on boot.
@@ -55,6 +59,9 @@ fn show_general_help() -> String {
   ttv <active|join|part|msg|chat|default> ...
     Twitch IRC commands, e.g. 'ttv join #channel', etc.
 
+  vrchat <world|avatar|instance> ...
+    VRChat integration commands.
+
   quit
     Shut down the TUI (and the entire bot).
 "#;
@@ -65,17 +72,20 @@ pub fn show_command_help(command: &str) -> String {
     match command {
         "" => show_general_help(),
 
+        // Existing help lookups:
         "account" => help_account::ACCOUNT_HELP_TEXT.to_owned(),
         "autostart" | "start" | "stop" | "chat" => help_connectivity::CONNECTIVITY_HELP_TEXT.to_owned(),
         "platform" => help_platform::PLATFORM_HELP_TEXT.to_owned(),
         "plug" => help_plugin::PLUGIN_HELP_TEXT.to_owned(),
         "user" => help_user::USER_HELP_TEXT.to_owned(),
+        "member" => help_member::MEMBER_HELP_TEXT.to_owned(),
         "ttv" => help_ttv::TTV_HELP_TEXT.to_owned(),
         "vrchat" => help_vrchat::VRCHAT_HELP_TEXT.to_owned(),
 
-        // NEW: "member" => show help_member
-        "member" => help_member::MEMBER_HELP_TEXT.to_owned(),
+        // NEW: "command" => show help_command
+        "command" => help_command::COMMAND_HELP_TEXT.to_owned(),
 
+        // "list" built-in help snippet:
         "list" => {
             r#"List Command:
   Usage: list
@@ -83,6 +93,7 @@ pub fn show_command_help(command: &str) -> String {
 "#
                 .to_owned()
         },
+        // "status" built-in help snippet:
         "status" => {
             r#"Status Command:
   Usage: status [config]
