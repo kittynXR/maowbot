@@ -1,3 +1,5 @@
+// File: maowbot-tui/src/commands/account.rs
+
 use std::sync::Arc;
 use std::io::{Write, stdin, stdout};
 use std::collections::HashMap;
@@ -280,15 +282,17 @@ fn try_open_incognito(url: &str) -> Result<(), Box<dyn std::error::Error>> {
     }
     #[cfg(target_os = "windows")]
     {
-        // Using Chrome again; user might have to adjust path:
+        // On Windows, & is interpreted by cmd as a command separator.
+        // So we need to escape & as ^& to keep the entire OAuth URL intact.
+        let url_escaped = url.replace("&", "^&");
         std::process::Command::new("cmd")
-            .args(&["/C", "start", "chrome", "--incognito", url])
+            .args(&["/C", "start", "chrome", "--incognito", &url_escaped])
             .spawn()?;
         return Ok(());
     }
     #[cfg(target_os = "linux")]
     {
-        // Attempt google-chrome or fallback to chromium:
+        // Attempt google-chrome or fallback to chromium
         let status_chrome = std::process::Command::new("google-chrome")
             .arg("--incognito")
             .arg(url)
@@ -297,11 +301,11 @@ fn try_open_incognito(url: &str) -> Result<(), Box<dyn std::error::Error>> {
             Ok(_) => Ok(()),
             Err(_) => {
                 // try chromium
-                let status_chromium = std::process::Command::new("chromium")
+                std::process::Command::new("chromium")
                     .arg("--incognito")
                     .arg(url)
                     .spawn()?;
-                Ok(status_chromium)
+                Ok(())
             }
         }?;
         return Ok(());
@@ -375,7 +379,7 @@ async fn do_oauth_like_flow(
         let mut line3 = String::new();
         let _ = stdin().read_line(&mut line3);
         if line3.trim().eq_ignore_ascii_case("y") {
-            // NEW: If it's a bot account, we attempt incognito. Otherwise normal open.
+            // If it's a bot account, attempt incognito first:
             if is_bot {
                 match try_open_incognito(&flow_str) {
                     Ok(_) => {
