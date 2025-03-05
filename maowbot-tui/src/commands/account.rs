@@ -201,7 +201,7 @@ async fn vrchat_add_flow(
 
     match first_res {
         Ok(_) => {
-            return format!("VRChat credentials stored successfully for user_id={user_id}");
+            format!("VRChat credentials stored successfully for user_id={user_id}")
         }
         Err(err) => {
             let msg = format!("{err}");
@@ -261,6 +261,56 @@ async fn discord_bot_add_flow(
     }
 }
 
+/// **NEW** helper to open a URL in an "incognito/private" window if possible.
+/// This may vary across OS and installed browsers. If it fails, the caller
+/// should gracefully fallback or instruct the user to open manually.
+fn try_open_incognito(url: &str) -> Result<(), Box<dyn std::error::Error>> {
+    #[cfg(target_os = "macos")]
+    {
+        // Example attempt: open Chrome in incognito
+        // If user doesn't have Chrome, this might fail.
+        std::process::Command::new("open")
+            .arg("-a")
+            .arg("Google Chrome")
+            .arg("--args")
+            .arg("--incognito")
+            .arg(url)
+            .spawn()?;
+        return Ok(());
+    }
+    #[cfg(target_os = "windows")]
+    {
+        // Using Chrome again; user might have to adjust path:
+        std::process::Command::new("cmd")
+            .args(&["/C", "start", "chrome", "--incognito", url])
+            .spawn()?;
+        return Ok(());
+    }
+    #[cfg(target_os = "linux")]
+    {
+        // Attempt google-chrome or fallback to chromium:
+        let status_chrome = std::process::Command::new("google-chrome")
+            .arg("--incognito")
+            .arg(url)
+            .spawn();
+        match status_chrome {
+            Ok(_) => Ok(()),
+            Err(_) => {
+                // try chromium
+                let status_chromium = std::process::Command::new("chromium")
+                    .arg("--incognito")
+                    .arg(url)
+                    .spawn()?;
+                Ok(status_chromium)
+            }
+        }?;
+        return Ok(());
+    }
+
+    // For other platforms or if no path matched, just return an error:
+    Err("Incognito opening not supported on this platform".into())
+}
+
 /// Re‐use Helix credential to create an eventsub credential for the same user.
 pub async fn reuse_twitch_helix_for_eventsub(
     user_id: Uuid,
@@ -308,13 +358,38 @@ async fn do_oauth_like_flow(
 
     if flow_str.starts_with("http://") || flow_str.starts_with("https://") {
         println!("Open this URL to authenticate:\n  {flow_str}");
+
+        // NOTE: Explanation about incognito if it's a bot account:
+        if is_bot {
+            println!("(Bot account) We'll try to open an incognito window so you can log in separately.\n\
+                      If you see issues signing into your bot account, please log out of your main account \n\
+                      or manually open an incognito session and paste the URL.\n");
+        } else {
+            println!("(Non-bot account) We'll open your default browser. If it's already logged in,\n\
+                      you can proceed or open a private window if you need a different account.\n");
+        }
+
         println!("Open in browser now? (y/n):");
         print!("> ");
         let _ = stdout().flush();
         let mut line3 = String::new();
         let _ = stdin().read_line(&mut line3);
         if line3.trim().eq_ignore_ascii_case("y") {
-            let _ = open::that(&flow_str);
+            // NEW: If it's a bot account, we attempt incognito. Otherwise normal open.
+            if is_bot {
+                match try_open_incognito(&flow_str) {
+                    Ok(_) => {
+                        println!("Opened incognito window (attempt). If it didn't work, please open manually.")
+                    },
+                    Err(e) => {
+                        eprintln!("Could not open incognito automatically: {e}\nTry manually or in a private session.");
+                        // fallback to normal open:
+                        let _ = open::that(&flow_str);
+                    }
+                }
+            } else {
+                let _ = open::that(&flow_str);
+            }
         }
 
         let (done_rx, shutdown_tx) =
@@ -329,6 +404,7 @@ async fn do_oauth_like_flow(
             }
         };
         let _ = shutdown_tx.send(());
+
         bot_api
             .complete_auth_flow_for_user(platform, callback_result.code, user_id)
             .await?;
