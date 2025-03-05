@@ -33,6 +33,10 @@ pub struct TwitchIrcPlatform {
     /// A local channel for `TwitchIrcMessageEvent`.
     pub(crate) rx: Option<tokio::sync::mpsc::Receiver<TwitchIrcMessageEvent>>,
     tx: Option<tokio::sync::mpsc::Sender<TwitchIrcMessageEvent>>,
+
+    /// **NEW**: If false, we skip reading/processing incoming messages.
+    /// This is how we differentiate broadcaster vs. bot accounts.
+    pub enable_incoming: bool,
 }
 
 impl TwitchIrcPlatform {
@@ -45,6 +49,7 @@ impl TwitchIrcPlatform {
             event_bus: None,
             rx: None,
             tx: None,
+            enable_incoming: true, // default
         }
     }
 
@@ -56,7 +61,11 @@ impl TwitchIrcPlatform {
         self.event_bus = Some(bus);
     }
 
+    /// Helper to consume next message event if this platform is in "receive" mode
     pub async fn next_message_event(&mut self) -> Option<TwitchIrcMessageEvent> {
+        if !self.enable_incoming {
+            return None; // do nothing if reading is disabled
+        }
         if let Some(rx_ref) = &mut self.rx {
             rx_ref.recv().await
         } else {
@@ -68,7 +77,6 @@ impl TwitchIrcPlatform {
 #[async_trait]
 impl PlatformAuth for TwitchIrcPlatform {
     async fn authenticate(&mut self) -> Result<(), Error> {
-        // No-op for Twitch IRC
         Ok(())
     }
     async fn refresh_auth(&mut self) -> Result<(), Error> {
@@ -107,6 +115,7 @@ impl PlatformIntegration for TwitchIrcPlatform {
         self.tx = Some(tx_evt);
         self.rx = Some(rx_evt);
 
+        // Connect underlying TCP + TLS
         let client = match TwitchIrcClient::connect(&username, &token).await {
             Ok(c) => c,
             Err(e) => {
@@ -119,54 +128,62 @@ impl PlatformIntegration for TwitchIrcPlatform {
         self.client = Some(client);
         self.connection_status = ConnectionStatus::Connected;
 
-        // Now spawn a read loop that picks from the client's "incoming"
-        let mut irc_incoming = self.client.as_mut().unwrap().incoming.take().ok_or_else(|| {
-            Error::Platform("No incoming channel in TwitchIrcClient".into())
-        })?;
+        // -------------------------------------------------------------------
+        // Only spawn read loop if we want to *receive* incoming chat.
+        // (Typically the main broadcaster account.)
+        // Bot accounts (is_bot = true) will skip, so they can still send but not receive duplicates.
+        // -------------------------------------------------------------------
+        if self.enable_incoming {
+            let mut irc_incoming = self
+                .client
+                .as_mut()
+                .unwrap()
+                .incoming
+                .take()
+                .ok_or_else(|| Error::Platform("No incoming channel in TwitchIrcClient".into()))?;
 
-        let tx_for_task = self.tx.as_ref().unwrap().clone();
-        let event_bus_for_task = self.event_bus.clone();
+            let tx_for_task = self.tx.as_ref().unwrap().clone();
+            let event_bus_for_task = self.event_bus.clone();
 
-        let handle = tokio::spawn(async move {
-            while let Some(evt) = irc_incoming.recv().await {
-                if evt.command.eq_ignore_ascii_case("privmsg") {
-                    // Must have a user-id to unify the identity in DB. If missing, skip.
-                    if evt.twitch_user_id.is_none() {
-                        debug!("(TwitchIrcPlatform) ignoring message without user-id => {:?}", evt.raw_line);
-                        continue;
-                    }
+            let handle = tokio::spawn(async move {
+                while let Some(evt) = irc_incoming.recv().await {
+                    if evt.command.eq_ignore_ascii_case("privmsg") {
+                        // Must have user-id to unify DB identity. If missing, skip.
+                        if evt.twitch_user_id.is_none() {
+                            debug!("(TwitchIrcPlatform) ignoring message without user-id => {:?}", evt.raw_line);
+                            continue;
+                        }
 
-                    let channel = evt.channel.unwrap_or_default();
-                    let user_id = evt.twitch_user_id.clone().unwrap_or_default();
-                    let display = evt.display_name.unwrap_or_else(|| user_id.clone());
-                    let text = evt.text.unwrap_or_default();
+                        let channel = evt.channel.clone().unwrap_or_default();
+                        let user_id = evt.twitch_user_id.clone().unwrap_or_default();
+                        let display = evt.display_name.clone().unwrap_or_else(|| user_id.clone());
+                        let text = evt.text.clone().unwrap_or_default();
 
-                    let parsed = TwitchIrcMessageEvent {
-                        channel: channel.clone(),
-                        twitch_user_id: user_id.clone(),
-                        display_name: display.clone(),
-                        text: text.clone(),
-                        roles: evt.roles.clone(),
-                    };
+                        let msg_evt = TwitchIrcMessageEvent {
+                            channel,
+                            twitch_user_id: user_id,
+                            display_name: display,
+                            text,
+                            roles: evt.roles.clone(),
+                        };
 
-                    let _ = tx_for_task.send(parsed.clone()).await;
+                        let _ = tx_for_task.send(msg_evt.clone()).await;
 
-                    // Optionally publish on EventBus. We'll combine user-id + roles in a single string:
-                    if let Some(bus) = &event_bus_for_task {
-                        let roles_str = evt.roles.join(",");
-                        // So the message_service can parse user=someString|roles=...
-                        // We'll do:   "264653338|roles=mod,subscriber"
-                        let combined = format!("{}|roles={}", user_id, roles_str);
-                        // bus.publish_chat("twitch-irc", &channel, &combined, &text).await;
+                        // Optionally publish to EventBus...
+                        if let Some(bus) = &event_bus_for_task {
+                            // Example usage if you want to publish:
+                            // bus.publish_chat("twitch-irc", &channel, &format!("{}|roles={}", user_id, ...), &text).await;
+                        }
+                    } else {
+                        debug!("(TwitchIrcPlatform) ignoring non-PRIVMSG => {}", evt.command);
                     }
                 }
-                else {
-                    debug!("(TwitchIrcPlatform) ignoring non-PRIVMSG => {}", evt.command);
-                }
-            }
-            info!("(TwitchIrcPlatform) read loop ended.");
-        });
-        self.read_loop_handle = Some(handle);
+                info!("(TwitchIrcPlatform) read loop ended.");
+            });
+            self.read_loop_handle = Some(handle);
+        } else {
+            info!("(TwitchIrcPlatform) Reading is disabled for this account (bot mode).");
+        }
 
         Ok(())
     }
@@ -218,6 +235,7 @@ impl ChatPlatform for TwitchIrcPlatform {
     }
 
     async fn get_channel_users(&self, _channel: &str) -> Result<Vec<String>, Error> {
+        // (Not implemented in this snippet.)
         Ok(vec![])
     }
 }

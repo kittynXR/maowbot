@@ -305,44 +305,58 @@ impl PlatformManager {
         let user_id_str = credential.user_id.to_string();
         let user_id_str_for_handle = user_id_str.clone();
 
+        // Instantiate the TwitchIrcPlatform
         let mut irc = TwitchIrcPlatform::new();
-        irc.set_credentials(credential);
-
+        irc.set_credentials(credential.clone());
         irc.set_event_bus(self.event_bus.clone());
-        irc.connect().await?;
-        info!("[TwitchIRC] connected ... starting read loop (user_id={})", user_id_str);
 
+        // ---- NEW: If the credential is a bot, disable incoming. ----
+        // That ensures we do not process read loop for the bot account.
+        if credential.is_bot {
+            irc.enable_incoming = false;  // do not read/process chat
+            info!(
+                "[TwitchIRC] Detected is_bot=true for user_id={}, only sending messages, no read loop.",
+                user_id_str
+            );
+        }
+
+        // Connect
+        irc.connect().await?;
+        info!("[TwitchIRC] connected ... user_id={}", user_id_str);
+
+        // In normal usage, we then capture the receiving side (rx) in a separate task:
+        // But if enable_incoming=false, next_message_event() will yield None forever.
         let rx_opt = irc.rx.take();
-        let rx = match rx_opt {
-            Some(r) => r,
-            None => return Err(Error::Platform("No IRC receiver found".into())),
-        };
         let arc_irc = Arc::new(AsyncMutex::new(irc));
 
         let join_handle = tokio::spawn(async move {
-            let mut msg_rx = rx;
-            while let Some(evt) = msg_rx.recv().await {
-                let channel = evt.channel;
-                let platform_user_id = evt.twitch_user_id.clone();
-                let display_name = evt.display_name.clone();
-                let roles = evt.roles.clone();
-                let text = evt.text;
+            if let Some(mut msg_rx) = rx_opt {
+                while let Some(evt) = msg_rx.recv().await {
+                    let channel = evt.channel;
+                    let platform_user_id = evt.twitch_user_id.clone();
+                    let display_name = evt.display_name.clone();
+                    let roles = evt.roles.clone();
+                    let text = evt.text;
 
-                if let Err(e) = message_svc
-                    .process_incoming_message(
-                        "twitch-irc",
-                        &channel,
-                        &platform_user_id,
-                        Some(&display_name),
-                        &roles,
-                        &text,
-                    )
-                    .await
-                {
-                    error!("[TwitchIRC] process_incoming_message => {e:?}");
+                    if let Err(e) = message_svc
+                        .process_incoming_message(
+                            "twitch-irc",
+                            &channel,
+                            &platform_user_id,
+                            Some(&display_name),
+                            &roles,
+                            &text,
+                        )
+                        .await
+                    {
+                        error!("[TwitchIRC] process_incoming_message => {e:?}");
+                    }
                 }
+                info!("[TwitchIRC] read loop ended for user_id={}", user_id_str);
+            } else {
+                // If enable_incoming=false, or something else, we skip reading entirely.
+                info!("[TwitchIRC] no rx available => user_id={} might be a bot-only account", user_id_str);
             }
-            info!("[TwitchIRC] read loop ended for user_id={}", user_id_str);
         });
 
         Ok(PlatformRuntimeHandle {
