@@ -99,6 +99,18 @@ impl UserAnalysisRepository for PostgresUserAnalysisRepository {
     }
 
     async fn update_analysis(&self, analysis: &UserAnalysis) -> Result<(), Error> {
+        // ----------------------------------------------------------------
+        // NEW: Clean up the AI notes before saving, to avoid piling up
+        // repeated monthly summary lines. In this example, we remove
+        // any duplicate lines that begin with "=== YYYY-MM summary ===".
+        // You can adapt the logic to keep only the newest line, or
+        // deduplicate by exact text, etc.
+        // ----------------------------------------------------------------
+        let sanitized_notes = match &analysis.ai_notes {
+            Some(notes) => Some(deduplicate_ai_notes(notes)),
+            None => None,
+        };
+
         let now = Utc::now();
         sqlx::query(
             r#"
@@ -111,18 +123,53 @@ impl UserAnalysisRepository for PostgresUserAnalysisRepository {
                 moderator_notes = $6,
                 updated_at = $7
             WHERE user_analysis_id = $8
-            "#
+            "#,
         )
             .bind(analysis.spam_score)
             .bind(analysis.intelligibility_score)
             .bind(analysis.quality_score)
             .bind(analysis.horni_score)
-            .bind(&analysis.ai_notes)
+            .bind(&sanitized_notes)
             .bind(&analysis.moderator_notes)
             .bind(now)
             .bind(analysis.user_analysis_id)
             .execute(&self.pool)
             .await?;
+
         Ok(())
     }
+}
+
+/// --------------------------------------------------------------------------
+/// Utility function to remove repeated monthly summaries in `ai_notes`.
+///
+/// For each line that starts with `"=== YYYY-MM summary ==="`, we keep
+/// only one occurrence in the final output. All other lines remain unchanged.
+/// Adjust to your exact desired logic (e.g. keep only the last occurrence).
+/// --------------------------------------------------------------------------
+fn deduplicate_ai_notes(full_text: &str) -> String {
+    use std::collections::HashSet;
+    let mut seen_summaries = HashSet::new();
+    let mut result_lines = Vec::new();
+
+    for line in full_text.lines() {
+        // Example pattern: "=== 2025-03 summary ==="
+        // We'll just check that it starts with "=== " and ends with " summary ===".
+        // Then store the entire line in a set if we haven't seen it yet.
+        let trimmed = line.trim();
+
+        let is_summary = trimmed.starts_with("===") && trimmed.contains("summary ===");
+        if is_summary {
+            if seen_summaries.contains(trimmed) {
+                // skip repeated line
+                continue;
+            } else {
+                seen_summaries.insert(trimmed.to_string());
+            }
+        }
+
+        result_lines.push(line);
+    }
+
+    result_lines.join("\n")
 }
