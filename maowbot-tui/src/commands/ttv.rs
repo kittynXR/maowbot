@@ -2,7 +2,8 @@ use std::sync::Arc;
 use maowbot_core::plugins::bot_api::BotApi;
 use crate::tui_module::TuiModule;
 
-/// Helper to require that the active_account is `Some(...)`. Returns &str if present, or an error String if None.
+/// Helper to require that the active_account is `Some(...)`.
+/// Returns &str if present, or an error String if None.
 fn require_active_account(opt: &Option<String>) -> Result<&str, String> {
     match opt.as_deref() {
         Some(a) => Ok(a),
@@ -17,12 +18,13 @@ pub async fn handle_ttv_command(
 ) -> String {
     if args.is_empty() {
         return r#"Usage:
+  ttv broadcaster <channel>
+  ttv secondary <channel>
   ttv active <accountName>
   ttv join <channel>
   ttv part <channel>
   ttv msg <channel> <message text>
   ttv chat
-  ttv default <channel>
 "#.to_string();
     }
 
@@ -72,11 +74,18 @@ pub async fn handle_ttv_command(
             }
         }
 
-        "default" => {
+        "broadcaster" => {
             if args.len() < 2 {
-                return "Usage: ttv default <channel>".to_string();
+                return "Usage: ttv broadcaster <channel>".to_string();
             }
-            set_default_channel(args[1], bot_api, tui_module).await
+            set_named_channel("ttv_broadcaster_channel", args[1], bot_api, tui_module, true).await
+        }
+
+        "secondary" => {
+            if args.len() < 2 {
+                return "Usage: ttv secondary <channel>".to_string();
+            }
+            set_named_channel("ttv_secondary_channel", args[1], bot_api, tui_module, false).await
         }
 
         _ => "Unrecognized ttv subcommand. Type `ttv` for usage.".to_string(),
@@ -116,7 +125,7 @@ async fn do_join_channel(
         Err(e) => return e,
     };
 
-    // Start runtime, then join the channel
+    // Ensure the runtime is started, then join the channel
     if let Err(e) = bot_api.start_platform_runtime("twitch-irc", active_account).await {
         return format!("Error starting twitch-irc => {:?}", e);
     }
@@ -186,19 +195,34 @@ async fn do_send_message(
     }
 }
 
-async fn set_default_channel(
+/// Called by `ttv broadcaster` or `ttv secondary`.
+/// Persists the channel name into `bot_config` and updates TtvState.
+async fn set_named_channel(
+    config_key: &str,
     channel: &str,
     bot_api: &Arc<dyn BotApi>,
     tui_module: &Arc<TuiModule>,
+    is_broadcaster: bool,
 ) -> String {
     let chname = normalize_channel_name(channel);
+    let store_res = bot_api.set_bot_config_value(config_key, &chname).await;
+    if let Err(e) = store_res {
+        return format!("Error storing {} => {:?}", config_key, e);
+    }
+
     {
         let mut st = tui_module.ttv_state.lock().unwrap();
-        st.default_channel = Some(chname.clone());
+        if is_broadcaster {
+            st.broadcaster_channel = Some(chname.clone());
+        } else {
+            st.secondary_channel = Some(chname.clone());
+        }
     }
-    match bot_api.set_bot_config_value("ttv_default_channel", &chname).await {
-        Ok(_) => format!("Default channel set to '{}'. Will auto-join on restart.", chname),
-        Err(e) => format!("Error storing default channel => {:?}", e),
+
+    if is_broadcaster {
+        format!("Broadcaster channel set to '{}'. Will auto-join on start.", chname)
+    } else {
+        format!("Secondary channel set to '{}'. Will auto-join on start.", chname)
     }
 }
 

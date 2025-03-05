@@ -1,5 +1,3 @@
-// src/tui_module.rs
-
 use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
@@ -17,20 +15,32 @@ use maowbot_core::models::Platform;
 /// Tracks state specific to Twitch-IRC in the TUI
 #[derive(Debug)]
 pub struct TtvState {
-    /// If no Twitch IRC credentials exist in DB, this might be empty
+    /// Currently active Twitch IRC account name (e.g. "kittyn" or "synapsycat").
     pub active_account: Option<String>,
-    pub default_channel: Option<String>,
+
+    /// Channel designated as the main broadcaster channel.
+    pub broadcaster_channel: Option<String>,
+
+    /// Channel designated as the secondary channel (for duo-stream scenario).
+    pub secondary_channel: Option<String>,
+
+    /// All channels we have joined in this TUI session.
     pub joined_channels: Vec<String>,
+
+    /// Whether we are in a “live chat input” mode for Twitch.
+    /// In chat mode, lines from stdin are sent to the joined channel rather than interpreted as TUI commands.
     pub is_in_chat_mode: bool,
+
+    /// Index into `joined_channels` representing the current channel we send messages to while in chat mode.
     pub current_channel_index: usize,
 }
 
 impl TtvState {
-    // UPDATED: remove the "kittyn" and do not default to any name.
     pub fn new() -> Self {
         Self {
             active_account: None,
-            default_channel: None,
+            broadcaster_channel: None,
+            secondary_channel: None,
             joined_channels: Vec::new(),
             is_in_chat_mode: false,
             current_channel_index: 0,
@@ -58,22 +68,27 @@ pub struct TuiModule {
 }
 
 impl TuiModule {
-    // NEW: Attempt to fetch a default twitch-irc user from the DB
+    // Attempt to load 'broadcaster' and 'secondary' channels from bot_config on creation.
     pub async fn new(bot_api: Arc<dyn BotApi>, event_bus: Arc<EventBus>) -> Self {
-        // Try to load a default channel from bot_config
-        let default_channel = match bot_api.get_bot_config_value("ttv_default_channel").await {
+        // Try to load from bot_config
+        let broadcaster_channel = match bot_api.get_bot_config_value("ttv_broadcaster_channel").await {
+            Ok(Some(ch)) if !ch.is_empty() => Some(ch),
+            _ => None,
+        };
+        let secondary_channel = match bot_api.get_bot_config_value("ttv_secondary_channel").await {
             Ok(Some(ch)) if !ch.is_empty() => Some(ch),
             _ => None,
         };
 
-        // Now see if there's any credentials for "twitch-irc".
+        // Check if any Twitch-IRC credentials exist to guess an active account
         let ttv_creds = bot_api.list_credentials(Some(Platform::TwitchIRC)).await;
         let mut ttv_state = TtvState::new();
-        ttv_state.default_channel = default_channel;
+        ttv_state.broadcaster_channel = broadcaster_channel;
+        ttv_state.secondary_channel = secondary_channel;
 
         if let Ok(creds_list) = ttv_creds {
             if !creds_list.is_empty() {
-                // pick the first user_name
+                // pick the first user_name as a default
                 ttv_state.active_account = Some(creds_list[0].user_name.clone());
             }
         }
@@ -113,16 +128,6 @@ impl TuiModule {
 
     async fn run_input_loop(self: &Arc<Self>) {
         let mut reader = BufReader::new(tokio::io::stdin()).lines();
-        {
-            // If we have a default channel, auto-join it:
-            let mut st = self.ttv_state.lock().unwrap();
-            if let Some(ch) = st.default_channel.clone() {
-                if !ch.is_empty() && !st.joined_channels.contains(&ch) {
-                    st.joined_channels.push(ch);
-                }
-            }
-        }
-
         println!("Local TUI enabled. Type 'help' for commands.\n");
 
         while !self.shutdown_flag.load(Ordering::SeqCst) {
@@ -142,7 +147,7 @@ impl TuiModule {
                 continue;
             }
 
-            // If chat mode is on, handle chat line
+            // If chat mode is on, interpret line as chat text
             {
                 let is_in_chat_mode = {
                     let st = self.ttv_state.lock().unwrap();
@@ -252,7 +257,7 @@ impl TuiModule {
                     }
                 }
 
-                // If it's twitch-irc, check if we've joined that channel
+                // If it's twitch-irc, ensure we've joined that channel so we don't flood the console
                 if platform.eq_ignore_ascii_case("twitch-irc") {
                     let ttv_guard = self.ttv_state.lock().unwrap();
                     let joined = ttv_guard.joined_channels.iter()
