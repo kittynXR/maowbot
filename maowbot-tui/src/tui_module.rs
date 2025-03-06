@@ -19,8 +19,15 @@ use crate::commands::dispatch_async;
 #[derive(Debug)]
 pub struct TtvState {
     pub active_account: Option<String>,
+
+    /// The broadcaster channel name is still stored as text (e.g. "#kittyn").
+    /// We have not changed this to an “account”, because the user might want to
+    /// keep the broadcaster as a channel name.
     pub broadcaster_channel: Option<String>,
-    pub secondary_channel: Option<String>,
+
+    /// The new "secondary_account" is the user account for responding to commands.
+    pub secondary_account: Option<String>,
+
     pub joined_channels: Vec<String>,
     pub is_in_chat_mode: bool,
     pub current_channel_index: usize,
@@ -31,7 +38,7 @@ impl TtvState {
         Self {
             active_account: None,
             broadcaster_channel: None,
-            secondary_channel: None,
+            secondary_account: None,
             joined_channels: Vec::new(),
             is_in_chat_mode: false,
             current_channel_index: 0,
@@ -62,14 +69,16 @@ impl TuiModule {
         // Attempt to load broadcaster channel from bot_config
         let broadcaster_channel = bot_api.get_bot_config_value("ttv_broadcaster_channel").await
             .ok().flatten();
-        let secondary_channel = bot_api.get_bot_config_value("ttv_secondary_channel").await
+
+        // Attempt to load the newly named "ttv_secondary_account" from bot_config
+        let secondary_account = bot_api.get_bot_config_value("ttv_secondary_account").await
             .ok().flatten();
 
         // Check if any Twitch-IRC credentials exist to guess an active account
         let ttv_creds = bot_api.list_credentials(Some(Platform::TwitchIRC)).await;
         let mut ttv_state = TtvState::new();
         ttv_state.broadcaster_channel = broadcaster_channel;
-        ttv_state.secondary_channel = secondary_channel;
+        ttv_state.secondary_account = secondary_account;
 
         if let Ok(creds_list) = ttv_creds {
             if !creds_list.is_empty() {

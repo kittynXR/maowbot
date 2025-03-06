@@ -100,7 +100,16 @@ async fn handle_start_cmd(
         Err(_) => return format!("Unknown platform '{}'", platform_str),
     };
 
-    // If user specified an account explicitly
+    // If this is "twitch-irc", check if 'ttv_secondary_account' is configured; warn if not:
+    if platform_str.eq_ignore_ascii_case("twitch-irc") {
+        let sec_val = bot_api.get_bot_config_value("ttv_secondary_account").await;
+        if sec_val.ok().flatten().unwrap_or_default().is_empty() {
+            eprintln!("Warning: no secondary account assigned (ttv_secondary_account). \
+Try 'ttv secondary <account>' so commands can respond with the correct account.\n");
+        }
+    }
+
+    // If user specified an account explicitly:
     if args.len() >= 2 {
         let account = args[1];
         if let Err(e) = bot_api.start_platform_runtime(platform_str, account).await {
@@ -109,7 +118,7 @@ async fn handle_start_cmd(
 
         // If Twitch IRC => auto-join broadcaster & secondary channels
         if platform_str.eq_ignore_ascii_case("twitch-irc") {
-            join_broadcaster_and_secondary(bot_api, tui_module, account).await;
+            super::connectivity::join_broadcaster_and_secondary(bot_api, tui_module, account).await;
         }
 
         return format!("Started platform='{}', account='{}'", platform_str, account);
@@ -134,7 +143,7 @@ async fn handle_start_cmd(
         }
 
         if platform_str.eq_ignore_ascii_case("twitch-irc") {
-            join_broadcaster_and_secondary(bot_api, tui_module, &user_display).await;
+            super::connectivity::join_broadcaster_and_secondary(bot_api, tui_module, &user_display).await;
         }
 
         return format!(
@@ -171,7 +180,7 @@ async fn handle_start_cmd(
                 continue;
             }
             if platform_str.eq_ignore_ascii_case("twitch-irc") {
-                join_broadcaster_and_secondary(bot_api, tui_module, name).await;
+                super::connectivity::join_broadcaster_and_secondary(bot_api, tui_module, name).await;
             }
             println!("Started account='{}'", name);
         }
@@ -192,20 +201,20 @@ async fn handle_start_cmd(
         return format!("Error => {:?}", e);
     }
     if platform_str.eq_ignore_ascii_case("twitch-irc") {
-        join_broadcaster_and_secondary(bot_api, tui_module, chosen_account).await;
+        super::connectivity::join_broadcaster_and_secondary(bot_api, tui_module, chosen_account).await;
     }
     format!("Started platform='{}', account='{}'", platform_str, chosen_account)
 }
 
 /// If the platform is "twitch-irc", we automatically join the configured broadcaster and secondary channels.
-async fn join_broadcaster_and_secondary(
+pub async fn join_broadcaster_and_secondary(
     bot_api: &Arc<dyn BotApi>,
     tui_module: &Arc<TuiModule>,
     account_name: &str
 ) {
     let (broadcaster_chan, secondary_chan) = {
         let st = tui_module.ttv_state.lock().unwrap();
-        (st.broadcaster_channel.clone(), st.secondary_channel.clone())
+        (st.broadcaster_channel.clone(), st.secondary_account.clone())
     };
 
     for ch_opt in &[broadcaster_chan, secondary_chan] {

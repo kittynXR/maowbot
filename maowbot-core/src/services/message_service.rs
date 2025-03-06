@@ -141,25 +141,21 @@ impl MessageService {
                      platform: cmd_platform,
                      channel: cmd_channel,
                  }) => {
-                // figure out which account to send from:
-                let account_name = if cmd_platform.eq_ignore_ascii_case("twitch-irc") {
-                    if let Some(cid) = respond_credential_id {
+                // figure out which account to send from, if it's Twitch-IRC
+                if cmd_platform.eq_ignore_ascii_case("twitch-irc") {
+                    let account_name = if let Some(cid) = respond_credential_id {
+                        // If the command had a specific credential attached:
                         if let Some(cred) = self.credentials_repo.get_credential_by_id(cid).await? {
                             cred.user_name
                         } else {
-                            "DefaultIrcAccount".to_string()
+                            warn!("Respond credential_id not found in DB. Using secondary account if set.");
+                            self.get_ttv_secondary_or_warn().await
                         }
                     } else {
-                        "DefaultIrcAccount".to_string()
-                    }
-                } else {
-                    // if the platform is e.g. "discord", "vrchat", etc., for now we simply log
-                    // or do partial. This example only actively sends lines for twitch-irc.
-                    "N/A".to_string()
-                };
+                        // No respond_credential => use the “secondary” account from bot_config
+                        self.get_ttv_secondary_or_warn().await
+                    };
 
-                // If it's Twitch-IRC, send each line
-                if cmd_platform.eq_ignore_ascii_case("twitch-irc") {
                     for line in texts {
                         if let Err(e) = self.platform_manager
                             .send_twitch_irc_message(&account_name, &cmd_channel, &line)
@@ -181,6 +177,26 @@ impl MessageService {
         }
 
         Ok(())
+    }
+
+    /// Returns the secondary Twitch-IRC account name from bot_config, or logs a warning if unset.
+    /// Returns a placeholder string if not configured.
+    async fn get_ttv_secondary_or_warn(&self) -> String {
+        let val = self.command_service
+            .bot_config_repo
+            .get_value("ttv_secondary_account")
+            .await;
+
+        match val {
+            Ok(Some(acc)) if !acc.trim().is_empty() => acc,
+            _ => {
+                warn!(
+                    "No secondary Twitch-IRC account configured in 'ttv_secondary_account'. \
+                     Please set one with 'ttv secondary <account>'."
+                );
+                "NoSecondaryAccount".to_string()
+            }
+        }
     }
 
     /// Returns recent messages from the chat cache.

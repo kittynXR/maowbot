@@ -19,7 +19,7 @@ pub async fn handle_ttv_command(
     if args.is_empty() {
         return r#"Usage:
   ttv broadcaster <channel>
-  ttv secondary <channel>
+  ttv secondary <account>
   ttv active <accountName>
   ttv join <channel>
   ttv part <channel>
@@ -78,14 +78,14 @@ pub async fn handle_ttv_command(
             if args.len() < 2 {
                 return "Usage: ttv broadcaster <channel>".to_string();
             }
-            set_named_channel("ttv_broadcaster_channel", args[1], bot_api, tui_module, true).await
+            set_named_broadcaster(args[1], bot_api, tui_module).await
         }
 
         "secondary" => {
             if args.len() < 2 {
-                return "Usage: ttv secondary <channel>".to_string();
+                return "Usage: ttv secondary <account>".to_string();
             }
-            set_named_channel("ttv_secondary_channel", args[1], bot_api, tui_module, false).await
+            set_secondary_account(args[1], bot_api, tui_module).await
         }
 
         _ => "Unrecognized ttv subcommand. Type `ttv` for usage.".to_string(),
@@ -195,35 +195,44 @@ async fn do_send_message(
     }
 }
 
-/// Called by `ttv broadcaster` or `ttv secondary`.
-/// Persists the channel name into `bot_config` and updates TtvState.
-async fn set_named_channel(
-    config_key: &str,
+/// Called when `ttv broadcaster <channel>` is used.
+async fn set_named_broadcaster(
     channel: &str,
     bot_api: &Arc<dyn BotApi>,
     tui_module: &Arc<TuiModule>,
-    is_broadcaster: bool,
 ) -> String {
     let chname = normalize_channel_name(channel);
-    let store_res = bot_api.set_bot_config_value(config_key, &chname).await;
+    let store_res = bot_api.set_bot_config_value("ttv_broadcaster_channel", &chname).await;
     if let Err(e) = store_res {
-        return format!("Error storing {} => {:?}", config_key, e);
+        return format!("Error storing ttv_broadcaster_channel => {:?}", e);
     }
 
     {
         let mut st = tui_module.ttv_state.lock().unwrap();
-        if is_broadcaster {
-            st.broadcaster_channel = Some(chname.clone());
-        } else {
-            st.secondary_channel = Some(chname.clone());
-        }
+        st.broadcaster_channel = Some(chname.clone());
     }
 
-    if is_broadcaster {
-        format!("Broadcaster channel set to '{}'. Will auto-join on start.", chname)
-    } else {
-        format!("Secondary channel set to '{}'. Will auto-join on start.", chname)
+    format!("Broadcaster channel set to '{}'. Will auto-join on start.", chname)
+}
+
+/// Called when `ttv secondary <account>` is used.
+/// We store that in “ttv_secondary_account” in bot_config, so commands can respond from that user.
+async fn set_secondary_account(
+    account: &str,
+    bot_api: &Arc<dyn BotApi>,
+    tui_module: &Arc<TuiModule>,
+) -> String {
+    let store_res = bot_api.set_bot_config_value("ttv_secondary_account", account).await;
+    if let Err(e) = store_res {
+        return format!("Error storing ttv_secondary_account => {:?}", e);
     }
+
+    {
+        let mut st = tui_module.ttv_state.lock().unwrap();
+        st.secondary_account = Some(account.to_string());
+    }
+
+    format!("Secondary Twitch-IRC account set to '{}'. This will be used to respond to commands by default.", account)
 }
 
 fn normalize_channel_name(chan: &str) -> String {
