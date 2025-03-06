@@ -115,6 +115,7 @@ struct VRChatWorldJson {
 
     pub description: Option<String>,
     pub publication_date: Option<String>,
+    #[serde(rename = "updated_at")]
     pub updated_at: Option<String>,
     pub release_status: Option<String>,
 }

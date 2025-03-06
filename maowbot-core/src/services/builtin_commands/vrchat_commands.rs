@@ -1,42 +1,54 @@
 use crate::Error;
-use crate::models::{Command, User};
+use crate::models::{Command, User, Platform};
+use crate::platforms::vrchat::client::VRChatClient;
 use crate::services::command_service::CommandContext;
 use tracing::{info, warn};
 
-use crate::platforms::vrchat::client::VRChatClient;
-use crate::models::Platform;
+/// Helper function: if we can parse an ISO8601 string (like `2024-05-13T04:04:20.108Z`),
+/// convert it to `YYYY-MM-DD`. Otherwise return the original string.
+fn short_ymd(date_str: &str) -> String {
+    match chrono::DateTime::parse_from_rfc3339(date_str) {
+        Ok(dt) => dt.format("%Y-%m-%d").to_string(),
+        Err(_) => date_str.to_string(),
+    }
+}
 
 /// handle_world is invoked for the `!world` command.
+///
+/// It retrieves VRChat world info, then outputs:
+/// - one message with name, author, capacity, release status, published date, and last updated (YYYY-MM-DD).
+/// - one or more messages for the description if present, chunking if necessary.
 pub async fn handle_world(
     _cmd: &Command,
     ctx: &CommandContext<'_>,
-    user: &User,
+    _user: &User,
     _raw_args: &str,
 ) -> Result<String, Error> {
-    // Instead of using respond_credential_name, we read which VRChat account to use from bot_config
+    // 1) Determine which VRChat account to use from bot_config
     let configured_account = match ctx.bot_config_repo.get_value("vrchat_active_account").await? {
         Some(val) if !val.trim().is_empty() => val,
-        _ => "broadcaster".to_string(), // fallback default
+        _ => "broadcaster".to_string(),
     };
     info!("handle_world => VRChat account from config: '{}'", configured_account);
 
-    // Now we see if that account actually has VRChat credentials. We'll do this:
+    // 2) Find that VRChat credential
     let all_vrc_creds = ctx.credentials_repo.list_credentials_for_platform(&Platform::VRChat).await?;
-    // We'll match if user_name == configured_account (case-insensitive), or the user’s global_username
-    let vrc_cred_opt = all_vrc_creds.into_iter().find(|c| {
-        c.user_name.eq_ignore_ascii_case(&configured_account)
-    });
+    let vrc_cred_opt = all_vrc_creds
+        .into_iter()
+        .find(|c| c.user_name.eq_ignore_ascii_case(&configured_account));
 
     let cred = match vrc_cred_opt {
         Some(c) => c,
         None => {
             return Ok(format!(
-                "No VRChat credentials found for account '{}'. Please check 'vrchat account' or 'account add vrchat'.",
+                "No VRChat credentials found for account '{}'. \
+Please set 'vrchat_active_account' or run 'account add vrchat'.",
                 configured_account
             ));
         }
     };
 
+    // 3) Fetch the current world info
     let client = VRChatClient::new(&cred.primary_token)?;
     let winfo_opt = client.fetch_current_world_api().await?;
     if winfo_opt.is_none() {
@@ -44,66 +56,92 @@ pub async fn handle_world(
     }
     let w = winfo_opt.unwrap();
 
-    // We'll break the output into multiple <SPLIT> segments
-    let part1 = format!("[World Info]\nName: {}", w.name);
-    let part2 = format!(
-        "Author: {}\nCapacity: {}\nStatus: {}",
-        w.author_name,
-        w.capacity,
-        w.release_status.clone().unwrap_or_default(),
-    );
-    let pub_str = w.published_at.clone().unwrap_or("(unknown)".to_string());
-    let upd_str = w.updated_at.clone().unwrap_or("(unknown)".to_string());
-    let part3 = format!("Published: {}\nUpdated: {}", pub_str, upd_str);
+    // 4) Convert published/updated fields to short YYYY-MM-DD if possible
+    let published_str = w
+        .published_at
+        .as_deref()
+        .map(short_ymd)
+        .unwrap_or_else(|| "(unknown)".to_string());
+    let updated_str = w
+        .updated_at
+        .as_deref()
+        .map(short_ymd)
+        .unwrap_or_else(|| "(unknown)".to_string());
 
-    let mut part4 = String::new();
+    // 5) Prepare the first message
+    let release_str = w.release_status.clone().unwrap_or_default();
+    let first_message = format!(
+        "[World Info] Name: {} | Author: {} | Capacity: {} | Status: {} | \
+Published: {} | Last Updated: {}",
+        w.name.trim(),
+        w.author_name.trim(),
+        w.capacity,
+        release_str.trim(),
+        published_str,   // already short-ymd
+        updated_str      // already short-ymd
+    );
+
+    // 6) Next, handle the description (in separate messages, chunked if too long)
+    let mut results = vec![first_message];
     if let Some(desc) = w.description {
-        if !desc.trim().is_empty() {
-            let snippet = if desc.len() > 300 {
-                let d = &desc[..300];
-                format!("{}\n(…truncated…)", d)
-            } else {
-                desc
-            };
-            part4 = format!("Description:\n{}", snippet);
+        let desc_clean = desc.trim();
+        if !desc_clean.is_empty() {
+            let max_len = 450;
+            let mut remaining = desc_clean;
+            let mut first_chunk = true;
+            while !remaining.is_empty() {
+                let chunk_size = remaining.len().min(max_len);
+                let chunk_text = &remaining[..chunk_size];
+                let prefix = if first_chunk {
+                    first_chunk = false;
+                    "Description: "
+                } else {
+                    ""
+                };
+                results.push(format!("{}{}", prefix, chunk_text));
+                remaining = &remaining[chunk_size..];
+            }
         }
     }
 
-    if part4.is_empty() {
-        Ok(format!("{}\n<SPLIT>{}\n<SPLIT>{}", part1, part2, part3))
-    } else {
-        Ok(format!("{}\n<SPLIT>{}\n<SPLIT>{}\n<SPLIT>{}", part1, part2, part3, part4))
-    }
+    Ok(results.join("<SPLIT>"))
 }
 
 /// handle_instance is invoked for the `!instance` command.
+///
+/// We retrieve the user’s current instance. If it’s joinable, produce a
+/// `vrchat.com/home/launch` link. Otherwise produce a `.../world/<worldId>/info` link.
 pub async fn handle_instance(
     _cmd: &Command,
     ctx: &CommandContext<'_>,
-    user: &User,
+    _user: &User,
     _raw_args: &str,
 ) -> Result<String, Error> {
+    // 1) Determine which VRChat account to use
     let configured_account = match ctx.bot_config_repo.get_value("vrchat_active_account").await? {
         Some(val) if !val.trim().is_empty() => val,
         _ => "broadcaster".to_string(),
     };
     info!("handle_instance => VRChat account from config: '{}'", configured_account);
 
+    // 2) Retrieve that credential
     let all_vrc_creds = ctx.credentials_repo.list_credentials_for_platform(&Platform::VRChat).await?;
-    let vrc_cred_opt = all_vrc_creds.into_iter().find(|c| {
-        c.user_name.eq_ignore_ascii_case(&configured_account)
-    });
+    let vrc_cred_opt = all_vrc_creds
+        .into_iter()
+        .find(|c| c.user_name.eq_ignore_ascii_case(&configured_account));
 
     let cred = match vrc_cred_opt {
         Some(c) => c,
         None => {
             return Ok(format!(
-                "No VRChat credentials found for account '{}'. Please check 'vrchat account' or 'account add vrchat'.",
+                "No VRChat credentials found for account '{}'. \
+Please set 'vrchat_active_account' or run 'account add vrchat'.",
                 configured_account
             ));
         }
     };
 
+    // 3) Fetch instance
     let client = VRChatClient::new(&cred.primary_token)?;
     let inst_opt = client.fetch_current_instance_api().await?;
     let inst = match inst_opt {
@@ -111,37 +149,37 @@ pub async fn handle_instance(
         None => return Ok("User is offline or no instance found.".into()),
     };
 
+    // 4) Retrieve the world name from world_id
     let world_id = inst.world_id.clone().unwrap_or_default();
     if world_id.is_empty() {
-        return Ok("No valid world found. Possibly hidden or offline?".into());
+        return Ok("Currently in an unknown/hidden world.".to_string());
     }
-
     let winfo = client.fetch_world_info(&world_id).await?;
     let world_name = winfo.name;
 
+    // 5) Decide if instance is joinable
+    //    e.g. if location doesn’t have "private"/"invite", treat it as joinable
     let location = inst.location.unwrap_or_default().to_lowercase();
-    let can_join = !(location.contains("private") || location.contains("invite"));
     let instance_id = inst.instance_id.unwrap_or_default();
-
     if instance_id.is_empty() {
-        return Ok(format!(
-            "Currently in world '{}', but instance unknown.",
-            world_name
-        ));
+        return Ok(format!("Currently in world '{}', unknown instance.", world_name));
     }
+    let is_joinable = !(location.contains("private") || location.contains("invite"));
 
-    if can_join {
-        let join_url = format!(
-            "vrchat://launch?ref=MaowBot&worldId={}&instanceId={}",
+    // 6) Construct link
+    let link = if is_joinable {
+        format!(
+            "https://vrchat.com/home/launch?worldId={}&instanceId={}",
             world_id, instance_id
-        );
-        Ok(format!("Currently in world '{}' - join link: {}", world_name, join_url))
+        )
     } else {
-        Ok(format!(
-            "Currently in world '{}', in a non-public instance (cannot share link).",
-            world_name
-        ))
-    }
+        format!("https://vrchat.com/home/world/{}/info", world_id)
+    };
+
+    Ok(format!(
+        "[world] '{}' - link: {}",
+        world_name, link
+    ))
 }
 
 /// handle_vrchat_online_offline might handle sub-commands if needed (example).
@@ -153,8 +191,8 @@ pub async fn handle_vrchat_online_offline(
 ) -> Result<String, Error> {
     let arg = raw_args.trim().to_lowercase();
     match arg.as_str() {
-        "offline" => Ok("VRChat commands are now forced offline (stub).".to_string()),
-        "online" => Ok("VRChat commands now restricted to online (stub).".to_string()),
+        "offline" => Ok("VRChat commands are now forced offline. (Stub)".to_string()),
+        "online" => Ok("VRChat commands now assume online. (Stub)".to_string()),
         _ => {
             warn!("!vrchat unknown argument => '{}'", raw_args);
             Ok("Usage: !vrchat <offline|online>".to_string())
