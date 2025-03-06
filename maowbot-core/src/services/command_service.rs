@@ -9,6 +9,7 @@ use crate::repositories::{
     CommandRepository,
     CommandUsageRepository,
     CredentialsRepository,
+    BotConfigRepository,
 };
 use crate::repositories::postgres::user::UserRepo;
 use crate::services::builtin_commands::handle_builtin_command;
@@ -27,11 +28,16 @@ pub struct CommandContext<'a> {
 
     /// The user_name field from that credential, if found.
     pub respond_credential_name: Option<String>,
+
     pub credentials_repo: &'a Arc<dyn CredentialsRepository + Send + Sync>,
+
+    /// **NEW**: So that builtin commands can read or write certain config keys
+    /// (e.g. `vrchat_active_account`).
+    pub bot_config_repo: &'a Arc<dyn BotConfigRepository + Send + Sync>,
 }
 
 /// (Updated) Response from command handlers. We now allow multiple lines to facilitate
-/// multi-message output (for e.g. VRChat world info).
+/// multi-message output.
 #[derive(Debug, Clone)]
 pub struct CommandResponse {
     /// The lines to send as separate messages in chat.
@@ -51,9 +57,12 @@ pub struct CooldownTracker {
 pub struct CommandService {
     command_repo: Arc<dyn CommandRepository + Send + Sync>,
     usage_repo: Arc<dyn CommandUsageRepository + Send + Sync>,
-    credentials_repo: Arc<dyn CredentialsRepository + Send + Sync>,
-    user_service: Arc<UserService>,
+    pub credentials_repo: Arc<dyn CredentialsRepository + Send + Sync>,
+    pub user_service: Arc<UserService>,
     cooldowns: Arc<Mutex<CooldownTracker>>,
+
+    /// **NEW**: So we can pass this to CommandContext easily.
+    pub bot_config_repo: Arc<dyn BotConfigRepository + Send + Sync>,
 }
 
 impl CommandService {
@@ -62,6 +71,7 @@ impl CommandService {
         usage_repo: Arc<dyn CommandUsageRepository + Send + Sync>,
         credentials_repo: Arc<dyn CredentialsRepository + Send + Sync>,
         user_service: Arc<UserService>,
+        bot_config_repo: Arc<dyn BotConfigRepository + Send + Sync>,
     ) -> Self {
         debug!("Initializing CommandService");
         Self {
@@ -70,6 +80,7 @@ impl CommandService {
             credentials_repo,
             user_service,
             cooldowns: Arc::new(Mutex::new(CooldownTracker::default())),
+            bot_config_repo,
         }
     }
 
@@ -90,7 +101,7 @@ impl CommandService {
             return Ok(None);
         }
 
-        // 2) Parse command and arguments (removing leading '!')
+        // 2) Parse command and arguments
         let parts: Vec<&str> = message_text.trim().split_whitespace().collect();
         let cmd_part = parts[0].trim_start_matches('!');
         let args = if parts.len() > 1 {
@@ -121,7 +132,6 @@ impl CommandService {
             let has_role = user_roles.iter().any(|r| r.to_lowercase() == needed);
             if !has_role {
                 debug!("User lacks required role '{}' for '{}'", needed, cmd.command_name);
-                // Return an immediate denial
                 return Ok(Some(CommandResponse {
                     texts: vec![format!("You do not have permission to use {}.", cmd.command_name)],
                     respond_credential_id: cmd.respond_with_credential,
@@ -207,6 +217,7 @@ impl CommandService {
             respond_credential_id: cmd.respond_with_credential,
             respond_credential_name: None,
             credentials_repo: &self.credentials_repo,
+            bot_config_repo: &self.bot_config_repo,
         };
 
         // If respond_with_credential was set, try to load that credential to get user_name
@@ -218,14 +229,13 @@ impl CommandService {
 
         // 10) Invoke built-in logic
         if let Some(response_str) = handle_builtin_command(&cmd, &ctx, &user, &args).await? {
-            // Some commands might embed <SPLIT> or multiline.
+            // Some commands might embed <SPLIT> or multiple lines
             let lines: Vec<String> = response_str
                 .split("<SPLIT>")
                 .map(|s| s.trim().to_string())
                 .filter(|s| !s.is_empty())
                 .collect();
 
-            // Return multiple lines
             return Ok(Some(CommandResponse {
                 texts: lines,
                 respond_credential_id: cmd.respond_with_credential,
@@ -234,7 +244,7 @@ impl CommandService {
             }));
         }
 
-        // 11) If no built-in logic returned anything, we just say "No built-in logic implemented."
+        // 11) If no built-in logic returned anything, we just show a default message
         Ok(Some(CommandResponse {
             texts: vec![format!("Command {} recognized, but no built-in logic implemented.", cmd.command_name)],
             respond_credential_id: cmd.respond_with_credential,

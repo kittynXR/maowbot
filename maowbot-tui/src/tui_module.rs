@@ -11,27 +11,18 @@ use tokio::io::AsyncBufReadExt;
 use maowbot_core::eventbus::{BotEvent, EventBus};
 use maowbot_core::plugins::bot_api::BotApi;
 use maowbot_core::models::Platform;
+use maowbot_core::Error;
+
+use crate::commands::dispatch_async;
 
 /// Tracks state specific to Twitch-IRC in the TUI
 #[derive(Debug)]
 pub struct TtvState {
-    /// Currently active Twitch IRC account name (e.g. "kittyn" or "synapsycat").
     pub active_account: Option<String>,
-
-    /// Channel designated as the main broadcaster channel.
     pub broadcaster_channel: Option<String>,
-
-    /// Channel designated as the secondary channel (for duo-stream scenario).
     pub secondary_channel: Option<String>,
-
-    /// All channels we have joined in this TUI session.
     pub joined_channels: Vec<String>,
-
-    /// Whether we are in a “live chat input” mode for Twitch.
-    /// In chat mode, lines from stdin are sent to the joined channel rather than interpreted as TUI commands.
     pub is_in_chat_mode: bool,
-
-    /// Index into `joined_channels` representing the current channel we send messages to while in chat mode.
     pub current_channel_index: usize,
 }
 
@@ -56,7 +47,6 @@ pub struct ChatState {
     pub account_filter: Option<String>,
 }
 
-/// The main TUI module
 pub struct TuiModule {
     pub bot_api: Arc<dyn BotApi>,
     pub event_bus: Arc<EventBus>,
@@ -68,17 +58,12 @@ pub struct TuiModule {
 }
 
 impl TuiModule {
-    // Attempt to load 'broadcaster' and 'secondary' channels from bot_config on creation.
     pub async fn new(bot_api: Arc<dyn BotApi>, event_bus: Arc<EventBus>) -> Self {
-        // Try to load from bot_config
-        let broadcaster_channel = match bot_api.get_bot_config_value("ttv_broadcaster_channel").await {
-            Ok(Some(ch)) if !ch.is_empty() => Some(ch),
-            _ => None,
-        };
-        let secondary_channel = match bot_api.get_bot_config_value("ttv_secondary_channel").await {
-            Ok(Some(ch)) if !ch.is_empty() => Some(ch),
-            _ => None,
-        };
+        // Attempt to load broadcaster channel from bot_config
+        let broadcaster_channel = bot_api.get_bot_config_value("ttv_broadcaster_channel").await
+            .ok().flatten();
+        let secondary_channel = bot_api.get_bot_config_value("ttv_secondary_channel").await
+            .ok().flatten();
 
         // Check if any Twitch-IRC credentials exist to guess an active account
         let ttv_creds = bot_api.list_credentials(Some(Platform::TwitchIRC)).await;
@@ -160,7 +145,7 @@ impl TuiModule {
                 }
             }
 
-            let (quit_requested, output) = crate::commands::dispatch_async(&line, &self.bot_api, self).await;
+            let (quit_requested, output) = dispatch_async(&line, &self.bot_api, self).await;
             if let Some(msg) = output {
                 println!("{}", msg);
             }
@@ -203,7 +188,6 @@ impl TuiModule {
             (acct, chan)
         };
 
-        // If no account is set, cannot send chat
         if maybe_acct.is_none() {
             eprintln!("No active Twitch-IRC account is set. Cannot send chat.");
             return true;
@@ -232,7 +216,8 @@ impl TuiModule {
     }
 
     async fn run_chat_display_loop(&self) {
-        let mut rx = self.bot_api.subscribe_chat_events(Some(10_000)).await;
+        let mut rx = self.bot_api.subscribe_chat_events(Some(10000)).await;
+
         while let Some(event) = rx.recv().await {
             if let BotEvent::ChatMessage {
                 platform,
@@ -275,17 +260,5 @@ impl TuiModule {
 
     pub fn stop_tui(&self) {
         self.shutdown_flag.store(true, Ordering::SeqCst);
-    }
-}
-
-impl std::clone::Clone for TuiModule {
-    fn clone(&self) -> Self {
-        Self {
-            bot_api: self.bot_api.clone(),
-            event_bus: self.event_bus.clone(),
-            shutdown_flag: self.shutdown_flag.clone(),
-            chat_state: self.chat_state.clone(),
-            ttv_state: self.ttv_state.clone(),
-        }
     }
 }

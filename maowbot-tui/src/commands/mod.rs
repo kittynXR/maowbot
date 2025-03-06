@@ -2,6 +2,7 @@
 
 use std::sync::Arc;
 use maowbot_core::plugins::bot_api::BotApi;
+use crate::commands::vrchat::handle_vrchat_command;
 use crate::help;
 use crate::tui_module::TuiModule;
 
@@ -12,9 +13,9 @@ mod platform;
 mod plugin;
 mod ttv;
 mod user;
-mod vrchat;
-
-// NEW:
+// Remove the old "vrchat" module in favor of the new one that handles "vrchat account" command
+// mod vrchat;
+mod vrchat;  // NEW: Handles "vrchat account [accountname]" command
 mod member;
 mod command;
 
@@ -39,7 +40,9 @@ pub async fn dispatch_async(
         }
 
         "vrchat" => {
-            let msg = vrchat::handle_vrchat_command(args, bot_api).await;
+            // Dispatch to our new vrchat_command handler.
+            // For example: "vrchat account kittyn"
+            let msg = handle_vrchat_command(args, bot_api).await;
             (false, Some(msg))
         }
 

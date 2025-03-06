@@ -1,5 +1,6 @@
 use std::sync::Arc;
 use maowbot_core::Error;
+use maowbot_core::models::Platform;
 use maowbot_core::plugins::bot_api::{BotApi};
 use maowbot_core::plugins::bot_api::vrchat_api::{
     VRChatAvatarBasic, VRChatWorldBasic, VRChatInstanceBasic,
@@ -59,6 +60,16 @@ pub async fn handle_vrchat_command(args: &[&str], bot_api: &Arc<dyn BotApi>) -> 
                 Err(e) => format!("Error => {:?}", e),
             }
         }
+        "account" => {
+            if args.len() < 2 {
+                return "Usage: vrchat account <accountName>".to_string();
+            }
+            let acct_name = args[1];
+            match set_vrchat_account(bot_api, acct_name).await {
+                Ok(_) => format!("VRChat active account set to '{}'.", acct_name),
+                Err(e) => format!("Error setting vrchat account => {e}"),
+            }
+        }
         _ => show_vrchat_usage(),
     }
 }
@@ -105,6 +116,26 @@ fn format_instance_info(i: &VRChatInstanceBasic) -> String {
     out
 }
 
+/// Sets the `vrchat_active_account` in bot_config if the given account name
+/// is valid (i.e. we have a VRChat credential for it).
+///
+/// - The `<accountName>` must be a user name for which we have a VRChat credential (matching user_name).
+async fn set_vrchat_account(bot_api: &Arc<dyn BotApi>, account_name: &str) -> Result<(), Error> {
+    // 1) Ensure we have at least one VRChat credential with user_name == account_name (case-insensitive).
+    let all_vrc = bot_api.list_credentials(Some(Platform::VRChat)).await?;
+    let found = all_vrc.iter().any(|c| c.user_name.eq_ignore_ascii_case(account_name));
+    if !found {
+        return Err(Error::Platform(format!(
+            "No VRChat credential found with user_name='{}'. Try 'account add vrchat' first.",
+            account_name
+        )));
+    }
+
+    // 2) If that’s valid, store in bot_config so the built-in commands can read it.
+    bot_api.set_bot_config_value("vrchat_active_account", account_name).await?;
+    Ok(())
+}
+
 fn show_vrchat_usage() -> String {
     r#"Usage:
   vrchat world [accountName]
@@ -117,6 +148,9 @@ fn show_vrchat_usage() -> String {
 
   vrchat instance [accountName]
     - fetches the user's current (world + instance)
+
+  vrchat account <accountName>
+    - sets the default VRChat account for built-in commands
 "#
         .to_string()
 }

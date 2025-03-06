@@ -138,6 +138,7 @@ impl ServerContext {
             cmd_usage_repo.clone(),
             creds_repo_arc.clone(),
             user_service.clone(),
+            bot_config_repo.clone(),
         ));
 
         // Platform manager

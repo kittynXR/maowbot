@@ -12,12 +12,24 @@ use uuid::Uuid;
 #[async_trait]
 pub trait CredentialsRepository: Send + Sync {
     async fn store_credentials(&self, creds: &PlatformCredential) -> Result<(), Error>;
+
+    /// Returns the single credential for a specific `(platform, user_id)`, or `None`.
     async fn get_credentials(&self, platform: &Platform, user_id: Uuid) -> Result<Option<PlatformCredential>, Error>;
+
+    /// Returns a single credential by credential_id, or `None`.
     async fn get_credential_by_id(&self, credential_id: Uuid) -> Result<Option<PlatformCredential>, Error>;
+
     async fn update_credentials(&self, creds: &PlatformCredential) -> Result<(), Error>;
     async fn delete_credentials(&self, platform: &Platform, user_id: Uuid) -> Result<(), Error>;
+
+    /// Lists credentials expiring within a certain duration from now.
     async fn get_expiring_credentials(&self, within: Duration) -> Result<Vec<PlatformCredential>, Error>;
+
+    /// Lists *all* credentials across all platforms.
     async fn get_all_credentials(&self) -> Result<Vec<PlatformCredential>, Error>;
+
+    /// **NEW**: Returns all credentials for the specified platform, decryption included.
+    async fn list_credentials_for_platform(&self, platform: &Platform) -> Result<Vec<PlatformCredential>, Error>;
 }
 
 #[derive(Clone)]
@@ -127,7 +139,6 @@ impl CredentialsRepository for PostgresCredentialsRepository {
             .await?;
 
         if let Some(r) = row_opt {
-            // Decrypt
             let decrypted_token = self.encryptor.decrypt(r.try_get("primary_token")?)?;
             let ref_opt: Option<String> = r.try_get("refresh_token")?;
             let decrypted_refresh = if let Some(s) = ref_opt {
@@ -166,9 +177,23 @@ impl CredentialsRepository for PostgresCredentialsRepository {
     }
 
     async fn get_credential_by_id(&self, credential_id: Uuid) -> Result<Option<PlatformCredential>, Error> {
-        let row_opt = sqlx::query_as::<_, PlatformCredential>(
+        // For brevity, let's do a manual SELECT + decrypt like in the other methods:
+        let row_opt = sqlx::query(
             r#"
-            SELECT *
+            SELECT
+                credential_id,
+                platform,
+                platform_id,
+                credential_type,
+                user_id,
+                user_name,
+                primary_token,
+                refresh_token,
+                additional_data,
+                expires_at,
+                created_at,
+                updated_at,
+                is_bot
             FROM platform_credentials
             WHERE credential_id = $1
             LIMIT 1
@@ -178,9 +203,43 @@ impl CredentialsRepository for PostgresCredentialsRepository {
             .fetch_optional(&self.pool)
             .await?;
 
-        Ok(row_opt)
-    }
+        if let Some(r) = row_opt {
+            let dec_token = self.encryptor.decrypt(r.try_get("primary_token")?)?;
+            let rfr_opt: Option<String> = r.try_get("refresh_token")?;
+            let dec_refresh = if let Some(encrypted_r) = rfr_opt {
+                Some(self.encryptor.decrypt(&encrypted_r)?)
+            } else {
+                None
+            };
+            let data_opt: Option<String> = r.try_get("additional_data")?;
+            let dec_data = if let Some(d) = data_opt {
+                let js = self.encryptor.decrypt(&d)?;
+                Some(serde_json::from_str(&js)?)
+            } else {
+                None
+            };
 
+            let pc = PlatformCredential {
+                credential_id: r.try_get("credential_id")?,
+                platform: Platform::from_str(&r.try_get::<String, _>("platform")?)
+                    .map_err(|e| Error::Platform(e.to_string()))?,
+                platform_id: r.try_get("platform_id")?,
+                credential_type: r.try_get::<String, _>("credential_type")?.parse()?,
+                user_id: r.try_get("user_id")?,
+                user_name: r.try_get("user_name")?,
+                primary_token: dec_token,
+                refresh_token: dec_refresh,
+                additional_data: dec_data,
+                expires_at: r.try_get("expires_at")?,
+                created_at: r.try_get("created_at")?,
+                updated_at: r.try_get("updated_at")?,
+                is_bot: r.try_get("is_bot")?,
+            };
+            Ok(Some(pc))
+        } else {
+            Ok(None)
+        }
+    }
 
     async fn update_credentials(&self, creds: &PlatformCredential) -> Result<(), Error> {
         let platform_str = creds.platform.to_string();
@@ -199,10 +258,10 @@ impl CredentialsRepository for PostgresCredentialsRepository {
             r#"
             UPDATE platform_credentials
             SET
-              platform_id = $1,
-              user_name   = $2,
-              primary_token = $3,
-              refresh_token = $4,
+              platform_id     = $1,
+              user_name       = $2,
+              primary_token   = $3,
+              refresh_token   = $4,
               additional_data = $5,
               expires_at      = $6,
               updated_at      = $7,
@@ -362,5 +421,67 @@ impl CredentialsRepository for PostgresCredentialsRepository {
             });
         }
         Ok(creds)
+    }
+
+    /// **NEW** method to list credentials for exactly one `platform`.
+    async fn list_credentials_for_platform(&self, platform: &Platform) -> Result<Vec<PlatformCredential>, Error> {
+        let rows = sqlx::query(
+            r#"
+            SELECT
+                credential_id,
+                platform,
+                platform_id,
+                credential_type,
+                user_id,
+                user_name,
+                primary_token,
+                refresh_token,
+                additional_data,
+                expires_at,
+                created_at,
+                updated_at,
+                is_bot
+            FROM platform_credentials
+            WHERE LOWER(platform) = LOWER($1)
+            "#,
+        )
+            .bind(platform.to_string())
+            .fetch_all(&self.pool)
+            .await?;
+
+        let mut results = Vec::new();
+        for r in rows {
+            let dec_token = self.encryptor.decrypt(r.try_get("primary_token")?)?;
+            let rfr_opt: Option<String> = r.try_get("refresh_token")?;
+            let dec_refresh = if let Some(enc) = rfr_opt {
+                Some(self.encryptor.decrypt(&enc)?)
+            } else {
+                None
+            };
+            let data_opt: Option<String> = r.try_get("additional_data")?;
+            let dec_data = if let Some(x) = data_opt {
+                let js = self.encryptor.decrypt(&x)?;
+                Some(serde_json::from_str(&js)?)
+            } else {
+                None
+            };
+
+            results.push(PlatformCredential {
+                credential_id: r.try_get("credential_id")?,
+                platform: r.try_get::<String, _>("platform")?.parse()?,
+                platform_id: r.try_get("platform_id")?,
+                credential_type: r.try_get::<String, _>("credential_type")?.parse()?,
+                user_id: r.try_get("user_id")?,
+                user_name: r.try_get("user_name")?,
+                primary_token: dec_token,
+                refresh_token: dec_refresh,
+                additional_data: dec_data,
+                expires_at: r.try_get("expires_at")?,
+                created_at: r.try_get("created_at")?,
+                updated_at: r.try_get("updated_at")?,
+                is_bot: r.try_get("is_bot")?,
+            });
+        }
+        Ok(results)
     }
 }
