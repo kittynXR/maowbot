@@ -13,6 +13,12 @@ pub struct VRChatWorldBasic {
     pub updated_at: String,
     pub created_at: String,
     pub capacity: u32,
+
+    /// New: textual "release status" from VRChat (e.g. "public", "private", "hidden", "all ...", "communityLabs").
+    pub release_status: String,
+
+    /// Optional description if present
+    pub description: String,
 }
 
 /// Basic fields representing a VRChat instance.

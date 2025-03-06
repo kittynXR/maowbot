@@ -1,5 +1,3 @@
-// File: maowbot-core/src/platforms/vrchat/client.rs
-
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -14,13 +12,25 @@ pub struct VRChatClient {
     pub http_client: Client,
 }
 
-/// Minimal struct for returning “current world.”
+/// Extended struct for returning “current world.”
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VRChatWorldInfo {
     pub world_id: String,
     pub name: String,
     pub author_name: String,
     pub capacity: u32,
+
+    /// Optional textual description of the world.
+    pub description: Option<String>,
+
+    /// The date/time the world was first published.
+    pub published_at: Option<String>,
+
+    /// The date/time the world was last updated.
+    pub updated_at: Option<String>,
+
+    /// E.g. "public", "private", "hidden", "all ...", or "community labs"
+    pub release_status: Option<String>,
 }
 
 /// Minimal struct for returning “current avatar.”
@@ -30,7 +40,7 @@ pub struct VRChatAvatarInfo {
     pub name: String,
 }
 
-/// (New) Minimal struct for returning “current instance.”
+/// Minimal struct for returning “current instance.”
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VRChatInstanceInfo {
     pub world_id: Option<String>,
@@ -38,7 +48,7 @@ pub struct VRChatInstanceInfo {
     pub location: Option<String>,
 }
 
-/// JSON shape for `GET /users/{userId}`.
+/// JSON shape for “GET /users/{userId}”.
 #[derive(Debug, Deserialize)]
 #[serde(default)]
 #[serde(rename_all = "camelCase")]
@@ -95,18 +105,50 @@ impl Default for VRChatAuthUserJson {
 
 /// JSON shape for “GET /worlds/...”
 #[derive(Debug, Deserialize)]
+#[serde(default)]
+#[serde(rename_all = "camelCase")]
 struct VRChatWorldJson {
     pub id: String,
     pub name: String,
-    pub authorName: String,
+    pub author_name: String,
     pub capacity: u32,
+
+    pub description: Option<String>,
+    pub publication_date: Option<String>,
+    pub updated_at: Option<String>,
+    pub release_status: Option<String>,
+}
+
+impl Default for VRChatWorldJson {
+    fn default() -> Self {
+        Self {
+            id: String::new(),
+            name: String::new(),
+            author_name: String::new(),
+            capacity: 0,
+            description: None,
+            publication_date: None,
+            updated_at: None,
+            release_status: None,
+        }
+    }
 }
 
 /// JSON shape for “GET /avatars/...”
 #[derive(Debug, Deserialize)]
+#[serde(default)]
 struct VRChatAvatarJson {
     pub id: String,
     pub name: String,
+}
+
+impl Default for VRChatAvatarJson {
+    fn default() -> Self {
+        Self {
+            id: String::new(),
+            name: String::new(),
+        }
+    }
 }
 
 impl VRChatClient {
@@ -152,7 +194,7 @@ impl VRChatClient {
         }
     }
 
-    /// Fetch a user’s “public” info from `/users/{userId}`, which includes `worldId`, `instanceId`, `location`, etc.
+    /// Fetch a user’s “public” info from `/users/{userId}`, which includes `worldId`, `instanceId`, etc.
     async fn fetch_user_public(&self, user_id: &str) -> Result<VRChatUserPublicApiJson, Error> {
         let url = format!("https://api.vrchat.cloud/api/1/users/{user_id}");
         let resp = self.http_client
@@ -176,7 +218,7 @@ impl VRChatClient {
         Ok(parsed)
     }
 
-    /// Fetch the user’s current world (3 attempts).
+    /// Fetch the user’s current world (up to 3 attempts).
     pub async fn fetch_current_world_api(&self) -> Result<Option<VRChatWorldInfo>, Error> {
         for attempt in 1..=3 {
             info!("Attempt {attempt} to fetch current world from VRChat...");
@@ -231,8 +273,7 @@ impl VRChatClient {
         Ok(None)
     }
 
-    /// (NEW) Fetch the user’s current instance with up to 3 attempts.
-    /// Return an InstanceInfo struct with {world_id, instance_id, location}, or None if offline.
+    /// Fetch the user’s current instance (world_id + instance_id) with up to 3 attempts.
     pub async fn fetch_current_instance_api(&self) -> Result<Option<VRChatInstanceInfo>, Error> {
         for attempt in 1..=3 {
             info!("Attempt {attempt} to fetch current instance from VRChat...");
@@ -263,18 +304,16 @@ impl VRChatClient {
                 }
             };
 
-            // Check if user is "online" and has location != "offline"
-            // The "world_id" might be Some, instance_id might be Some, or might be None.
             if public_info.location.as_deref() != Some("offline") {
-                // We can just return an object with these fields.
+                // user is "online" in some instance
                 let inst = VRChatInstanceInfo {
                     world_id: public_info.world_id,
                     instance_id: public_info.instance_id,
                     location: public_info.location,
                 };
-                // If there's no instance though, we can return Ok(None) or partial info.
+                // If there's no instance or no world_id, we might keep trying or return None
                 if inst.world_id.is_none() && inst.instance_id.is_none() {
-                    warn!("User is online but has no world or instance? Possibly hidden? Attempt {attempt}...");
+                    warn!("User is online but has no valid world/instance. Possibly hidden? Attempt {attempt}...");
                     if attempt < 3 {
                         sleep(std::time::Duration::from_secs(5)).await;
                         continue;
@@ -284,9 +323,8 @@ impl VRChatClient {
                 }
                 return Ok(Some(inst));
             } else {
-                warn!("User is offline or location='offline'.");
+                warn!("User is offline. Attempt {attempt}...");
                 if attempt < 3 {
-                    warn!("Will retry in 5 seconds...");
                     sleep(std::time::Duration::from_secs(5)).await;
                 } else {
                     return Ok(None);
@@ -296,7 +334,7 @@ impl VRChatClient {
         Ok(None)
     }
 
-    /// Fetch the user’s current avatar.
+    /// Fetch the user’s current avatar from `/auth/user?details=all`.
     pub async fn fetch_current_avatar_api(&self) -> Result<Option<VRChatAvatarInfo>, Error> {
         let url = "https://api.vrchat.cloud/api/1/auth/user?details=all";
         let resp = self.http_client
@@ -349,8 +387,12 @@ impl VRChatClient {
         Ok(VRChatWorldInfo {
             world_id: wj.id,
             name: wj.name,
-            author_name: wj.authorName,
+            author_name: wj.author_name,
             capacity: wj.capacity,
+            description: wj.description,
+            published_at: wj.publication_date,
+            updated_at: wj.updated_at,
+            release_status: wj.release_status,
         })
     }
 
@@ -381,7 +423,7 @@ impl VRChatClient {
         })
     }
 
-    /// Change to a new avatar by ID.
+    /// Change to a new avatar by ID. (Stub or partial)
     pub async fn select_avatar(&self, avatar_id: &str) -> Result<(), Error> {
         let url = format!("https://api.vrchat.cloud/api/1/avatars/{avatar_id}/select");
         let resp = self.http_client

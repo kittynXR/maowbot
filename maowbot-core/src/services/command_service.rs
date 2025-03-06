@@ -1,5 +1,3 @@
-// File: maowbot-core/src/services/command_service.rs
-
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use chrono::{Utc, DateTime};
@@ -22,14 +20,23 @@ pub struct CommandContext<'a> {
     pub user_roles: &'a [String],
     pub is_stream_online: bool,
     pub user_service: &'a Arc<UserService>,
+
+    /// If the command was configured to respond using a specific credential ID,
+    /// we pass that in here so the built-in logic can identify it if needed.
     pub respond_credential_id: Option<Uuid>,
+
+    /// The user_name field from that credential, if found.
     pub respond_credential_name: Option<String>,
+    pub credentials_repo: &'a Arc<dyn CredentialsRepository + Send + Sync>,
 }
 
-/// Response returned from command handlers.
+/// (Updated) Response from command handlers. We now allow multiple lines to facilitate
+/// multi-message output (for e.g. VRChat world info).
 #[derive(Debug, Clone)]
 pub struct CommandResponse {
-    pub text: String,
+    /// The lines to send as separate messages in chat.
+    pub texts: Vec<String>,
+
     pub respond_credential_id: Option<Uuid>,
     pub platform: String,
     pub channel: String,
@@ -80,7 +87,6 @@ impl CommandService {
 
         // 1) Verify message starts with '!'
         if !message_text.trim().starts_with('!') {
-            debug!("Message does not start with '!', skipping command handling.");
             return Ok(None);
         }
 
@@ -94,8 +100,7 @@ impl CommandService {
         };
         debug!("Parsed command: '{}', args: '{}'", cmd_part, args);
 
-        // 3) Look up command in database. If your DB stores "ping", then this call
-        //    needs to pass "ping" (not "!ping").
+        // 3) Look up command in DB
         let cmd_opt = self.command_repo.get_command_by_name(platform, cmd_part).await?;
         let cmd = match cmd_opt {
             Some(c) => c,
@@ -104,22 +109,21 @@ impl CommandService {
                 return Ok(None);
             }
         };
-        debug!("Command found: {:?}", cmd);
 
-        // 4) Check if command is active.
         if !cmd.is_active {
             debug!("Command '{}' is inactive.", cmd.command_name);
             return Ok(None);
         }
 
-        // 5) Verify user role, if needed.
+        // 4) Verify user role
         if cmd.min_role.to_lowercase() != "everyone" {
             let needed = cmd.min_role.to_lowercase();
             let has_role = user_roles.iter().any(|r| r.to_lowercase() == needed);
             if !has_role {
-                debug!("User lacks required role '{}' for command '{}'", needed, cmd.command_name);
+                debug!("User lacks required role '{}' for '{}'", needed, cmd.command_name);
+                // Return an immediate denial
                 return Ok(Some(CommandResponse {
-                    text: format!("You do not have permission to use {}.", cmd.command_name),
+                    texts: vec![format!("You do not have permission to use {}.", cmd.command_name)],
                     respond_credential_id: cmd.respond_with_credential,
                     platform: cmd.platform.clone(),
                     channel: channel.to_string(),
@@ -127,27 +131,25 @@ impl CommandService {
             }
         }
 
-        // 6) Check stream online/offline restrictions.
+        // 5) Check stream online/offline restrictions
         if cmd.stream_online_only && !is_stream_online {
-            debug!("Command '{}' is restricted to online stream.", cmd.command_name);
             return Ok(Some(CommandResponse {
-                text: format!("Command {} can only be used when stream is online.", cmd.command_name),
+                texts: vec![format!("Command {} can only be used when stream is online.", cmd.command_name)],
                 respond_credential_id: cmd.respond_with_credential,
                 platform: cmd.platform.clone(),
                 channel: channel.to_string(),
             }));
         }
         if cmd.stream_offline_only && is_stream_online {
-            debug!("Command '{}' is restricted to offline stream.", cmd.command_name);
             return Ok(Some(CommandResponse {
-                text: format!("Command {} can only be used when stream is offline.", cmd.command_name),
+                texts: vec![format!("Command {} can only be used when stream is offline.", cmd.command_name)],
                 respond_credential_id: cmd.respond_with_credential,
                 platform: cmd.platform.clone(),
                 channel: channel.to_string(),
             }));
         }
 
-        // 7) Enforce global cooldown.
+        // 6) Enforce global cooldown
         let now = Utc::now();
         {
             let mut cd_lock = self.cooldowns.lock().unwrap();
@@ -155,9 +157,8 @@ impl CommandService {
                 let elapsed = now.signed_duration_since(*last_time).num_seconds();
                 let remain = cmd.cooldown_seconds as i64 - elapsed;
                 if remain > 0 {
-                    debug!("Command '{}' is on cooldown ({} seconds remaining)", cmd.command_name, remain);
                     return Ok(Some(CommandResponse {
-                        text: format!("Command {} is on cooldown. Please wait {}s.", cmd.command_name, remain),
+                        texts: vec![format!("Command {} is on cooldown. Please wait {}s.", cmd.command_name, remain)],
                         respond_credential_id: cmd.respond_with_credential,
                         platform: cmd.platform.clone(),
                         channel: channel.to_string(),
@@ -165,10 +166,9 @@ impl CommandService {
                 }
             }
             cd_lock.last_global_use.insert(cmd.command_id, now);
-            debug!("Cooldown updated for command '{}'", cmd.command_name);
         }
 
-        // 8) Log command usage.
+        // 7) Log usage
         let usage = CommandUsage {
             usage_id: Uuid::new_v4(),
             command_id: cmd.command_id,
@@ -178,19 +178,16 @@ impl CommandService {
             usage_text: Some(args.clone()),
             metadata: None,
         };
-        debug!("Logging command usage: {:?}", usage);
         if let Err(e) = self.usage_repo.insert_usage(&usage).await {
             error!("Error logging command usage: {:?}", e);
-        } else {
-            debug!("Command usage logged.");
         }
 
-        // 9) Retrieve user for context (optional).
+        // 8) Retrieve user from DB
         let user_opt = self.user_service.user_manager.user_repo.get(user_id).await?;
         let user = match user_opt {
             Some(u) => u,
             None => {
-                warn!("User {} not found in DB, using fallback.", user_id);
+                warn!("User {} not found in DB, using fallback record.", user_id);
                 User {
                     user_id,
                     global_username: None,
@@ -200,9 +197,8 @@ impl CommandService {
                 }
             }
         };
-        debug!("User for command context: {:?}", user);
 
-        // 10) Build the command context.
+        // 9) Build context
         let mut ctx = CommandContext {
             channel,
             user_roles,
@@ -210,41 +206,46 @@ impl CommandService {
             user_service: &self.user_service,
             respond_credential_id: cmd.respond_with_credential,
             respond_credential_name: None,
+            credentials_repo: &self.credentials_repo,
         };
 
-        // If respond_with_credential was set, load that credential so we know which account to reply from.
+        // If respond_with_credential was set, try to load that credential to get user_name
         if let Some(cid) = cmd.respond_with_credential {
-            debug!("Looking up respond credential with id: {:?}", cid);
             if let Ok(Some(cred)) = self.credentials_repo.get_credential_by_id(cid).await {
-                debug!("Respond credential found: {:?}", cred);
                 ctx.respond_credential_name = Some(cred.user_name.clone());
-            } else {
-                warn!("No respond credential found for id: {:?}", cid);
             }
         }
 
-        // 11) Invoke built-in command handler.
-        debug!("Invoking built-in command handler for '{}'", cmd.command_name);
+        // 10) Invoke built-in logic
         if let Some(response_str) = handle_builtin_command(&cmd, &ctx, &user, &args).await? {
-            debug!("Built-in command returned response: '{}'", response_str);
+            // Some commands might embed <SPLIT> or multiline.
+            let lines: Vec<String> = response_str
+                .split("<SPLIT>")
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect();
+
+            // Return multiple lines
             return Ok(Some(CommandResponse {
-                text: response_str,
+                texts: lines,
                 respond_credential_id: cmd.respond_with_credential,
                 platform: cmd.platform.clone(),
                 channel: channel.to_string(),
             }));
         }
 
-        debug!("Command '{}' recognized, but no built-in logic implemented.", cmd.command_name);
+        // 11) If no built-in logic returned anything, we just say "No built-in logic implemented."
         Ok(Some(CommandResponse {
-            text: format!("Command {} recognized, but no built-in logic implemented.", cmd.command_name),
+            texts: vec![format!("Command {} recognized, but no built-in logic implemented.", cmd.command_name)],
             respond_credential_id: cmd.respond_with_credential,
             platform: cmd.platform.clone(),
             channel: channel.to_string(),
         }))
     }
 
-    // --------------------- Additional CRUD methods ---------------------
+    // ----------------------------------------------------------------
+    // Additional CRUD / management methods
+    // ----------------------------------------------------------------
 
     pub async fn create_command(
         &self,
@@ -269,44 +270,36 @@ impl CommandService {
             stream_offline_only: false,
         };
         self.command_repo.create_command(&cmd).await?;
-        debug!("Command created: {:?}", cmd);
         Ok(cmd)
     }
 
     pub async fn list_commands(&self, platform: &str) -> Result<Vec<Command>, Error> {
-        debug!("Listing commands for platform '{}'", platform);
         self.command_repo.list_commands(platform).await
     }
 
     pub async fn update_command_role(&self, command_id: Uuid, new_role: &str) -> Result<(), Error> {
-        debug!("Updating role for command_id {} to '{}'", command_id, new_role);
         if let Some(mut cmd) = self.command_repo.get_command_by_id(command_id).await? {
             cmd.min_role = new_role.to_string();
             cmd.updated_at = Utc::now();
             self.command_repo.update_command(&cmd).await?;
-            debug!("Command role updated: {:?}", cmd);
         }
         Ok(())
     }
 
     pub async fn set_command_active(&self, command_id: Uuid, is_active: bool) -> Result<(), Error> {
-        debug!("Setting active status for command_id {} to {}", command_id, is_active);
         if let Some(mut cmd) = self.command_repo.get_command_by_id(command_id).await? {
             cmd.is_active = is_active;
             cmd.updated_at = Utc::now();
             self.command_repo.update_command(&cmd).await?;
-            debug!("Command active status updated: {:?}", cmd);
         }
         Ok(())
     }
 
     pub async fn delete_command(&self, command_id: Uuid) -> Result<(), Error> {
-        debug!("Deleting command with id {}", command_id);
         self.command_repo.delete_command(command_id).await
     }
 
     pub async fn update_full_command(&self, cmd: &Command) -> Result<(), Error> {
-        debug!("Updating full command: {:?}", cmd);
         let mut to_save = cmd.clone();
         to_save.updated_at = Utc::now();
         self.command_repo.update_command(&to_save).await
