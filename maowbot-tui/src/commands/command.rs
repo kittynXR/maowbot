@@ -1,9 +1,10 @@
 // File: maowbot-tui/src/commands/command.rs
 //! Allows editing built-in or custom commands. Example usage in the TUI:
-//!   "command list <platform>"
-//!   "command setcooldown <commandName> <seconds>"
-//!   "command setwarnonce <commandName> <true|false>"
+//!   "command list [platform]"
+//!   "command setcooldown <commandName> <seconds> [platform]"
+//!   "command setwarnonce <commandName> <true|false> [platform]"
 //!   "command setrespond <commandName> <accountOrNone> [platform]"
+//!   "command setplatform <commandName> <newPlatform> [oldPlatform]"
 //!   "command enable <commandName> [platform]"
 //!   "command disable <commandName> [platform]"
 
@@ -18,35 +19,70 @@ use maowbot_core::plugins::bot_api::BotApi;
 /// Entry point from TUI: "command <subcmd> <args...>"
 pub async fn handle_command_command(args: &[&str], bot_api: &Arc<dyn BotApi>) -> String {
     if args.is_empty() {
-        return "Usage: command <list|setcooldown|setwarnonce|setrespond|enable|disable> [args...]".to_string();
+        return "Usage: command <list|setcooldown|setwarnonce|setrespond|setplatform|enable|disable> [args...]".to_string();
     }
     match args[0].to_lowercase().as_str() {
         "list" => {
-            // "command list <platform>"
-            let plat = args.get(1).map(|s| *s).unwrap_or("twitch-irc");
-            match bot_api.list_commands(plat).await {
-                Ok(cmds) => {
-                    if cmds.is_empty() {
-                        format!("No commands found for platform '{}'.", plat)
-                    } else {
-                        let mut out = format!("Commands for platform '{}':\n", plat);
-                        for c in cmds {
-                            out.push_str(&format!(
-                                " - {} (id={}) active={} cd={}s warnonce={} respond={:?}\n",
-                                c.command_name,
-                                c.command_id,
-                                c.is_active,
-                                c.cooldown_seconds,
-                                c.cooldown_warnonce,
-                                c.respond_with_credential
-                            ));
+            // Behavior change:
+            // If the user typed "command list" with no further args, list commands for *all* platforms.
+            // If "command list vrchat" is typed, list only vrchat, etc.
+            if args.len() == 1 {
+                // No platform specified => gather from all known platforms
+                // You might keep a list of known platforms or have a dedicated "list_all_commands" function
+                let known_platforms = vec!["twitch-irc", "twitch", "vrchat", "discord", "twitch-eventsub"];
+                let mut out = String::new();
+                for plat in &known_platforms {
+                    match bot_api.list_commands(plat).await {
+                        Ok(cmds) if !cmds.is_empty() => {
+                            out.push_str(&format!("Commands for platform '{}':\n", plat));
+                            for c in cmds {
+                                out.push_str(&format!(
+                                    " - {} (id={}) active={} cd={}s warnonce={} respond={:?}\n",
+                                    c.command_name,
+                                    c.command_id,
+                                    c.is_active,
+                                    c.cooldown_seconds,
+                                    c.cooldown_warnonce,
+                                    c.respond_with_credential
+                                ));
+                            }
+                            out.push('\n');
                         }
-                        out
+                        _ => { /* skip if empty or error */ }
                     }
                 }
-                Err(e) => format!("Error listing commands => {e}"),
+                if out.trim().is_empty() {
+                    out = "No commands found for any platform.".to_string();
+                }
+                out
+            } else {
+                // "command list <platform>"
+                let plat = args[1];
+                match bot_api.list_commands(plat).await {
+                    Ok(cmds) => {
+                        if cmds.is_empty() {
+                            format!("No commands found for platform '{}'.", plat)
+                        } else {
+                            let mut out = format!("Commands for platform '{}':\n", plat);
+                            for c in cmds {
+                                out.push_str(&format!(
+                                    " - {} (id={}) active={} cd={}s warnonce={} respond={:?}\n",
+                                    c.command_name,
+                                    c.command_id,
+                                    c.is_active,
+                                    c.cooldown_seconds,
+                                    c.cooldown_warnonce,
+                                    c.respond_with_credential
+                                ));
+                            }
+                            out
+                        }
+                    }
+                    Err(e) => format!("Error listing commands => {e}"),
+                }
             }
         }
+
         "setcooldown" => {
             // "command setcooldown <commandName> <seconds> [platform]"
             if args.len() < 3 {
@@ -64,6 +100,7 @@ pub async fn handle_command_command(args: &[&str], bot_api: &Arc<dyn BotApi>) ->
                 Err(e) => format!("Error => {e}"),
             }
         }
+
         "setwarnonce" => {
             // "command setwarnonce <commandName> <true|false> [platform]"
             if args.len() < 3 {
@@ -82,11 +119,9 @@ pub async fn handle_command_command(args: &[&str], bot_api: &Arc<dyn BotApi>) ->
                 Err(e) => format!("Error => {e}"),
             }
         }
+
         "setrespond" => {
-            // "command setrespond <commandName> <accountNameOrUUIDOrNone> [platform]"
-            // e.g. command setrespond ping kittyn twitch-irc
-            // or   command setrespond ping none
-            // or   command setrespond ping a1c241a5-8d60-4a11-90f4-d3182039f5f6
+            // "command setrespond <commandName> <credentialId|username|none> [platform]"
             if args.len() < 3 {
                 return "Usage: command setrespond <commandName> <credentialId|username|none> [platform]".to_string();
             }
@@ -98,6 +133,26 @@ pub async fn handle_command_command(args: &[&str], bot_api: &Arc<dyn BotApi>) ->
                 Err(e) => format!("Error => {e}"),
             }
         }
+
+        "setplatform" => {
+            // "command setplatform <commandName> <newPlatform> [oldPlatform]"
+            // Example usage:
+            //   command setplatform !test vrchat twitch-irc
+            if args.len() < 3 {
+                return "Usage: command setplatform <commandName> <newPlatform> [oldPlatform]".to_string();
+            }
+            let command_name = args[1];
+            let new_platform = args[2];
+            let old_platform = args.get(3).map(|s| *s).unwrap_or("twitch-irc");
+            match set_platform(bot_api, old_platform, command_name, new_platform).await {
+                Ok(_) => format!(
+                    "Platform changed for command '{}' from '{}' to '{}'.",
+                    command_name, old_platform, new_platform
+                ),
+                Err(e) => format!("Error => {e}"),
+            }
+        }
+
         "enable" => {
             // "command enable <commandName> [platform]"
             if args.len() < 2 {
@@ -110,6 +165,7 @@ pub async fn handle_command_command(args: &[&str], bot_api: &Arc<dyn BotApi>) ->
                 Err(e) => format!("Error => {e}"),
             }
         }
+
         "disable" => {
             if args.len() < 2 {
                 return "Usage: command disable <commandName> [platform]".to_string();
@@ -121,8 +177,9 @@ pub async fn handle_command_command(args: &[&str], bot_api: &Arc<dyn BotApi>) ->
                 Err(e) => format!("Error => {e}"),
             }
         }
+
         _ => {
-            "Unknown subcommand. Usage: command <list|setcooldown|setwarnonce|setrespond|enable|disable>".to_string()
+            "Unknown subcommand. Usage: command <list|setcooldown|setwarnonce|setrespond|setplatform|enable|disable> [args...]".to_string()
         }
     }
 }
@@ -152,14 +209,6 @@ async fn set_warnonce(
 }
 
 /// Main function to set the `respond_with_credential` field on a command.
-///
-/// - If `account_arg` == "none", we set it to `None`.
-/// - Else if `account_arg` parses as a valid UUID, we use that as the credential_id (must exist in DB).
-/// - Else we treat `account_arg` as a username. Then:
-///   1. We find the user by name (`global_username`).
-///   2. Determine the platform for the command (the command’s own `platform`, unless an override was typed).
-///   3. Find that user’s credential for that platform.
-///   4. If exactly 1 match, set that credential_id. If 0 or multiple, fail with an error.
 async fn set_respond_with(
     bot_api: &Arc<dyn BotApi>,
     cmd_name: &str,
@@ -182,8 +231,8 @@ async fn set_respond_with(
     if let Ok(parsed_id) = Uuid::parse_str(account_arg) {
         // We'll do a quick check if that credential actually exists.
         let creds = bot_api.list_credentials(None).await?;
-        let found = creds.iter().find(|c| c.credential_id == parsed_id);
-        if found.is_none() {
+        let found = creds.iter().any(|c| c.credential_id == parsed_id);
+        if !found {
             return Err(Error::Database(sqlx::Error::RowNotFound));
         }
         // Set it:
@@ -204,12 +253,11 @@ async fn set_respond_with(
     // Now find that user’s credentials for the platform that the command uses.
     let cmd_platform = &cmd.platform; // e.g. "twitch-irc"
     let user_creds = bot_api.list_credentials(None).await?;
-    // Convert the enum to string before comparing:
     let mut matches = user_creds
         .into_iter()
         .filter(|c| {
-            c.user_id == user.user_id &&
-                c.platform.to_string().to_lowercase() == cmd_platform.to_lowercase()
+            c.user_id == user.user_id
+                && c.platform.to_string().eq_ignore_ascii_case(cmd_platform)
         })
         .collect::<Vec<_>>();
 
@@ -233,14 +281,29 @@ async fn set_respond_with(
     Ok(())
 }
 
-/// Helper to get the Command, then update its fields:
+/// Helper: change the `platform` field of an existing command.
+async fn set_platform(
+    bot_api: &Arc<dyn BotApi>,
+    old_platform: &str,
+    cmd_name: &str,
+    new_platform: &str,
+) -> Result<(), Error> {
+    // 1) Get the command from the old platform
+    let mut cmd = get_command_by_name(bot_api, old_platform, cmd_name).await?;
+
+    // 2) Set to new platform and update
+    cmd.platform = new_platform.to_string();
+    cmd.updated_at = chrono::Utc::now();
+    bot_api.update_command(&cmd).await?;
+    Ok(())
+}
+
+/// Helper to retrieve a command by name from a given platform.
 async fn get_command_by_name(
     bot_api: &Arc<dyn BotApi>,
     platform: &str,
     cmd_name: &str
 ) -> Result<Command, Error> {
-    // The bot_api::CommandApi trait typically has a "list_commands" and "update_command" etc.
-    // We mimic a "get by name" by listing all and filtering.
     let all = bot_api.list_commands(platform).await?;
     let lowered = if cmd_name.starts_with('!') {
         cmd_name[1..].to_lowercase()
@@ -248,7 +311,6 @@ async fn get_command_by_name(
         cmd_name.to_lowercase()
     };
 
-    // Each Command's command_name might store the "!" or might not. We'll check both forms:
     let found = all.into_iter().find(|c| {
         let c_lower = c.command_name.to_lowercase();
         c_lower == format!("!{}", lowered) || c_lower == lowered
