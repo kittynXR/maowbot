@@ -70,8 +70,8 @@ impl MessageService {
 
         // 1) Convert platform to enum
         let platform_enum = match platform {
-            "twitch-irc" => Platform::TwitchIRC,
-            "twitch" => Platform::Twitch,
+            // "twitch-irc" | "twitch" => Platform::TwitchIRC,
+            "twitch-irc" | "twitch" => Platform::Twitch,
             "discord" => Platform::Discord,
             "vrchat" => Platform::VRChat,
             "twitch-eventsub" => Platform::TwitchEventSub,

@@ -64,6 +64,7 @@ impl TwitchAuthenticator {
             "channel:read:hype_train",
             "moderator:read:shoutouts",
             "channel:manage:redemptions",
+            "moderator:read:followers",
         ];
         let scope_str = scopes.join(" ");
         let redirect_uri = "http://localhost:9876/callback";
