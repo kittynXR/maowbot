@@ -70,6 +70,10 @@ impl ServerContext {
         let pg_data_dir = "./postgres/data";
         let port = 5432;
 
+        if let Err(e) = kill_leftover_postgres_if_any(pg_bin_dir, pg_data_dir) {
+            error!("Failed to handle leftover Postgres: {:?}", e);
+        }
+
         ensure_db_initialized(pg_bin_dir, pg_data_dir)?;
         start_postgres(pg_bin_dir, pg_data_dir, port)?;
         create_database(pg_bin_dir, port, "maowbot")?;
