@@ -12,7 +12,7 @@ use crate::repositories::postgres::user_analysis::PostgresUserAnalysisRepository
 use crate::auth::user_manager::{UserManager, DefaultUserManager};
 use crate::models::Platform;
 use crate::services::user_service::UserService;
-use crate::services::command_service::{CommandService, CommandResponse};
+use crate::services::{CommandService, CommandResponse};
 use crate::platforms::manager::PlatformManager;
 use crate::repositories::postgres::credentials::CredentialsRepository;
 

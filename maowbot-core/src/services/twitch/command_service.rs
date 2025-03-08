@@ -12,7 +12,7 @@ use crate::repositories::{
     BotConfigRepository,
 };
 use crate::repositories::postgres::user::UserRepo;
-use crate::services::builtin_commands::handle_builtin_command;
+use crate::services::twitch::builtin_commands::handle_builtin_command;
 use crate::services::user_service::UserService;
 
 /// Context passed to built-in command handlers.

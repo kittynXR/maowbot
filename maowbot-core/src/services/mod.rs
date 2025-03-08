@@ -1,13 +1,14 @@
-
 // File: src/services/mod.rs
 
 pub mod user_service;
-pub mod message_service;
-pub mod command_service;
-pub mod redeem_service;
-mod builtin_commands;
-mod builtin_redeems;
 
-// pub use user_service::UserService;
-pub use command_service::CommandService;
-pub use redeem_service::RedeemService;
+pub mod message_service;
+// Moved all Twitch-specific things into services/twitch.
+pub mod twitch;
+
+// Re-export anything you want from twitch here, if desired, e.g.:
+// pub use twitch::command_service::CommandService;
+pub use twitch::command_service::CommandService;
+pub use twitch::command_service::CommandResponse;
+pub use twitch::redeem_service::RedeemService;
+pub use twitch::eventsub_service::EventSubService;

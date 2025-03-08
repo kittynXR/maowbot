@@ -1,7 +1,7 @@
 use crate::Error;
 use crate::models::User;
-use crate::services::command_service::CommandContext;
 use crate::models::Command;
+use crate::services::twitch::command_service::CommandContext;
 
 pub async fn handle_ping(
     _cmd: &Command,

@@ -1,7 +1,7 @@
 use crate::Error;
 use crate::models::{Command, User, Platform};
 use crate::platforms::vrchat::client::VRChatClient;
-use crate::services::command_service::CommandContext;
+use crate::services::twitch::command_service::CommandContext;
 use tracing::{info, warn};
 
 /// Helper function: if we can parse an ISO8601 string (like `2024-05-13T04:04:20.108Z`),

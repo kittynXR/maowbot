@@ -10,12 +10,12 @@ pub mod vrchat_commands;
 use uuid::Uuid;
 use crate::Error;
 use crate::models::{Command, User};
-use crate::services::builtin_commands::{
+use crate::services::twitch::builtin_commands::{
     ping_command::handle_ping,
     followage_command::handle_followage,
     vrchat_commands::{handle_world, handle_instance, handle_vrchat_online_offline},
 };
-use crate::services::command_service::CommandContext;
+use crate::services::twitch::command_service::CommandContext;
 
 pub async fn handle_builtin_command(
     cmd: &Command,

@@ -39,6 +39,8 @@ pub enum BotEvent {
 /// the `twitch_eventsub` module.
 #[derive(Debug, Clone)]
 pub enum TwitchEventSubData {
+    StreamOnline(crate::platforms::twitch_eventsub::events::StreamOnline),
+    StreamOffline(crate::platforms::twitch_eventsub::events::StreamOffline),
     ChannelBitsUse(crate::platforms::twitch_eventsub::events::ChannelBitsUse),
     ChannelUpdate(crate::platforms::twitch_eventsub::events::ChannelUpdate),
     ChannelFollow(crate::platforms::twitch_eventsub::events::ChannelFollow),

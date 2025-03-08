@@ -2,7 +2,7 @@
 
 pub mod base;
 pub mod bits;
-pub mod channel_follow_update;
+pub mod channel_follow;
 pub mod chat;
 pub mod shared_chat;
 pub mod subscription;
@@ -11,10 +11,14 @@ pub mod hype_train;
 pub mod raid;
 pub mod shoutout;
 pub mod channel_points;
+pub mod stream_online_offline;
+pub mod update;
+pub mod ad_break;
 
 pub use base::*;
+pub use ad_break::*;
 pub use bits::*;
-pub use channel_follow_update::*;
+pub use channel_follow::*;
 pub use chat::*;
 pub use shared_chat::*;
 pub use subscription::*;
@@ -23,6 +27,8 @@ pub use hype_train::*;
 pub use raid::*;
 pub use shoutout::*;
 pub use channel_points::*;
+pub use stream_online_offline::*;
+pub use update::*;
 
 // ------------------------------------------------------------------------
 // The parse_twitch_notification function has been moved here.

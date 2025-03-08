@@ -2,8 +2,8 @@ use chrono::{Utc};
 use tracing::info;
 use crate::Error;
 use crate::models::{Command, User, Platform};
-use crate::services::command_service::CommandContext;
 use crate::platforms::twitch::client::TwitchHelixClient;
+use crate::services::twitch::command_service::CommandContext;
 
 /// The `handle_followage` function implements the `!followage` command.
 /// It tries to determine how long the user has been following the configured broadcaster channel.

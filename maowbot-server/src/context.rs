@@ -11,6 +11,8 @@ use maowbot_core::crypto::Encryptor;
 use maowbot_core::services::{
     message_service::MessageService,
     user_service::UserService,
+};
+use maowbot_core::services::twitch::{
     command_service::CommandService,
     redeem_service::RedeemService,
 };
