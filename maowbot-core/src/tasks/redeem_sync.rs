@@ -1,5 +1,3 @@
-// maowbot-core/src/tasks/redeem_sync.rs
-
 use tracing::{info, error, warn, debug, trace};
 use crate::Error;
 use crate::services::twitch::redeem_service::RedeemService;
@@ -12,9 +10,10 @@ use crate::platforms::twitch::requests::channel_points::{
 };
 use crate::models::Redeem;
 use crate::repositories::postgres::bot_config::BotConfigRepository;
+use chrono::Utc;
+use uuid::Uuid;
 
 /// Finds a Helix reward in `list` whose title matches `wanted_title` (case-insensitive).
-/// Returns that reward ID if found, else `None`.
 fn find_reward_id_by_title_ignorecase(list: &[CustomReward], wanted_title: &str) -> Option<String> {
     let target = wanted_title.to_lowercase();
     list.iter().find_map(|r| {
@@ -24,6 +23,11 @@ fn find_reward_id_by_title_ignorecase(list: &[CustomReward], wanted_title: &str)
             None
         }
     })
+}
+
+/// Returns true if `reward_id` is found in `list`.
+fn is_in_list(list: &[CustomReward], reward_id: &str) -> bool {
+    list.iter().any(|r| r.id == reward_id)
 }
 
 /// The main entry point for redeem sync.
@@ -67,7 +71,7 @@ pub async fn sync_channel_redeems(
 }
 
 /// Attempts to find user by `global_username=account_name`, then fetch a Twitch credential
-/// to build a Helix client. Returns None if not found.
+/// to build a Helix client. Returns None if not found or missing client_id.
 pub async fn get_helix_client_for_account(
     platform_manager: &PlatformManager,
     user_service: &UserService,
@@ -114,7 +118,7 @@ pub async fn get_helix_client_for_account(
     Ok(None)
 }
 
-/// Main routine to unify local DB redeems with Helix.
+/// Main routine to unify local DB redeems with Helix for a single account (token).
 async fn run_sync_for_one_account(
     client: &TwitchHelixClient,
     db_redeems: &[Redeem],
@@ -147,48 +151,82 @@ async fn run_sync_for_one_account(
         broadcaster_id
     );
 
-    // 3) If any DB row has that reward_id, unify is_managed
+    // 2A) NEW: Import any Helix rewards not found in DB => create them as is_managed=false
+    //           so they show up in the TUI as “web‑app managed”.
+    for hr in &all_list {
+        let existing = db_redeems.iter().find(|rd| rd.reward_id == hr.id);
+        if existing.is_none() {
+            // Insert new DB row with is_managed=false, plugin_name=None, etc.
+            let now = Utc::now();
+            let new_rd = Redeem {
+                redeem_id: Uuid::new_v4(),
+                platform: "twitch-eventsub".to_string(),
+                reward_id: hr.id.clone(),
+                reward_name: hr.title.clone(),
+                cost: hr.cost as i32,
+                is_active: hr.is_enabled,
+                dynamic_pricing: false,
+                created_at: now,
+                updated_at: now,
+                active_offline: false,
+                is_managed: false, // Because the broadcaster created it in the dashboard
+                plugin_name: None,
+                command_name: None,
+            };
+            if let Err(e) = redeem_service.redeem_repo.create_redeem(&new_rd).await {
+                error!("Failed to import 'web-app' reward='{}' => {e}", hr.title);
+            } else {
+                debug!("Imported new web-app managed reward='{}', id={}", hr.title, hr.id);
+            }
+        }
+    }
+
+    // re‑fetch after import
+    let db_redeems = redeem_service.list_redeems("twitch-eventsub").await?;
+
+    // 3) If any Helix reward is found, unify `is_managed` for matching rows
     for hr in &all_list {
         let is_m = manageable_list.iter().any(|mr| mr.id == hr.id);
         if let Some(dbrow) = db_redeems.iter().find(|d| d.reward_id == hr.id) {
             if dbrow.is_managed != is_m {
                 let mut to_update = dbrow.clone();
                 to_update.is_managed = is_m;
-                to_update.updated_at = chrono::Utc::now();
+                to_update.updated_at = Utc::now();
+                // Special case: if plugin_name="builtin", keep is_managed = true
+                if dbrow.plugin_name.as_deref() == Some("builtin") {
+                    to_update.is_managed = true;
+                }
                 if let Err(e) = redeem_service.redeem_repo.update_redeem(&to_update).await {
                     error!("Error updating is_managed for '{}' => {e}", dbrow.reward_name);
                 } else {
-                    debug!("Set is_managed={} for '{}'", is_m, dbrow.reward_name);
+                    debug!("Set is_managed={} for '{}'", to_update.is_managed, dbrow.reward_name);
                 }
             }
         }
     }
 
-    // 4) For each DB redeem, if `plugin_name='builtin'`, treat it as "bot-managed".
-    //    If it lacks a valid reward_id, or not found in Helix, create or unify by name.
-    for dr in db_redeems {
+    // 4) For each DB redeem, if it is “builtin” or `is_managed=true`, ensure Helix has it
+    for dr in &db_redeems {
         let is_builtin = dr.plugin_name.as_deref() == Some("builtin");
         let effective_managed = dr.is_managed || is_builtin;
 
-        // 4A) If builtin + empty reward_id => unify by name or create
+        // If builtin + reward_id is empty => unify by name or create
         if is_builtin && dr.reward_id.trim().is_empty() {
-            // search by name in all_list
             if let Some(existing_id) = find_reward_id_by_title_ignorecase(&all_list, &dr.reward_name) {
                 info!(
                     "Builtin redeem '{}' matches existing Helix reward_id='{}'. Linking them.",
                     dr.reward_name, existing_id
                 );
                 let mut updated = dr.clone();
-                updated.reward_id = existing_id.clone();
-                // see if it's in manageable_list
-                updated.is_managed = manageable_list.iter().any(|x| x.id == existing_id);
-                updated.updated_at = chrono::Utc::now();
+                updated.reward_id = existing_id;
+                updated.is_managed = true;
+                updated.updated_at = Utc::now();
                 if let Err(e) = redeem_service.redeem_repo.update_redeem(&updated).await {
                     error!("Error linking builtin redeem => {e}");
                 }
                 continue;
             } else {
-                // create a new reward
+                // create new Helix reward
                 info!("No Helix reward for builtin '{}' => creating new custom reward", dr.reward_name);
                 let body = CustomRewardBody {
                     title: Some(dr.reward_name.clone()),
@@ -200,43 +238,30 @@ async fn run_sync_for_one_account(
                     Ok(created) => {
                         let mut updated = dr.clone();
                         updated.reward_id = created.id;
-                        updated.is_managed = true; // our builtins => we consider them "managed"
-                        updated.updated_at = chrono::Utc::now();
+                        updated.is_managed = true;
+                        updated.updated_at = Utc::now();
                         if let Err(e) = redeem_service.redeem_repo.update_redeem(&updated).await {
-                            error!("Error storing new Helix ID for builtin '{}' => {e}", dr.reward_name);
+                            error!("Error storing new Helix ID => {e}");
                         } else {
                             debug!("Builtin '{}' => assigned new reward_id='{}'", updated.reward_name, updated.reward_id);
                         }
                     }
                     Err(e) => {
                         let e_str = format!("{e}");
-                        // <--- The fallback for DUPLICATE_REWARD:
                         if e_str.contains("CREATE_CUSTOM_REWARD_DUPLICATE_REWARD") {
                             warn!(
                                 "Unable to create Helix reward for builtin '{}' => Duplicate. Attempting fallback unify...",
                                 dr.reward_name
                             );
-                            // Re-fetch Helix to see if a new item was just made or is being recognized
                             if let Ok(refreshed_all) = client.get_custom_rewards(&broadcaster_id, None, false).await {
                                 if let Some(dup_id) = find_reward_id_by_title_ignorecase(&refreshed_all, &dr.reward_name) {
-                                    info!(
-                                        "Fallback unify: found Helix reward_id='{}' for builtin '{}'. Linking it.",
-                                        dup_id, dr.reward_name
-                                    );
                                     let mut updated = dr.clone();
-                                    updated.reward_id = dup_id.clone();
-                                    updated.is_managed = refreshed_all.iter().any(|r| r.id == dup_id
-                                        && is_in_list(&manageable_list, &dup_id));
-                                    updated.updated_at = chrono::Utc::now();
+                                    updated.reward_id = dup_id;
+                                    updated.is_managed = true;
+                                    updated.updated_at = Utc::now();
                                     if let Err(e2) = redeem_service.redeem_repo.update_redeem(&updated).await {
-                                        error!("Error in fallback linking => {e2}");
+                                        error!("Error fallback linking => {e2}");
                                     }
-                                } else {
-                                    warn!(
-                                        "Fallback unify could not find reward matching '{}' in Helix. \
-                                        Possibly a partial mismatch or leftover. If you keep seeing this, rename the reward.",
-                                        dr.reward_name
-                                    );
                                 }
                             }
                         } else {
@@ -248,87 +273,57 @@ async fn run_sync_for_one_account(
             }
         }
 
-        // 4B) If it's "is_managed" (and not builtin, or maybe builtin too),
-        //     but Helix doesn't have that reward_id => create it.
-        if effective_managed {
-            let found_helix = all_list.iter().any(|r| r.id == dr.reward_id);
-            if !found_helix && !is_builtin {
-                info!("Managed redeem '{}' not found in Helix => create_custom_reward", dr.reward_name);
-                let body = CustomRewardBody {
-                    title: Some(dr.reward_name.clone()),
-                    cost: Some(dr.cost as u64),
-                    is_enabled: Some(dr.is_active),
-                    ..Default::default()
-                };
-                match client.create_custom_reward(&broadcaster_id, &body).await {
-                    Ok(created) => {
-                        let mut updated = dr.clone();
-                        updated.reward_id = created.id;
-                        updated.is_managed = true;
-                        updated.updated_at = chrono::Utc::now();
-                        if let Err(e) = redeem_service.redeem_repo.update_redeem(&updated).await {
-                            error!("Error updating DB with newly created Helix reward => {e}");
-                        }
-                    }
-                    Err(e) => {
-                        let e_str = format!("{e}");
-                        if e_str.contains("CREATE_CUSTOM_REWARD_DUPLICATE_REWARD") {
-                            warn!(
-                                "Managed redeem '{}' => DUPLICATE_REWARD. Attempting fallback unify by name.",
-                                dr.reward_name
-                            );
-                            if let Ok(refreshed_all) = client.get_custom_rewards(&broadcaster_id, None, false).await {
-                                if let Some(dup_id) = find_reward_id_by_title_ignorecase(&refreshed_all, &dr.reward_name) {
-                                    info!("Fallback unify => found ID='{}' for '{}'", dup_id, dr.reward_name);
-                                    let mut updated = dr.clone();
-                                    updated.reward_id = dup_id.clone();
-                                    updated.is_managed = is_in_list(&manageable_list, &dup_id);
-                                    updated.updated_at = chrono::Utc::now();
-                                    if let Err(e2) = redeem_service.redeem_repo.update_redeem(&updated).await {
-                                        error!("Error fallback-updating => {e2}");
-                                    }
-                                }
-                            }
-                        } else {
-                            error!("create_custom_reward => {e}");
-                        }
-                    }
-                }
+        // If is_managed and missing from Helix => create
+        if effective_managed && dr.reward_id.trim().is_empty() {
+            // we do the same create logic
+            info!("Managed redeem '{}' has empty reward_id => create in Helix", dr.reward_name);
+            let body = CustomRewardBody {
+                title: Some(dr.reward_name.clone()),
+                cost: Some(dr.cost as u64),
+                is_enabled: Some(dr.is_active),
+                ..Default::default()
+            };
+            if let Err(e) = try_create_new_reward(&broadcaster_id, &body, dr, redeem_service, client).await {
+                warn!("Error from try_create_new_reward => {e}");
             }
+            continue;
         }
     }
 
-    // 5) re-fetch so we see newly created updates
+    // 5) re-fetch after any creation
     let updated_helix = client.get_custom_rewards(&broadcaster_id, None, false).await.unwrap_or(all_list);
 
-    // 6) cost/is_active sync for all is_managed or builtin
-    for dr in db_redeems {
+    // 6) cost/is_active sync for all “managed or builtin” redeems
+    for dr in &db_redeems {
         let is_builtin = dr.plugin_name.as_deref() == Some("builtin");
-        let effective_managed = (dr.is_managed || is_builtin);
+        let effective_managed = dr.is_managed || is_builtin;
 
         if !effective_managed {
             continue;
         }
-        if let Some(hrew) = updated_helix.iter().find(|r| r.id == dr.reward_id) {
-            // offline => disable if not allowed
+        let rid = dr.reward_id.trim();
+        if rid.is_empty() {
+            continue;
+        }
+
+        if let Some(hrew) = updated_helix.iter().find(|r| r.id == rid) {
+            // if stream offline => disable if not offline-allowed
             if !is_stream_online && !dr.active_offline && dr.is_active {
                 info!("Stream offline => disabling redeem='{}'", dr.reward_name);
-                let patch_body = CustomRewardBody {
-                    is_enabled: Some(false),
-                    ..Default::default()
-                };
-                if let Err(e) = client.update_custom_reward(&broadcaster_id, &dr.reward_id, &patch_body).await {
+                let patch_body = CustomRewardBody { is_enabled: Some(false), ..Default::default() };
+                if let Err(e) = client.update_custom_reward(&broadcaster_id, rid, &patch_body).await {
                     error!("update_custom_reward => {e}");
                 }
                 let mut upd = dr.clone();
                 upd.is_active = false;
-                upd.updated_at = chrono::Utc::now();
+                upd.updated_at = Utc::now();
                 if let Err(e) = redeem_service.redeem_repo.update_redeem(&upd).await {
                     error!("Error updating DB => {e}");
                 }
                 continue;
             }
 
+            // check cost or is_active mismatch
             let cost_mismatch = (dr.cost as u64) != hrew.cost;
             let active_mismatch = dr.is_active != hrew.is_enabled;
             if cost_mismatch || active_mismatch {
@@ -341,7 +336,7 @@ async fn run_sync_for_one_account(
                     is_enabled: if active_mismatch { Some(dr.is_active) } else { None },
                     ..Default::default()
                 };
-                if let Err(e) = client.update_custom_reward(&broadcaster_id, &dr.reward_id, &patch_body).await {
+                if let Err(e) = client.update_custom_reward(&broadcaster_id, rid, &patch_body).await {
                     error!("update_custom_reward => {e}");
                 }
             }
@@ -356,7 +351,28 @@ async fn run_sync_for_one_account(
     Ok(())
 }
 
-/// Returns true if `reward_id` is found in `list`.
-fn is_in_list(list: &[CustomReward], reward_id: &str) -> bool {
-    list.iter().any(|r| r.id == reward_id)
+// Helper for “create a new Helix reward, then update DB row’s reward_id”.
+async fn try_create_new_reward(
+    broadcaster_id: &str,
+    body: &CustomRewardBody,
+    dr: &Redeem,
+    redeem_service: &RedeemService,
+    client: &TwitchHelixClient
+) -> Result<(), Error> {
+    match client.create_custom_reward(broadcaster_id, body).await {
+        Ok(created) => {
+            let mut updated = dr.clone();
+            updated.reward_id = created.id;
+            if updated.plugin_name.as_deref() == Some("builtin") {
+                updated.is_managed = true;
+            }
+            updated.updated_at = Utc::now();
+            redeem_service.redeem_repo.update_redeem(&updated).await?;
+            debug!("Redeem '{}' => assigned new reward_id='{}'", updated.reward_name, updated.reward_id);
+        }
+        Err(e) => {
+            return Err(e);
+        }
+    }
+    Ok(())
 }

@@ -152,6 +152,9 @@ pub struct UpdateRedemptionStatusBody {
 impl TwitchHelixClient {
     /// Creates a custom reward in the broadcaster’s channel.
     /// Required scope: `channel:manage:redemptions`
+    ///
+    /// NOTE: we now do only *one* request/response cycle and parse it. The old code
+    /// had a second request that caused confusion if the first had already succeeded.
     pub async fn create_custom_reward(
         &self,
         broadcaster_id: &str,
@@ -174,43 +177,35 @@ impl TwitchHelixClient {
             .await
             .map_err(|e| Error::Platform(format!("create_custom_reward network error: {e}")))?;
 
-        trace!("create_custom_reward => raw HTTP status={} reason={:?}",
-               resp.status(), resp.text().await.ok());
-
-        // We must re-send the request or hold the response’s text differently, so let's do a new request or approach:
-        // In practice, we typically `.clone()` or read body once carefully. Here for debugging, we rely on status + re-fetch above text carefully.
-
-        // Actually, let's refetch with a second request or add a custom approach. For clarity, we'll just trust the above logging:
-        let resp = self
-            .http_client()
-            .post(&url)
-            .header("Client-Id", self.client_id())
-            .header("Authorization", format!("Bearer {}", self.bearer_token()))
-            .json(&params)
-            .send()
+        let status_code = resp.status();
+        let resp_body = resp
+            .text()
             .await
-            .map_err(|e| Error::Platform(format!("create_custom_reward second attempt: {e}")))?;
+            .map_err(|e| Error::Platform(format!("create_custom_reward read body error: {e}")))?;
 
-        if !resp.status().is_success() {
-            let status = resp.status();
-            let body_text = resp.text().await.unwrap_or_default();
-            warn!("create_custom_reward => status={} body={}", status, body_text);
+        trace!("create_custom_reward => HTTP {} => body={}", status_code, resp_body);
+
+        if !status_code.is_success() {
+            warn!("create_custom_reward => status={} body={}", status_code, resp_body);
             return Err(Error::Platform(format!(
                 "create_custom_reward: HTTP {} => {}",
-                status, body_text
+                status_code, resp_body
             )));
         }
 
-        let mut parsed: CustomRewardResponse = resp
-            .json()
-            .await
+        let parsed: CustomRewardResponse = serde_json::from_str(&resp_body)
             .map_err(|e| Error::Platform(format!("create_custom_reward parse error: {e}")))?;
 
-        if let Some(first) = parsed.data.pop() {
-            debug!("create_custom_reward => success => returned ID='{}' title='{}'", first.id, first.title);
+        if let Some(first) = parsed.data.into_iter().next() {
+            debug!(
+                "create_custom_reward => success => returned ID='{}' title='{}'",
+                first.id, first.title
+            );
             Ok(first)
         } else {
-            Err(Error::Platform("No reward returned by create_custom_reward".into()))
+            Err(Error::Platform(
+                "No reward returned by create_custom_reward".into(),
+            ))
         }
     }
 
@@ -252,6 +247,8 @@ impl TwitchHelixClient {
     }
 
     /// Gets a list of custom rewards. If `reward_ids` is provided, returns only those.
+    /// If `only_manageable_rewards = true`, Twitch only returns those rewards that the token
+    /// can manage.
     /// Required scope: `channel:read:redemptions` or `channel:manage:redemptions`.
     pub async fn get_custom_rewards(
         &self,
@@ -285,25 +282,29 @@ impl TwitchHelixClient {
             .await
             .map_err(|e| Error::Platform(format!("get_custom_rewards network error: {e}")))?;
 
-        trace!("get_custom_rewards => HTTP status={}", resp.status());
-        if !resp.status().is_success() {
-            let status = resp.status();
-            let body_text = resp.text().await.unwrap_or_default();
-            warn!("get_custom_rewards => status={} body={}", status, body_text);
+        let status_code = resp.status();
+        let resp_text = resp.text().await.unwrap_or_default();
+        trace!(
+            "get_custom_rewards => HTTP {} => body length={}",
+            status_code,
+            resp_text.len()
+        );
+
+        if !status_code.is_success() {
+            warn!("get_custom_rewards => status={} body={}", status_code, resp_text);
             return Err(Error::Platform(format!(
                 "get_custom_rewards: HTTP {} => {}",
-                status, body_text
+                status_code, resp_text
             )));
         }
 
-        let parsed: CustomRewardResponse = resp
-            .json()
-            .await
+        let parsed: CustomRewardResponse = serde_json::from_str(&resp_text)
             .map_err(|e| Error::Platform(format!("get_custom_rewards parse error: {e}")))?;
 
         debug!(
             "get_custom_rewards => returned {} rewards for broadcaster_id='{}'",
-            parsed.data.len(), broadcaster_id
+            parsed.data.len(),
+            broadcaster_id
         );
 
         Ok(parsed.data)
@@ -352,23 +353,32 @@ impl TwitchHelixClient {
             .await
             .map_err(|e| Error::Platform(format!("get_custom_reward_redemptions network error: {e}")))?;
 
-        trace!("get_custom_reward_redemptions => HTTP status={}", resp.status());
-        if !resp.status().is_success() {
-            let status = resp.status();
-            let body_text = resp.text().await.unwrap_or_default();
-            warn!("get_custom_reward_redemptions => status={} body={}", status, body_text);
+        let status_code = resp.status();
+        let resp_text = resp.text().await.unwrap_or_default();
+        trace!(
+            "get_custom_reward_redemptions => HTTP {} => body length={}",
+            status_code,
+            resp_text.len()
+        );
+
+        if !status_code.is_success() {
+            warn!(
+                "get_custom_reward_redemptions => status={} body={}",
+                status_code, resp_text
+            );
             return Err(Error::Platform(format!(
                 "get_custom_reward_redemptions: HTTP {} => {}",
-                status, body_text
+                status_code, resp_text
             )));
         }
 
-        let parsed: RedemptionResponse = resp
-            .json()
-            .await
+        let parsed: RedemptionResponse = serde_json::from_str(&resp_text)
             .map_err(|e| Error::Platform(format!("get_custom_reward_redemptions parse error: {e}")))?;
 
-        debug!("get_custom_reward_redemptions => returned {} redemptions", parsed.data.len());
+        debug!(
+            "get_custom_reward_redemptions => returned {} redemptions",
+            parsed.data.len()
+        );
         Ok(parsed.data)
     }
 
@@ -398,27 +408,31 @@ impl TwitchHelixClient {
             .await
             .map_err(|e| Error::Platform(format!("update_custom_reward network error: {e}")))?;
 
-        trace!("update_custom_reward => HTTP status={}", resp.status());
-        if !resp.status().is_success() {
-            let status = resp.status();
-            let body_text = resp.text().await.unwrap_or_default();
-            warn!("update_custom_reward => status={} body={}", status, body_text);
+        let status_code = resp.status();
+        let resp_text = resp.text().await.unwrap_or_default();
+        trace!("update_custom_reward => HTTP {} => body len={}", status_code, resp_text.len());
+
+        if !status_code.is_success() {
+            warn!("update_custom_reward => status={} body={}", status_code, resp_text);
             return Err(Error::Platform(format!(
                 "update_custom_reward: HTTP {} => {}",
-                status, body_text
+                status_code, resp_text
             )));
         }
 
-        let mut parsed: CustomRewardResponse = resp
-            .json()
-            .await
+        let mut parsed: CustomRewardResponse = serde_json::from_str(&resp_text)
             .map_err(|e| Error::Platform(format!("update_custom_reward parse error: {e}")))?;
 
         if let Some(first) = parsed.data.pop() {
-            debug!("update_custom_reward => success => ID='{}' title='{}'", first.id, first.title);
+            debug!(
+                "update_custom_reward => success => ID='{}' title='{}'",
+                first.id, first.title
+            );
             Ok(first)
         } else {
-            Err(Error::Platform("No reward returned by update_custom_reward".into()))
+            Err(Error::Platform(
+                "No reward returned by update_custom_reward".into(),
+            ))
         }
     }
 
@@ -462,20 +476,19 @@ impl TwitchHelixClient {
             .await
             .map_err(|e| Error::Platform(format!("update_redemption_status network error: {e}")))?;
 
-        trace!("update_redemption_status => HTTP status={}", resp.status());
-        if !resp.status().is_success() {
-            let http_status = resp.status();
-            let body_text = resp.text().await.unwrap_or_default();
-            warn!("update_redemption_status => status={} body={}", http_status, body_text);
+        let status_code = resp.status();
+        let resp_text = resp.text().await.unwrap_or_default();
+        trace!("update_redemption_status => HTTP {} => body len={}", status_code, resp_text.len());
+
+        if !status_code.is_success() {
+            warn!("update_redemption_status => status={} body={}", status_code, resp_text);
             return Err(Error::Platform(format!(
                 "update_redemption_status: HTTP {} => {}",
-                http_status, body_text
+                status_code, resp_text
             )));
         }
 
-        let parsed: RedemptionResponse = resp
-            .json()
-            .await
+        let parsed: RedemptionResponse = serde_json::from_str(&resp_text)
             .map_err(|e| Error::Platform(format!("update_redemption_status parse error: {e}")))?;
 
         debug!(

@@ -1,5 +1,3 @@
-// File: maowbot-tui/src/commands/redeem.rs
-
 use std::sync::Arc;
 use chrono::Utc;
 use uuid::Uuid;
@@ -16,6 +14,9 @@ struct AutostartConfig {
 }
 
 /// Main entry point from the TUI dispatcher for "redeem" subcommands.
+///
+/// NOTE: We have renamed the output labels from “broadcaster-managed” to
+/// “web-app managed” and from “bot-managed” to “internally managed.”
 pub async fn handle_redeem_command(args: &[&str], bot_api: &Arc<dyn BotApi>) -> String {
     if args.is_empty() {
         return "Usage: redeem <list|info|add|enable|pause|offline|setcost|setprompt|setplugin|setcommand|remove|sync>".to_string();
@@ -32,8 +33,8 @@ pub async fn handle_redeem_command(args: &[&str], bot_api: &Arc<dyn BotApi>) -> 
                         return "No redeems found for 'twitch-eventsub'.".to_string();
                     }
 
-                    // Partition: broadcaster-managed (is_managed=false) vs. bot-managed (is_managed=true)
-                    let (broadcaster, bot_managed): (Vec<_>, Vec<_>) =
+                    // Partition: *web_app* => is_managed=false, *internally* => is_managed=true
+                    let (web_app, internal): (Vec<_>, Vec<_>) =
                         list.into_iter().partition(|rd| rd.is_managed == false);
 
                     // Try to parse associated Twitch accounts from "autostart"
@@ -47,35 +48,28 @@ pub async fn handle_redeem_command(args: &[&str], bot_api: &Arc<dyn BotApi>) -> 
                             }
                         }
                     }
-                    let accounts_str = if all_accounts.is_empty() {
-                        "[No associated Twitch accounts found in autostart]".to_string()
-                    } else {
-                        format!("Associated Twitch accounts: {}", all_accounts.join(", "))
-                    };
 
                     // Build final output
                     let mut output = String::new();
                     output.push_str("Current Redeems (twitch-eventsub):\n\n");
 
-                    // Broadcaster-managed
-                    if broadcaster.is_empty() {
-                        output.push_str("[Broadcaster-managed redeems]\n(no items)\n\n");
+                    // “web-app managed”
+                    if web_app.is_empty() {
+                        output.push_str("[Web-app managed redeems]\n(no items)\n\n");
                     } else {
-                        output.push_str("[Broadcaster-managed redeems]\n");
-                        output.push_str(&format_table(&broadcaster));
+                        output.push_str("[Web-app managed redeems]\n");
+                        output.push_str(&format_table(&web_app));
                         output.push_str("\n");
                     }
 
-                    // Bot-managed
-                    if bot_managed.is_empty() {
-                        output.push_str("[Bot-managed redeems]\n(no items)\n\n");
+                    // “internally managed”
+                    if internal.is_empty() {
+                        output.push_str("[Internally managed redeems]\n(no items)\n\n");
                     } else {
-                        output.push_str("[Bot-managed redeems]\n");
-                        output.push_str(&format_table(&bot_managed));
+                        output.push_str("[Internally managed redeems]\n");
+                        output.push_str(&format_table(&internal));
                         output.push_str("\n");
                     }
-
-                    output.push_str(&accounts_str);
                     output
                 }
                 Err(e) => format!("Error listing redeems => {e}"),
@@ -96,6 +90,8 @@ pub async fn handle_redeem_command(args: &[&str], bot_api: &Arc<dyn BotApi>) -> 
                         // Exactly one match => show details
                         let rd = &matches[0];
                         format_redeem_details(rd)
+                    } else if matches.is_empty() {
+                        format!("No redeem found matching '{user_input}'")
                     } else {
                         // Multiple matches => show them all
                         let mut msg = String::new();
@@ -180,7 +176,7 @@ pub async fn handle_redeem_command(args: &[&str], bot_api: &Arc<dyn BotApi>) -> 
                     }
                     format!("Redeem '{}' is now enabled.", r.reward_name)
                 }
-                Err(e) => format!("Error: {e}"),
+                Err(e) => e,
             }
         }
 
@@ -199,7 +195,7 @@ pub async fn handle_redeem_command(args: &[&str], bot_api: &Arc<dyn BotApi>) -> 
                     }
                     format!("Redeem '{}' has been paused (is_active=false).", r.reward_name)
                 }
-                Err(e) => format!("Error: {e}"),
+                Err(e) => e,
             }
         }
 
@@ -225,7 +221,7 @@ pub async fn handle_redeem_command(args: &[&str], bot_api: &Arc<dyn BotApi>) -> 
                         Err(e) => format!("Error updating => {e}"),
                     }
                 }
-                Err(e) => format!("Error: {e}"),
+                Err(e) => e,
             }
         }
 
@@ -250,7 +246,7 @@ pub async fn handle_redeem_command(args: &[&str], bot_api: &Arc<dyn BotApi>) -> 
                     }
                     format!("Redeem '{}' cost set to {}.", r.reward_name, cost)
                 }
-                Err(e) => format!("Error: {e}"),
+                Err(e) => e,
             }
         }
 
@@ -271,7 +267,6 @@ pub async fn handle_redeem_command(args: &[&str], bot_api: &Arc<dyn BotApi>) -> 
                     } else if matches.is_empty() {
                         format!("No redeem found matching '{user_input}'")
                     } else {
-                        // multiple
                         let mut msg = String::new();
                         msg.push_str("Multiple redeems match that identifier:\n\n");
                         msg.push_str(&format_table(&matches));
@@ -304,7 +299,7 @@ pub async fn handle_redeem_command(args: &[&str], bot_api: &Arc<dyn BotApi>) -> 
                         Err(e) => format!("Error updating => {e}"),
                     }
                 }
-                Err(e) => format!("Error: {e}"),
+                Err(e) => e,
             }
         }
 
@@ -329,7 +324,7 @@ pub async fn handle_redeem_command(args: &[&str], bot_api: &Arc<dyn BotApi>) -> 
                         Err(e) => format!("Error updating => {e}"),
                     }
                 }
-                Err(e) => format!("Error: {e}"),
+                Err(e) => e,
             }
         }
 
@@ -348,7 +343,7 @@ pub async fn handle_redeem_command(args: &[&str], bot_api: &Arc<dyn BotApi>) -> 
                     }
                     format!("Redeem '{}' removed from DB.", r.reward_name)
                 }
-                Err(e) => format!("Error: {e}"),
+                Err(e) => e,
             }
         }
 
@@ -375,9 +370,9 @@ pub async fn handle_redeem_command(args: &[&str], bot_api: &Arc<dyn BotApi>) -> 
 ///
 /// - If `user_input` is parseable as a UUID, we look up that one redeem.
 /// - Else we search by name (case-insensitive).
-/// - If multiple matches by name, we return an error prompting the user to pick one.
+/// - If multiple matches by name, we return an error string listing them.
 /// - If exactly 1 match, we return it.
-/// - If none, we return an error.
+/// - If none, we return an error string.
 async fn resolve_singleton_redeem(bot_api: &Arc<dyn BotApi>, user_input: &str) -> Result<Redeem, String> {
     let matches = resolve_redeems_by_arg(bot_api, user_input).await
         .map_err(|e| format!("{e}"))?;
@@ -415,7 +410,7 @@ async fn resolve_redeems_by_arg(
         return Ok(filtered);
     }
 
-    // Otherwise, treat as a name. We do a case-insensitive search.
+    // Otherwise, treat as a name. We do a case-insensitive compare:
     let lowered = user_input.to_lowercase();
     let all = bot_api.list_redeems("twitch-eventsub").await
         .map_err(|e| format!("Error listing redeems => {e}"))?;
@@ -428,7 +423,8 @@ async fn resolve_redeems_by_arg(
 }
 
 /// Helper to pretty-print a table of Redeems (for `redeem list`).
-/// Now includes the UUID at the end of each line.
+///
+/// Now includes the UUID at the end of each line, with updated headers:
 fn format_table(redeems: &[Redeem]) -> String {
     if redeems.is_empty() {
         return "(none)\n".to_string();
@@ -487,6 +483,7 @@ fn format_table(redeems: &[Redeem]) -> String {
             let cell = &row[i];
             let pad = col_widths[i].saturating_sub(cell.len());
             if i == 1 {
+                // Right-align cost
                 out.push_str(&format!("{}{}", " ".repeat(pad), cell));
             } else {
                 out.push_str(&format!("{}{}", cell, " ".repeat(pad)));

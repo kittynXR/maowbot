@@ -213,6 +213,7 @@ impl RedeemRepository for PostgresRedeemRepository {
     }
 
     async fn update_redeem(&self, rd: &Redeem) -> Result<(), Error> {
+        // IMPORTANT: Now we also update reward_id in the DB
         sqlx::query(
             r#"
             UPDATE redeems
@@ -224,8 +225,9 @@ impl RedeemRepository for PostgresRedeemRepository {
                 active_offline   = $6,
                 is_managed       = $7,
                 plugin_name      = $8,
-                command_name     = $9
-            WHERE redeem_id      = $10
+                command_name     = $9,
+                reward_id        = $10
+            WHERE redeem_id      = $11
             "#,
         )
             .bind(&rd.reward_name)
@@ -237,6 +239,7 @@ impl RedeemRepository for PostgresRedeemRepository {
             .bind(rd.is_managed)
             .bind(&rd.plugin_name)
             .bind(&rd.command_name)
+            .bind(&rd.reward_id)
             .bind(rd.redeem_id)
             .execute(&self.pool)
             .await?;
