@@ -117,7 +117,7 @@ async fn run_sync_for_one_account(
         }
     }
 
-    // 4) If DB says is_managed=true but Helix does NOT have it => try create or disable
+    // 4) If DB says is_managed=true but Helix does NOT have it => try create or fallback
     for dr in db_redeems {
         if dr.is_managed {
             let found_helix = helix_rewards.iter().any(|hr| hr.id == dr.reward_id);
@@ -172,6 +172,34 @@ async fn run_sync_for_one_account(
         }
     }
 
+    // 4.5) **NEW** For all is_managed redeems that we DO find in Helix, check for changes
+    //      in cost, is_active, etc., and patch them if they differ.
+    for dr in db_redeems {
+        // Is it a bot-managed redeem that also exists in Helix?
+        if dr.is_managed {
+            if let Some(helix_rd) = helix_rewards.iter().find(|hr| hr.id == dr.reward_id) {
+                // Compare cost or is_active
+                let cost_mismatch = (dr.cost as u64) != helix_rd.cost;
+                let active_mismatch = dr.is_active != helix_rd.is_enabled;
+                if cost_mismatch || active_mismatch {
+                    // We'll do a partial update to Helix
+                    let patch_body = CustomRewardBody {
+                        cost: if cost_mismatch { Some(dr.cost as u64) } else { None },
+                        is_enabled: if active_mismatch { Some(dr.is_active) } else { None },
+                        ..Default::default()
+                    };
+                    info!(
+                        "Updating Helix reward='{}' ID={} => cost={}, is_enabled={}",
+                        dr.reward_name, dr.reward_id, dr.cost, dr.is_active
+                    );
+                    if let Err(e) = client.update_custom_reward(&broadcaster_id, &dr.reward_id, &patch_body).await {
+                        error!("update_custom_reward => {e}");
+                    }
+                }
+            }
+        }
+    }
+
     // 5) If stream is offline => disable any is_managed redeems that do not allow offline usage
     if !is_stream_online {
         for dr in db_redeems {
@@ -204,7 +232,6 @@ fn find_reward_by_title<'a>(
     let lowered_title = title.to_lowercase();
     rewards.iter().find(|r| r.title.to_lowercase() == lowered_title)
 }
-
 
 /// Helper: get Helix client for a given <account_name>, if we have a stored credential.
 pub async fn get_helix_client_for_account(

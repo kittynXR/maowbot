@@ -1,7 +1,6 @@
--- migrations/004_seed_builtin_redeems.sql
+-- migrations/003_seed_builtin_redeems.sql
 --
 -- We seed our demonstration "cute" redeem as a built-in, managed redeem.
-
 INSERT INTO redeems (
     redeem_id,
     platform,
