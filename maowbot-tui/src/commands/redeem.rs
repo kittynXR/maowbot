@@ -1,5 +1,3 @@
-// File: maowbot-tui/src/commands/redeem.rs
-
 use std::sync::Arc;
 use chrono::Utc;
 use uuid::Uuid;
@@ -7,65 +5,84 @@ use maowbot_core::Error;
 use maowbot_core::models::Redeem;
 use maowbot_core::plugins::bot_api::BotApi;
 use maowbot_core::plugins::bot_api::redeem_api::RedeemApi;
+use serde::Deserialize;
+
+/// A small struct matching your `AutostartConfig` shape
+#[derive(Debug, Deserialize)]
+struct AutostartConfig {
+    pub accounts: Vec<(String, String)>,
+}
 
 /// The main entry point from the TUI dispatcher:
 pub async fn handle_redeem_command(args: &[&str], bot_api: &Arc<dyn BotApi>) -> String {
     if args.is_empty() {
-        return "Usage: redeem <list|enable|pause|offline|setcost|setprompt|setplugin|setcommand|setcooldown|setaccount|remove|sync>".to_string();
+        return "Usage: redeem <list|enable|pause|offline|setcost|setprompt|setplugin|setcommand|remove|sync>".to_string();
     }
 
     match args[0].to_lowercase().as_str() {
+        // -----------------------------------------------------
+        // LIST
+        // -----------------------------------------------------
         "list" => {
-            // We updated this logic to separate is_managed=false from is_managed=true
             match bot_api.list_redeems("twitch-eventsub").await {
                 Ok(list) => {
                     if list.is_empty() {
-                        "No redeems found for 'twitch-eventsub'.".to_string()
-                    } else {
-                        // Separate broadcaster-managed vs. is_managed=true
-                        let (broadcaster, managed): (Vec<_>, Vec<_>) =
-                            list.into_iter().partition(|rd| rd.is_managed == false);
-
-                        let mut out = String::from("Current Redeems (twitch-eventsub):\n");
-
-                        // Show all broadcaster-managed first
-                        if !broadcaster.is_empty() {
-                            out.push_str("[Broadcaster-managed redeems]\n");
-                            for r in &broadcaster {
-                                out.push_str(&format!(
-                                    " - name='{}' cost={} active={} offline={} plugin={:?} command={:?}\n",
-                                    r.reward_name, r.cost, r.is_active, r.active_offline,
-                                    r.plugin_name, r.command_name
-                                ));
-                            }
-                        } else {
-                            out.push_str("[No broadcaster-managed redeems found]\n");
-                        }
-
-                        // Separator line
-                        out.push_str("\n--------------\n");
-
-                        // Then show all is_managed = true
-                        if !managed.is_empty() {
-                            out.push_str("[Bot-managed redeems]\n");
-                            for r in &managed {
-                                out.push_str(&format!(
-                                    " - name='{}' cost={} active={} offline={} plugin={:?} command={:?}\n",
-                                    r.reward_name, r.cost, r.is_active, r.active_offline,
-                                    r.plugin_name, r.command_name
-                                ));
-                            }
-                        } else {
-                            out.push_str("[No bot-managed redeems found]\n");
-                        }
-
-                        out
+                        return "No redeems found for 'twitch-eventsub'.".to_string();
                     }
+
+                    // Partition: broadcaster-managed = is_managed=false, bot-managed = is_managed=true
+                    let (broadcaster, bot_managed): (Vec<_>, Vec<_>) =
+                        list.into_iter().partition(|rd| rd.is_managed == false);
+
+                    // Attempt to parse associated Twitch accounts from "autostart" config
+                    let mut all_accounts = Vec::new();
+                    if let Ok(Some(config_str)) = bot_api.get_bot_config_value("autostart").await {
+                        if let Ok(parsed) = serde_json::from_str::<AutostartConfig>(&config_str) {
+                            for (plat, acct) in parsed.accounts {
+                                if plat.eq_ignore_ascii_case("twitch") || plat.eq_ignore_ascii_case("twitch-irc") {
+                                    all_accounts.push(acct);
+                                }
+                            }
+                        }
+                    }
+                    let accounts_str = if all_accounts.is_empty() {
+                        "[No associated Twitch accounts found in autostart]".to_string()
+                    } else {
+                        format!("Associated Twitch accounts: {}", all_accounts.join(", "))
+                    };
+
+                    // Build the final output
+                    let mut output = String::new();
+                    output.push_str("Current Redeems (twitch-eventsub):\n\n");
+
+                    // Print broadcaster-managed section
+                    if broadcaster.is_empty() {
+                        output.push_str("[Broadcaster-managed redeems]\n(no items)\n\n");
+                    } else {
+                        output.push_str("[Broadcaster-managed redeems]\n");
+                        output.push_str(&format_table(&broadcaster));
+                        output.push_str("\n");
+                    }
+
+                    // Print bot-managed section
+                    if bot_managed.is_empty() {
+                        output.push_str("[Bot-managed redeems]\n(no items)\n\n");
+                    } else {
+                        output.push_str("[Bot-managed redeems]\n");
+                        output.push_str(&format_table(&bot_managed));
+                        output.push_str("\n");
+                    }
+
+                    output.push_str(&accounts_str);
+                    output
                 }
                 Err(e) => format!("Error listing redeems => {e}"),
             }
         }
 
+        // -----------------------------------------------------
+        // ENABLE
+        // -----------------------------------------------------
         "enable" => {
             if args.len() < 2 {
                 return "Usage: redeem enable <redeemName>".to_string();
@@ -82,8 +99,10 @@ pub async fn handle_redeem_command(args: &[&str], bot_api: &Arc<dyn BotApi>) -> 
             }
         }
 
+        // -----------------------------------------------------
+        // PAUSE (set is_active=false)
+        // -----------------------------------------------------
         "pause" => {
-            // We'll treat "pause" as setting is_active=false
             if args.len() < 2 {
                 return "Usage: redeem pause <redeemName>".to_string();
             }
@@ -99,8 +118,11 @@ pub async fn handle_redeem_command(args: &[&str], bot_api: &Arc<dyn BotApi>) -> 
             }
         }
 
+        // -----------------------------------------------------
+        // OFFLINE
+        // Toggles `active_offline` boolean in DB.
+        // -----------------------------------------------------
         "offline" => {
-            // toggles active_offline
             if args.len() < 2 {
                 return "Usage: redeem offline <redeemName>".to_string();
             }
@@ -123,6 +145,9 @@ pub async fn handle_redeem_command(args: &[&str], bot_api: &Arc<dyn BotApi>) -> 
             }
         }
 
+        // -----------------------------------------------------
+        // SETCOST
+        // -----------------------------------------------------
         "setcost" => {
             if args.len() < 3 {
                 return "Usage: redeem setcost <points> <redeemName>".to_string();
@@ -144,8 +169,11 @@ pub async fn handle_redeem_command(args: &[&str], bot_api: &Arc<dyn BotApi>) -> 
             }
         }
 
+        // -----------------------------------------------------
+        // SETPROMPT
+        // (demo only, not stored in DB)
+        // -----------------------------------------------------
         "setprompt" => {
-            // Not currently stored in DB; demonstration only
             if args.len() < 3 {
                 return "Usage: redeem setprompt <promptText> <redeemName>".to_string();
             }
@@ -159,6 +187,9 @@ pub async fn handle_redeem_command(args: &[&str], bot_api: &Arc<dyn BotApi>) -> 
             }
         }
 
+        // -----------------------------------------------------
+        // SETPLUGIN
+        // -----------------------------------------------------
         "setplugin" => {
             if args.len() < 3 {
                 return "Usage: redeem setplugin <pluginName> <redeemName>".to_string();
@@ -181,6 +212,9 @@ pub async fn handle_redeem_command(args: &[&str], bot_api: &Arc<dyn BotApi>) -> 
             }
         }
 
+        // -----------------------------------------------------
+        // SETCOMMAND
+        // -----------------------------------------------------
         "setcommand" => {
             if args.len() < 3 {
                 return "Usage: redeem setcommand <commandName> <redeemName>".to_string();
@@ -203,49 +237,14 @@ pub async fn handle_redeem_command(args: &[&str], bot_api: &Arc<dyn BotApi>) -> 
             }
         }
 
-        "setcooldown" => {
-            // Not currently in DB; demonstration only
-            if args.len() < 3 {
-                return "Usage: redeem setcooldown <seconds> <redeemName>".to_string();
-            }
-            let seconds = args[1];
-            let name = args[2];
-            match get_redeem_by_name(bot_api, name).await {
-                Ok(r) => {
-                    format!(
-                        "(Demo) Would set cooldown={} for redeem '{}'. [Not in DB]",
-                        seconds, r.reward_name
-                    )
-                }
-                Err(e) => format!("Could not find redeem '{name}' => {e}"),
-            }
-        }
-
-        "setaccount" => {
-            // Not currently implemented in DB; demonstration only
-            if args.len() < 3 {
-                return "Usage: redeem setaccount <accountName> <redeemName>".to_string();
-            }
-            let account_name = args[1];
-            let name = args[2];
-            match get_redeem_by_name(bot_api, name).await {
-                Ok(r) => {
-                    format!(
-                        "(Demo) Would link redeem '{}' to account '{}'. [Not implemented]",
-                        r.reward_name, account_name
-                    )
-                }
-                Err(e) => format!("Could not find redeem '{name}' => {e}"),
-            }
-        }
-
+        // -----------------------------------------------------
+        // REMOVE
+        // -----------------------------------------------------
         "remove" => {
-            // Actually removes from DB
-            if args.len() < 3 {
-                return "Usage: redeem remove <accountName> <redeemName>".to_string();
+            if args.len() < 2 {
+                return "Usage: redeem remove <redeemName>".to_string();
             }
-            let _account_name = args[1];
-            let name = args[2];
+            let name = args[1];
             match get_redeem_by_name(bot_api, name).await {
                 Ok(r) => {
                     if let Err(e) = bot_api.delete_redeem(r.redeem_id).await {
@@ -257,22 +256,27 @@ pub async fn handle_redeem_command(args: &[&str], bot_api: &Arc<dyn BotApi>) -> 
             }
         }
 
-        // NEW SUBCOMMAND: "redeem sync"
+        // -----------------------------------------------------
+        // SYNC
+        // -----------------------------------------------------
         "sync" => {
-            // This calls a new (or existing) method in your BotApi to kick off redeem syncing.
             match bot_api.sync_redeems().await {
                 Ok(_) => "Redeem sync task started successfully.".to_string(),
                 Err(e) => format!("Error calling redeem sync => {e}"),
             }
         }
 
+        // -----------------------------------------------------
+        // UNKNOWN
+        // -----------------------------------------------------
         _ => {
             "Unknown redeem subcommand. Type 'help redeem' for usage.".to_string()
         }
     }
 }
 
-/// Utility: find a Redeem by `reward_name` (case-insensitive) among all known "twitch-eventsub" redeems.
+/// Utility: find a Redeem by `reward_name` (case-insensitive) among all
+/// 'twitch-eventsub' redeems in the DB.
 async fn get_redeem_by_name(bot_api: &Arc<dyn BotApi>, name: &str) -> Result<Redeem, Error> {
     let all = bot_api.list_redeems("twitch-eventsub").await?;
     let lowered = name.to_lowercase();
@@ -283,4 +287,85 @@ async fn get_redeem_by_name(bot_api: &Arc<dyn BotApi>, name: &str) -> Result<Red
         }
     }
     Err(Error::Platform(format!("No redeem found matching reward_name='{name}'")))
+}
+
+/// Helper for pretty-printing a table of Redeems.
+fn format_table(redeems: &[Redeem]) -> String {
+    if redeems.is_empty() {
+        return "(none)\n".to_string();
+    }
+
+    // Collect the data rows:
+    //  1) Name
+    //  2) Cost
+    //  3) Actv (is_active)
+    //  4) Offl (active_offline)
+    //  5) Plugin
+    //  6) Command
+    let mut rows: Vec<[String; 6]> = Vec::new();
+    for rd in redeems {
+        let plugin_s = rd.plugin_name.clone().unwrap_or("-".to_string());
+        let cmd_s = rd.command_name.clone().unwrap_or("-".to_string());
+        rows.push([
+            rd.reward_name.clone(),
+            format!("{}", rd.cost),
+            format!("{}", rd.is_active),
+            format!("{}", rd.active_offline),
+            plugin_s,
+            cmd_s,
+        ]);
+    }
+
+    // Determine column widths
+    let mut col_widths = [0usize; 6];
+    for row in &rows {
+        for (i, cell) in row.iter().enumerate() {
+            col_widths[i] = col_widths[i].max(cell.len());
+        }
+    }
+    // Add extra spacing for readability
+    for w in &mut col_widths {
+        *w += 2;
+    }
+
+    let headers = ["Name", "Cost", "Actv", "Offl", "Plugin", "Command"];
+    let mut out = String::new();
+
+    // Format header row with a delimiter space between columns.
+    for i in 0..headers.len() {
+        let head = headers[i];
+        let formatted = if i == 1 {
+            let pad = col_widths[i].saturating_sub(head.len());
+            format!("{}{}", " ".repeat(pad), head)
+        } else {
+            let pad = col_widths[i].saturating_sub(head.len());
+            format!("{}{}", head, " ".repeat(pad))
+        };
+        out.push_str(&formatted);
+        if i < headers.len() - 1 {
+            out.push_str(" "); // delimiter space between columns
+        }
+    }
+    out.push('\n');
+
+    // Format each data row with delimiter space between columns.
+    for row in rows {
+        for i in 0..row.len() {
+            let cell = &row[i];
+            let formatted = if i == 1 {
+                let pad = col_widths[i].saturating_sub(cell.len());
+                format!("{}{}", " ".repeat(pad), cell)
+            } else {
+                let pad = col_widths[i].saturating_sub(cell.len());
+                format!("{}{}", cell, " ".repeat(pad))
+            };
+            out.push_str(&formatted);
+            if i < row.len() - 1 {
+                out.push_str(" ");
+            }
+        }
+        out.push('\n');
+    }
+
+    out
 }

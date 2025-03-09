@@ -1,5 +1,3 @@
-// File: maowbot-core/src/services/twitch/redeem_service.rs
-
 use std::sync::Arc;
 use chrono::{Utc};
 use uuid::Uuid;
@@ -92,7 +90,7 @@ impl RedeemService {
             user_id,
             used_at: Utc::now(),
             channel: Some(channel.to_string()),
-            usage_data: None, // You can store redemption.user_input here or other fields
+            usage_data: None, // You can store redemption.user_input, etc.
         };
         self.usage_repo.insert_usage(&usage).await?;
 
@@ -105,9 +103,10 @@ impl RedeemService {
         // 4) Decide if it’s built-in or plugin-based
         if rd.plugin_name.is_some() {
             // In the future, dispatch to plugin
-            // e.g. self.call_plugin(rd.plugin_name, redemption)
-            // (not yet implemented)
-            info!("Redeem '{}' is plugin-based => not yet implemented logic.", rd.reward_name);
+            info!(
+                "Redeem '{}' is plugin-based => not yet implemented plugin logic.",
+                rd.reward_name
+            );
         } else {
             // Built-in logic by reward_name:
             builtin_redeems::handle_builtin_redeem(&ctx, redemption, &rd.reward_name).await?;
@@ -120,36 +119,23 @@ impl RedeemService {
     /// then constructs a TwitchHelixClient from it. If none found, we return None.
     async fn get_helix_client_for_broadcaster(
         &self,
-        platform: &str,
+        _platform: &str,
         channel_or_broadcaster: &str,
     ) -> Option<crate::platforms::twitch::client::TwitchHelixClient> {
-        // For simplicity, assume we have only one “account_name” that matches
-        // the broadcaster’s global_username. Then ask platform_manager
-        // to see if it has a Helix token. This is quite custom to your logic.
+        // For simplicity, attempt to match the broadcaster's global_username to `channel_or_broadcaster`.
+        // Then find a Helix credential in platform_manager.
         let user_result = self.user_service
             .find_user_by_global_username(channel_or_broadcaster)
             .await;
         let user = match user_result {
             Ok(u) => u,
             Err(_) => {
-                debug!("No matching local user for broadcaster='{}'", channel_or_broadcaster);
+                debug!("No local user for broadcaster='{}'", channel_or_broadcaster);
                 return None;
             }
         };
 
-        // Then we get the Helix client from the platform manager or from the credentials.
-        let key = ("twitch".to_string(), user.user_id.to_string());
-        let guard = self.platform_manager.active_runtimes.lock().await;
-        let handle_opt = guard.get(&key);
-        if let Some(handle) = handle_opt {
-            // We can try to see if handle has a Helix client if we stored it
-            // e.g. if handle.platform == "twitch"
-            // but in this example, we do not store it directly. We'll reconstruct from credentials.
-        }
-        drop(guard);
-
         // Reconstruct from the credential:
-        // (You might keep repeated code in a helper.)
         if let Ok(Some(cred)) = self.platform_manager.credentials_repo
             .get_credentials(&crate::models::Platform::Twitch, user.user_id)
             .await
@@ -164,11 +150,12 @@ impl RedeemService {
                 }
             }
         }
+
         None
     }
 
     // ------------------------------------------------------------------
-    // Additional CRUD / sync logic
+    // Additional CRUD / usage
     // ------------------------------------------------------------------
 
     pub async fn create_redeem(
@@ -224,40 +211,5 @@ impl RedeemService {
 
     pub async fn delete_redeem(&self, redeem_id: Uuid) -> Result<(), Error> {
         self.redeem_repo.delete_redeem(redeem_id).await
-    }
-
-    /// Example function to ensure all built-in redeems exist, or are updated as needed.
-    /// You can call this on bot startup, channel update, stream online/offline, etc.
-    pub async fn sync_built_in_redeems(&self) -> Result<(), Error> {
-        info!("sync_built_in_redeems: verifying built-in redeems exist in DB...");
-
-        // For demonstration, we only “require” the “cute” redeem to exist. If it’s missing, we insert it.
-        let found = self.redeem_repo.get_redeem_by_reward_id("twitch-eventsub", "builtin.cute").await?;
-        if found.is_none() {
-            info!("'cute' redeem missing => creating new row in DB...");
-            let now = Utc::now();
-            let new_rd = Redeem {
-                redeem_id: Uuid::new_v4(),
-                platform: "twitch-eventsub".to_string(),
-                reward_id: "builtin.cute".to_string(),
-                reward_name: "cute".to_string(),
-                cost: 50,
-                is_active: true,
-                dynamic_pricing: false,
-                created_at: now,
-                updated_at: now,
-                active_offline: true,
-                is_managed: true,
-                plugin_name: None,
-                command_name: None,
-            };
-            self.redeem_repo.create_redeem(&new_rd).await?;
-        } else {
-            debug!("Found 'cute' redeem => no changes.");
-        }
-
-        // If you had more built-in redeems, check them all here.
-
-        Ok(())
     }
 }
