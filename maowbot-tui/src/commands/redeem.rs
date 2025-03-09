@@ -15,7 +15,7 @@ struct AutostartConfig {
     pub accounts: Vec<(String, String)>,
 }
 
-/// Main entry point from the TUI dispatcher. Now includes the new "redeem add" subcommand.
+/// Main entry point from the TUI dispatcher for "redeem" subcommands.
 pub async fn handle_redeem_command(args: &[&str], bot_api: &Arc<dyn BotApi>) -> String {
     if args.is_empty() {
         return "Usage: redeem <list|info|add|enable|pause|offline|setcost|setprompt|setplugin|setcommand|remove|sync>".to_string();
@@ -87,17 +87,30 @@ pub async fn handle_redeem_command(args: &[&str], bot_api: &Arc<dyn BotApi>) -> 
         // -----------------------------------------------------
         "info" => {
             if args.len() < 2 {
-                return "Usage: redeem info <redeemName>".to_string();
+                return "Usage: redeem info <redeemNameOrUuid>".to_string();
             }
-            let name = args[1];
-            match get_redeem_by_name(bot_api, name).await {
-                Ok(redeem) => format_redeem_details(&redeem),
-                Err(e) => format!("Could not find redeem '{name}' => {e}"),
+            let user_input = args[1];
+            match resolve_redeems_by_arg(bot_api, user_input).await {
+                Ok(matches) => {
+                    if matches.len() == 1 {
+                        // Exactly one match => show details
+                        let rd = &matches[0];
+                        format_redeem_details(rd)
+                    } else {
+                        // Multiple matches => show them all
+                        let mut msg = String::new();
+                        msg.push_str("Multiple redeems match that identifier:\n\n");
+                        msg.push_str(&format_table(&matches));
+                        msg.push_str("\nPlease specify the exact UUID to see details of one.\n");
+                        msg
+                    }
+                }
+                Err(e) => format!("Error: {e}"),
             }
         }
 
         // -----------------------------------------------------
-        // ADD (NEW SUBCOMMAND)
+        // ADD
         // -----------------------------------------------------
         "add" => {
             // Example usage:
@@ -128,7 +141,7 @@ pub async fn handle_redeem_command(args: &[&str], bot_api: &Arc<dyn BotApi>) -> 
                 }
             }
 
-            // 1) Insert new row. We'll pass empty "" for reward_id; the DB sets is_managed=false by default.
+            // 1) Insert new row. We'll pass empty "" for reward_id initially.
             match bot_api.create_redeem("twitch-eventsub", "", reward_name, cost, dynamic_pricing).await {
                 Ok(mut new_rd) => {
                     // 2) If user wants is_managed or offline, update the newly created row
@@ -153,21 +166,21 @@ pub async fn handle_redeem_command(args: &[&str], bot_api: &Arc<dyn BotApi>) -> 
         }
 
         // -----------------------------------------------------
-        // ENABLE
+        // ENABLE (set is_active=true)
         // -----------------------------------------------------
         "enable" => {
             if args.len() < 2 {
-                return "Usage: redeem enable <redeemName>".to_string();
+                return "Usage: redeem enable <redeemNameOrUuid>".to_string();
             }
-            let name = args[1];
-            match get_redeem_by_name(bot_api, name).await {
-                Ok(redeem) => {
-                    if let Err(e) = bot_api.set_redeem_active(redeem.redeem_id, true).await {
+            let user_input = args[1];
+            match resolve_singleton_redeem(bot_api, user_input).await {
+                Ok(r) => {
+                    if let Err(e) = bot_api.set_redeem_active(r.redeem_id, true).await {
                         return format!("Error enabling => {e}");
                     }
-                    format!("Redeem '{}' is now enabled.", redeem.reward_name)
+                    format!("Redeem '{}' is now enabled.", r.reward_name)
                 }
-                Err(e) => format!("Could not find redeem '{name}' => {e}"),
+                Err(e) => format!("Error: {e}"),
             }
         }
 
@@ -176,30 +189,29 @@ pub async fn handle_redeem_command(args: &[&str], bot_api: &Arc<dyn BotApi>) -> 
         // -----------------------------------------------------
         "pause" => {
             if args.len() < 2 {
-                return "Usage: redeem pause <redeemName>".to_string();
+                return "Usage: redeem pause <redeemNameOrUuid>".to_string();
             }
-            let name = args[1];
-            match get_redeem_by_name(bot_api, name).await {
-                Ok(redeem) => {
-                    if let Err(e) = bot_api.set_redeem_active(redeem.redeem_id, false).await {
+            let user_input = args[1];
+            match resolve_singleton_redeem(bot_api, user_input).await {
+                Ok(r) => {
+                    if let Err(e) = bot_api.set_redeem_active(r.redeem_id, false).await {
                         return format!("Error pausing => {e}");
                     }
-                    format!("Redeem '{}' has been paused (is_active=false).", redeem.reward_name)
+                    format!("Redeem '{}' has been paused (is_active=false).", r.reward_name)
                 }
-                Err(e) => format!("Could not find redeem '{name}' => {e}"),
+                Err(e) => format!("Error: {e}"),
             }
         }
 
         // -----------------------------------------------------
-        // OFFLINE
-        // Toggles `active_offline` boolean in DB.
+        // OFFLINE (toggle `active_offline`)
         // -----------------------------------------------------
         "offline" => {
             if args.len() < 2 {
-                return "Usage: redeem offline <redeemName>".to_string();
+                return "Usage: redeem offline <redeemNameOrUuid>".to_string();
             }
-            let name = args[1];
-            match get_redeem_by_name(bot_api, name).await {
+            let user_input = args[1];
+            match resolve_singleton_redeem(bot_api, user_input).await {
                 Ok(mut redeem) => {
                     let new_val = !redeem.active_offline;
                     redeem.active_offline = new_val;
@@ -213,7 +225,7 @@ pub async fn handle_redeem_command(args: &[&str], bot_api: &Arc<dyn BotApi>) -> 
                         Err(e) => format!("Error updating => {e}"),
                     }
                 }
-                Err(e) => format!("Could not find redeem '{name}' => {e}"),
+                Err(e) => format!("Error: {e}"),
             }
         }
 
@@ -222,40 +234,52 @@ pub async fn handle_redeem_command(args: &[&str], bot_api: &Arc<dyn BotApi>) -> 
         // -----------------------------------------------------
         "setcost" => {
             if args.len() < 3 {
-                return "Usage: redeem setcost <points> <redeemName>".to_string();
+                return "Usage: redeem setcost <points> <redeemNameOrUuid>".to_string();
             }
             let cost_str = args[1];
-            let name = args[2];
+            let user_input = args[2];
             let cost = match cost_str.parse::<i32>() {
                 Ok(n) => n,
                 Err(_) => return "Cost must be an integer.".to_string(),
             };
-            match get_redeem_by_name(bot_api, name).await {
-                Ok(redeem) => {
-                    if let Err(e) = bot_api.update_redeem_cost(redeem.redeem_id, cost).await {
+
+            match resolve_singleton_redeem(bot_api, user_input).await {
+                Ok(r) => {
+                    if let Err(e) = bot_api.update_redeem_cost(r.redeem_id, cost).await {
                         return format!("Error setting cost => {e}");
                     }
-                    format!("Redeem '{}' cost set to {}.", redeem.reward_name, cost)
+                    format!("Redeem '{}' cost set to {}.", r.reward_name, cost)
                 }
-                Err(e) => format!("Could not find redeem '{name}' => {e}"),
+                Err(e) => format!("Error: {e}"),
             }
         }
 
         // -----------------------------------------------------
-        // SETPROMPT
-        // (demo only, not stored in DB)
+        // SETPROMPT (demo only)
         // -----------------------------------------------------
         "setprompt" => {
             if args.len() < 3 {
-                return "Usage: redeem setprompt <promptText> <redeemName>".to_string();
+                return "Usage: redeem setprompt <promptText> <redeemNameOrUuid>".to_string();
             }
             let prompt_text = args[1];
-            let name = args[2];
-            match get_redeem_by_name(bot_api, name).await {
-                Ok(r) => {
-                    format!("(Demo) Would set prompt for '{}' => '{}'", r.reward_name, prompt_text)
+            let user_input = args[2];
+            match resolve_redeems_by_arg(bot_api, user_input).await {
+                Ok(matches) => {
+                    if matches.len() == 1 {
+                        let r = &matches[0];
+                        format!("(Demo) Would set prompt for '{}' => '{}'", r.reward_name, prompt_text)
+                    } else if matches.is_empty() {
+                        format!("No redeem found matching '{user_input}'")
+                    } else {
+                        // multiple
+                        let mut msg = String::new();
+                        msg.push_str("Multiple redeems match that identifier:\n\n");
+                        msg.push_str(&format_table(&matches));
+                        msg.push_str("\nPlease specify the exact UUID.\n");
+                        msg
+                    }
                 }
-                Err(e) => format!("Could not find redeem '{name}' => {e}"),
+                Err(e) => format!("Error: {e}"),
             }
         }
 
@@ -264,11 +288,11 @@ pub async fn handle_redeem_command(args: &[&str], bot_api: &Arc<dyn BotApi>) -> 
         // -----------------------------------------------------
         "setplugin" => {
             if args.len() < 3 {
-                return "Usage: redeem setplugin <pluginName> <redeemName>".to_string();
+                return "Usage: redeem setplugin <pluginName> <redeemNameOrUuid>".to_string();
             }
             let plugin_name = args[1];
-            let name = args[2];
-            match get_redeem_by_name(bot_api, name).await {
+            let user_input = args[2];
+            match resolve_singleton_redeem(bot_api, user_input).await {
                 Ok(mut r) => {
                     r.plugin_name = Some(plugin_name.to_string());
                     r.updated_at = Utc::now();
@@ -280,7 +304,7 @@ pub async fn handle_redeem_command(args: &[&str], bot_api: &Arc<dyn BotApi>) -> 
                         Err(e) => format!("Error updating => {e}"),
                     }
                 }
-                Err(e) => format!("Could not find redeem '{name}' => {e}"),
+                Err(e) => format!("Error: {e}"),
             }
         }
 
@@ -289,11 +313,11 @@ pub async fn handle_redeem_command(args: &[&str], bot_api: &Arc<dyn BotApi>) -> 
         // -----------------------------------------------------
         "setcommand" => {
             if args.len() < 3 {
-                return "Usage: redeem setcommand <commandName> <redeemName>".to_string();
+                return "Usage: redeem setcommand <commandName> <redeemNameOrUuid>".to_string();
             }
             let command_name = args[1];
-            let name = args[2];
-            match get_redeem_by_name(bot_api, name).await {
+            let user_input = args[2];
+            match resolve_singleton_redeem(bot_api, user_input).await {
                 Ok(mut r) => {
                     r.command_name = Some(command_name.to_string());
                     r.updated_at = Utc::now();
@@ -305,7 +329,7 @@ pub async fn handle_redeem_command(args: &[&str], bot_api: &Arc<dyn BotApi>) -> 
                         Err(e) => format!("Error updating => {e}"),
                     }
                 }
-                Err(e) => format!("Could not find redeem '{name}' => {e}"),
+                Err(e) => format!("Error: {e}"),
             }
         }
 
@@ -314,17 +338,17 @@ pub async fn handle_redeem_command(args: &[&str], bot_api: &Arc<dyn BotApi>) -> 
         // -----------------------------------------------------
         "remove" => {
             if args.len() < 2 {
-                return "Usage: redeem remove <redeemName>".to_string();
+                return "Usage: redeem remove <redeemNameOrUuid>".to_string();
             }
-            let name = args[1];
-            match get_redeem_by_name(bot_api, name).await {
+            let user_input = args[1];
+            match resolve_singleton_redeem(bot_api, user_input).await {
                 Ok(r) => {
                     if let Err(e) = bot_api.delete_redeem(r.redeem_id).await {
                         return format!("Error removing => {e}");
                     }
                     format!("Redeem '{}' removed from DB.", r.reward_name)
                 }
-                Err(e) => format!("Could not find redeem '{name}' => {e}"),
+                Err(e) => format!("Error: {e}"),
             }
         }
 
@@ -347,28 +371,71 @@ pub async fn handle_redeem_command(args: &[&str], bot_api: &Arc<dyn BotApi>) -> 
     }
 }
 
-/// Looks up a Redeem by reward_name (case-insensitive) among all
-/// 'twitch-eventsub' redeems in the DB.
-async fn get_redeem_by_name(bot_api: &Arc<dyn BotApi>, name: &str) -> Result<Redeem, Error> {
-    let all = bot_api.list_redeems("twitch-eventsub").await?;
-    let lowered = name.to_lowercase();
+/// Attempts to resolve exactly one redeem for commands that require a single target.
+///
+/// - If `user_input` is parseable as a UUID, we look up that one redeem.
+/// - Else we search by name (case-insensitive).
+/// - If multiple matches by name, we return an error prompting the user to pick one.
+/// - If exactly 1 match, we return it.
+/// - If none, we return an error.
+async fn resolve_singleton_redeem(bot_api: &Arc<dyn BotApi>, user_input: &str) -> Result<Redeem, String> {
+    let matches = resolve_redeems_by_arg(bot_api, user_input).await
+        .map_err(|e| format!("{e}"))?;
 
-    for rd in all {
-        if rd.reward_name.to_lowercase() == lowered {
-            return Ok(rd);
+    match matches.len() {
+        0 => Err(format!("No redeem found matching '{user_input}'.")),
+        1 => Ok(matches[0].clone()),
+        _ => {
+            // multiple
+            let mut msg = String::from("Multiple redeems match that identifier:\n\n");
+            msg.push_str(&format_table(&matches));
+            msg.push_str("\nPlease specify the exact UUID.\n");
+            Err(msg)
         }
     }
-    Err(Error::Platform(format!("No redeem found matching reward_name='{name}'")))
+}
+
+/// Finds all redeems that match the given string either as a UUID or by reward_name.
+/// Returns a vector of matches (could be empty, 1, or multiple).
+async fn resolve_redeems_by_arg(
+    bot_api: &Arc<dyn BotApi>,
+    user_input: &str
+) -> Result<Vec<Redeem>, String> {
+    // First, attempt to parse as a UUID
+    if let Ok(u) = Uuid::parse_str(user_input) {
+        // If that parse works, fetch all redeems once...
+        let all = bot_api.list_redeems("twitch-eventsub").await
+            .map_err(|e| format!("Error listing redeems => {e}"))?;
+
+        // Then find the one with that ID (if any).
+        let filtered: Vec<Redeem> = all.into_iter()
+            .filter(|r| r.redeem_id == u)
+            .collect();
+
+        return Ok(filtered);
+    }
+
+    // Otherwise, treat as a name. We do a case-insensitive search.
+    let lowered = user_input.to_lowercase();
+    let all = bot_api.list_redeems("twitch-eventsub").await
+        .map_err(|e| format!("Error listing redeems => {e}"))?;
+
+    let filtered: Vec<Redeem> = all.into_iter()
+        .filter(|r| r.reward_name.to_lowercase() == lowered)
+        .collect();
+
+    Ok(filtered)
 }
 
 /// Helper to pretty-print a table of Redeems (for `redeem list`).
+/// Now includes the UUID at the end of each line.
 fn format_table(redeems: &[Redeem]) -> String {
     if redeems.is_empty() {
         return "(none)\n".to_string();
     }
 
-    // 1) Collect data: [Name, Cost, Actv, Offl, Plugin, Command]
-    let mut rows: Vec<[String; 6]> = Vec::new();
+    // 1) Collect data: [Name, Cost, Actv, Offl, Plugin, Command, UUID]
+    let mut rows: Vec<[String; 7]> = Vec::new();
     for rd in redeems {
         let plugin_s = rd.plugin_name.clone().unwrap_or("-".to_string());
         let cmd_s = rd.command_name.clone().unwrap_or("-".to_string());
@@ -379,11 +446,12 @@ fn format_table(redeems: &[Redeem]) -> String {
             format!("{}", rd.active_offline),
             plugin_s,
             cmd_s,
+            rd.redeem_id.to_string(), // Include UUID at the end
         ]);
     }
 
     // 2) Determine column widths
-    let mut col_widths = [0usize; 6];
+    let mut col_widths = [0usize; 7];
     for row in &rows {
         for (i, cell) in row.iter().enumerate() {
             col_widths[i] = col_widths[i].max(cell.len());
@@ -394,7 +462,7 @@ fn format_table(redeems: &[Redeem]) -> String {
         *w += 2;
     }
 
-    let headers = ["Name", "Cost", "Actv", "Offl", "Plugin", "Command"];
+    let headers = ["Name", "Cost", "Actv", "Offl", "Plugin", "Command", "UUID"];
     let mut out = String::new();
 
     // 3) Format header row

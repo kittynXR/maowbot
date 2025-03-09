@@ -1,4 +1,4 @@
-use tracing::{info, error, warn, debug};
+use tracing::{info, error, warn, debug, trace};
 use crate::Error;
 use crate::services::twitch::redeem_service::RedeemService;
 use crate::platforms::manager::PlatformManager;
@@ -12,7 +12,7 @@ use serde::Deserialize;
 /// We re-use the shape below to parse the `autostart` config from your bot_config.
 #[derive(Debug, Deserialize)]
 pub struct AutostartConfig {
-    pub accounts: Vec<(String, String)>, // e.g. [ ("twitch-irc", "Kittyn"), ("twitch-irc", "Synapsycat") ]
+    pub accounts: Vec<(String, String)>, // e.g. [("twitch-irc","Kittyn"), ("twitch-irc","Synapsycat")]
 }
 
 /// The main function that enumerates all the Twitch accounts from autostart
@@ -39,19 +39,25 @@ pub async fn sync_channel_redeems(
         Ok(c) => c,
         Err(e) => {
             error!("Failed to parse 'autostart' JSON: {}", e);
-            return Ok(()); // just skip, do not crash
+            return Ok(()); // just skip
         }
     };
 
-    // 2) For each (platform, account) in autostart => if it's Twitch or twitch-irc, do Helix sync logic.
-    //    We'll gather the DB's "twitch-eventsub" redeems once; that’s how we store them.
+    // 2) For each (platform, account) => if it's twitch or twitch-irc, do Helix sync
     let all_redeems = redeem_service.list_redeems("twitch-eventsub").await?;
-    info!("sync_channel_redeems: Found {} DB redeems on 'twitch-eventsub'.", all_redeems.len());
+    info!(
+        "sync_channel_redeems: Found {} DB redeems on 'twitch-eventsub'.",
+        all_redeems.len()
+    );
 
     for (pf, acct) in &autoconf.accounts {
-        if pf.eq_ignore_ascii_case("twitch") || pf.eq_ignore_ascii_case("twitch-irc") {
-            info!("sync_channel_redeems: Checking Helix credentials => platform='{}', account='{}'", pf, acct);
-
+        // check if user typed "twitch" or "twitch-irc"
+        let p_lower = pf.to_lowercase();
+        if p_lower == "twitch" || p_lower == "twitch-irc" {
+            info!(
+                "sync_channel_redeems: Checking Helix credentials => platform='{}', account='{}'",
+                pf, acct
+            );
             let maybe_client = get_helix_client_for_account(platform_manager, user_service, acct).await?;
             if let Some(client) = maybe_client {
                 info!("Syncing redeems for account='{}' => Helix calls", acct);
@@ -59,6 +65,8 @@ pub async fn sync_channel_redeems(
             } else {
                 warn!("No Helix credential found for account='{}' => skipping sync", acct);
             }
+        } else {
+            trace!("sync_channel_redeems: ignoring platform='{}' => not Twitch or twitch-irc", pf);
         }
     }
 
@@ -74,11 +82,15 @@ async fn run_sync_for_one_account(
 ) -> Result<(), Error> {
     // 1) figure out the broadcaster_id from validate()
     let broadcaster_id = match client.validate_token().await {
-        Ok(Some(validate_resp)) => validate_resp.user_id,
+        Ok(Some(validate_resp)) => {
+            debug!("run_sync_for_one_account: validated => user_id='{}' login='{}'",
+                   validate_resp.user_id, validate_resp.login);
+            validate_resp.user_id
+        },
         Ok(None) => {
-            // means token is invalid or we got no user_id
+            warn!("run_sync_for_one_account => Helix token invalid or no user_id returned.");
             return Ok(());
-        }
+        },
         Err(e) => {
             error!("Error calling /validate => {:?}", e);
             return Ok(());
@@ -97,7 +109,10 @@ async fn run_sync_for_one_account(
     for hr in &helix_rewards {
         let db_match = db_redeems.iter().find(|d| d.reward_id == hr.id);
         if db_match.is_none() {
-            info!("Found new reward '{}' on Twitch that is not in DB => is_managed=false", hr.title);
+            info!(
+                "Found new reward '{}' on Twitch that is not in DB => is_managed=false",
+                hr.title
+            );
             let new_rd = crate::models::Redeem {
                 redeem_id: uuid::Uuid::new_v4(),
                 platform: "twitch-eventsub".into(),
@@ -113,12 +128,23 @@ async fn run_sync_for_one_account(
                 plugin_name: None,
                 command_name: None,
             };
+            debug!("Inserting new DB redeem => {:?}", new_rd);
             redeem_service.redeem_repo.create_redeem(&new_rd).await?;
         }
     }
 
     // 4) If DB says is_managed=true but Helix does NOT have it => try create or fallback
     for dr in db_redeems {
+        // --- ADDED CHECK: skip "builtin.*" rows entirely ---
+        if dr.reward_id.starts_with("builtin.") {
+            trace!(
+                "run_sync_for_one_account: skipping builtin redeem '{}' => reward_id='{}'",
+                dr.reward_name, dr.reward_id
+            );
+            continue;
+        }
+        // --------------------------------------------------
+
         if dr.is_managed {
             let found_helix = helix_rewards.iter().any(|hr| hr.id == dr.reward_id);
             if !found_helix {
@@ -133,29 +159,31 @@ async fn run_sync_for_one_account(
                     ..Default::default()
                 };
 
-                // Attempt creation
                 match client.create_custom_reward(&broadcaster_id, &body).await {
                     Ok(created) => {
                         info!("Created reward in Helix => ID={}", created.id);
-                        // Update DB with the new Helix ID
                         let mut updated = dr.clone();
                         updated.reward_id = created.id;
                         updated.updated_at = chrono::Utc::now();
+                        debug!("Updating DB redeem => now reward_id='{}'", updated.reward_id);
                         redeem_service.redeem_repo.update_redeem(&updated).await?;
                     }
                     Err(e) => {
                         let e_str = format!("{e}");
                         if e_str.contains("CREATE_CUSTOM_REWARD_DUPLICATE_REWARD") {
                             warn!("Duplicate reward => searching for the matching Helix reward by title='{}'", dr.reward_name);
-                            // Look again at Helix to see if the same title is present
                             if let Ok(refreshed) = client.get_custom_rewards(&broadcaster_id, None, false).await {
                                 if let Some(existing) = find_reward_by_title(&refreshed, &dr.reward_name) {
-                                    // We adopt that Helix ID
                                     let mut updated = dr.clone();
                                     updated.reward_id = existing.id.clone();
                                     updated.updated_at = chrono::Utc::now();
+                                    debug!("Fixing DB reward_id => found existing Helix ID='{}'", existing.id);
                                     redeem_service.redeem_repo.update_redeem(&updated).await?;
-                                    info!("Updated DB redeem '{}' => now reward_id='{}'", dr.reward_name, existing.id);
+                                    info!(
+                                        "Updated DB redeem '{}' => now reward_id='{}'",
+                                        dr.reward_name,
+                                        existing.id
+                                    );
                                 } else {
                                     warn!(
                                         "No matching reward found in Helix for title='{}' => cannot fix duplicate error.",
@@ -172,17 +200,22 @@ async fn run_sync_for_one_account(
         }
     }
 
-    // 4.5) **NEW** For all is_managed redeems that we DO find in Helix, check for changes
-    //      in cost, is_active, etc., and patch them if they differ.
+    // 4.5) For all is_managed redeems that DO exist in Helix, check cost/is_active mismatch
     for dr in db_redeems {
-        // Is it a bot-managed redeem that also exists in Helix?
+        // --- again skip "builtin.*" rows ---
+        if dr.reward_id.starts_with("builtin.") {
+            continue;
+        }
+
         if dr.is_managed {
             if let Some(helix_rd) = helix_rewards.iter().find(|hr| hr.id == dr.reward_id) {
-                // Compare cost or is_active
                 let cost_mismatch = (dr.cost as u64) != helix_rd.cost;
                 let active_mismatch = dr.is_active != helix_rd.is_enabled;
                 if cost_mismatch || active_mismatch {
-                    // We'll do a partial update to Helix
+                    debug!(
+                        "Redeem '{}' mismatch => cost_mismatch={}, active_mismatch={}",
+                        dr.reward_name, cost_mismatch, active_mismatch
+                    );
                     let patch_body = CustomRewardBody {
                         cost: if cost_mismatch { Some(dr.cost as u64) } else { None },
                         is_enabled: if active_mismatch { Some(dr.is_active) } else { None },
@@ -195,6 +228,9 @@ async fn run_sync_for_one_account(
                     if let Err(e) = client.update_custom_reward(&broadcaster_id, &dr.reward_id, &patch_body).await {
                         error!("update_custom_reward => {e}");
                     }
+                } else {
+                    trace!("Redeem '{}' => no mismatch: cost={} is_enabled={}",
+                           dr.reward_name, helix_rd.cost, helix_rd.is_enabled);
                 }
             }
         }
@@ -203,16 +239,23 @@ async fn run_sync_for_one_account(
     // 5) If stream is offline => disable any is_managed redeems that do not allow offline usage
     if !is_stream_online {
         for dr in db_redeems {
+            // skip builtin
+            if dr.reward_id.starts_with("builtin.") {
+                continue;
+            }
+
             if dr.is_managed && !dr.active_offline && dr.is_active {
-                info!("Stream offline => disabling redeem='{}' in Helix + DB", dr.reward_name);
+                info!(
+                    "Stream offline => disabling redeem='{}' in Helix + DB (because active_offline=false)",
+                    dr.reward_name
+                );
                 let patch_body = CustomRewardBody {
                     is_enabled: Some(false),
                     ..Default::default()
                 };
-                // Helix update
-                let _ = client.update_custom_reward(&broadcaster_id, &dr.reward_id, &patch_body).await;
-
-                // DB update
+                if let Err(e) = client.update_custom_reward(&broadcaster_id, &dr.reward_id, &patch_body).await {
+                    error!("update_custom_reward => could not disable => {e}");
+                }
                 let mut updated = dr.clone();
                 updated.is_active = false;
                 updated.updated_at = chrono::Utc::now();
@@ -241,20 +284,37 @@ pub async fn get_helix_client_for_account(
 ) -> Result<Option<TwitchHelixClient>, Error> {
     let user = match user_service.find_user_by_global_username(account_name).await {
         Ok(u) => u,
-        Err(_) => return Ok(None),
+        Err(_) => {
+            debug!("No local user found for global_username='{}'", account_name);
+            return Ok(None);
+        }
     };
     let maybe_cred = platform_manager.credentials_repo
         .get_credentials(&crate::models::Platform::Twitch, user.user_id)
         .await?;
+
     let cred = match maybe_cred {
         Some(c) => c,
-        None => return Ok(None),
+        None => {
+            debug!("No credential object found in DB for user_id={}", user.user_id);
+            return Ok(None);
+        }
     };
+
     if let Some(additional) = &cred.additional_data {
         if let Some(cid) = additional.get("client_id").and_then(|v| v.as_str()) {
+            debug!(
+                "Building HelixClient => user_id={} account='{}' client_id='{}'",
+                user.user_id, account_name, cid
+            );
             let client = TwitchHelixClient::new(&cred.primary_token, cid);
-            return Ok(Some(client));
+            Ok(Some(client))
+        } else {
+            debug!("No 'client_id' field in credential.additional_data => cannot build HelixClient.");
+            Ok(None)
         }
+    } else {
+        debug!("credential.additional_data is None => cannot build HelixClient.");
+        Ok(None)
     }
-    Ok(None)
 }

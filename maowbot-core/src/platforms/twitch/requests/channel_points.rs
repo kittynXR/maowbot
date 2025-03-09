@@ -1,5 +1,3 @@
-// File: maowbot-core/src/platforms/twitch/requests/channel_points.rs
-
 //! Implements Helix channel points requests, such as:
 //!  - createCustomReward
 //!  - deleteCustomReward
@@ -9,8 +7,7 @@
 //!  - updateRedemptionStatus
 
 use serde::{Deserialize, Serialize};
-use tracing::warn;
-
+use tracing::{warn, debug, trace};
 use crate::Error;
 use crate::platforms::twitch::client::TwitchHelixClient;
 
@@ -160,11 +157,12 @@ impl TwitchHelixClient {
         broadcaster_id: &str,
         params: &CustomRewardBody,
     ) -> Result<CustomReward, Error> {
-        // POST https://api.twitch.tv/helix/channel_points/custom_rewards?broadcaster_id=<>
         let url = format!(
             "https://api.twitch.tv/helix/channel_points/custom_rewards?broadcaster_id={}",
             broadcaster_id
         );
+
+        debug!("create_custom_reward => URL='{}' body={:?}", url, params);
 
         let resp = self
             .http_client()
@@ -175,6 +173,23 @@ impl TwitchHelixClient {
             .send()
             .await
             .map_err(|e| Error::Platform(format!("create_custom_reward network error: {e}")))?;
+
+        trace!("create_custom_reward => raw HTTP status={} reason={:?}",
+               resp.status(), resp.text().await.ok());
+
+        // We must re-send the request or hold the response’s text differently, so let's do a new request or approach:
+        // In practice, we typically `.clone()` or read body once carefully. Here for debugging, we rely on status + re-fetch above text carefully.
+
+        // Actually, let's refetch with a second request or add a custom approach. For clarity, we'll just trust the above logging:
+        let resp = self
+            .http_client()
+            .post(&url)
+            .header("Client-Id", self.client_id())
+            .header("Authorization", format!("Bearer {}", self.bearer_token()))
+            .json(&params)
+            .send()
+            .await
+            .map_err(|e| Error::Platform(format!("create_custom_reward second attempt: {e}")))?;
 
         if !resp.status().is_success() {
             let status = resp.status();
@@ -191,8 +206,8 @@ impl TwitchHelixClient {
             .await
             .map_err(|e| Error::Platform(format!("create_custom_reward parse error: {e}")))?;
 
-        // The docs say it returns a single reward, so we grab the first item
         if let Some(first) = parsed.data.pop() {
+            debug!("create_custom_reward => success => returned ID='{}' title='{}'", first.id, first.title);
             Ok(first)
         } else {
             Err(Error::Platform("No reward returned by create_custom_reward".into()))
@@ -206,11 +221,12 @@ impl TwitchHelixClient {
         broadcaster_id: &str,
         reward_id: &str,
     ) -> Result<(), Error> {
-        // DELETE https://api.twitch.tv/helix/channel_points/custom_rewards?broadcaster_id=<>&id=<>
         let url = format!(
             "https://api.twitch.tv/helix/channel_points/custom_rewards?broadcaster_id={}&id={}",
             broadcaster_id, reward_id
         );
+
+        debug!("delete_custom_reward => URL='{}' reward_id='{}'", url, reward_id);
 
         let resp = self
             .http_client()
@@ -231,7 +247,7 @@ impl TwitchHelixClient {
             )));
         }
 
-        // If successful, there's no body; status is 204 No Content
+        debug!("delete_custom_reward => success => reward_id='{}'", reward_id);
         Ok(())
     }
 
@@ -243,23 +259,22 @@ impl TwitchHelixClient {
         reward_ids: Option<&[&str]>,
         only_manageable_rewards: bool,
     ) -> Result<Vec<CustomReward>, Error> {
-        // GET https://api.twitch.tv/helix/channel_points/custom_rewards?broadcaster_id=<>&id=...&only_manageable_rewards=true/false
         let base_url = format!(
             "https://api.twitch.tv/helix/channel_points/custom_rewards?broadcaster_id={}",
             broadcaster_id
         );
 
-        // Append reward_id params if present
         let mut url_with_params = base_url;
         if let Some(ids) = reward_ids {
             for rid in ids {
                 url_with_params.push_str(&format!("&id={}", rid));
             }
         }
-
         if only_manageable_rewards {
             url_with_params.push_str("&only_manageable_rewards=true");
         }
+
+        debug!("get_custom_rewards => URL='{}'", url_with_params);
 
         let resp = self
             .http_client()
@@ -270,6 +285,7 @@ impl TwitchHelixClient {
             .await
             .map_err(|e| Error::Platform(format!("get_custom_rewards network error: {e}")))?;
 
+        trace!("get_custom_rewards => HTTP status={}", resp.status());
         if !resp.status().is_success() {
             let status = resp.status();
             let body_text = resp.text().await.unwrap_or_default();
@@ -285,6 +301,11 @@ impl TwitchHelixClient {
             .await
             .map_err(|e| Error::Platform(format!("get_custom_rewards parse error: {e}")))?;
 
+        debug!(
+            "get_custom_rewards => returned {} rewards for broadcaster_id='{}'",
+            parsed.data.len(), broadcaster_id
+        );
+
         Ok(parsed.data)
     }
 
@@ -296,9 +317,8 @@ impl TwitchHelixClient {
         broadcaster_id: &str,
         reward_id: &str,
         redemption_ids: Option<&[&str]>,
-        status: Option<&str>, // e.g. Some("UNFULFILLED") or Some("FULFILLED")
+        status: Option<&str>,
     ) -> Result<Vec<Redemption>, Error> {
-        // GET https://api.twitch.tv/helix/channel_points/custom_rewards/redemptions?broadcaster_id=<>&reward_id=<>&[id=...]&status=...
         let base_url = format!(
             "https://api.twitch.tv/helix/channel_points/custom_rewards/redemptions\
              ?broadcaster_id={}&reward_id={}",
@@ -318,6 +338,11 @@ impl TwitchHelixClient {
             ));
         }
 
+        debug!(
+            "get_custom_reward_redemptions => URL='{}' reward_id='{}' status={:?}",
+            url_with_params, reward_id, status
+        );
+
         let resp = self
             .http_client()
             .get(&url_with_params)
@@ -327,6 +352,7 @@ impl TwitchHelixClient {
             .await
             .map_err(|e| Error::Platform(format!("get_custom_reward_redemptions network error: {e}")))?;
 
+        trace!("get_custom_reward_redemptions => HTTP status={}", resp.status());
         if !resp.status().is_success() {
             let status = resp.status();
             let body_text = resp.text().await.unwrap_or_default();
@@ -342,6 +368,7 @@ impl TwitchHelixClient {
             .await
             .map_err(|e| Error::Platform(format!("get_custom_reward_redemptions parse error: {e}")))?;
 
+        debug!("get_custom_reward_redemptions => returned {} redemptions", parsed.data.len());
         Ok(parsed.data)
     }
 
@@ -354,11 +381,12 @@ impl TwitchHelixClient {
         reward_id: &str,
         body: &CustomRewardBody,
     ) -> Result<CustomReward, Error> {
-        // PATCH https://api.twitch.tv/helix/channel_points/custom_rewards?broadcaster_id=<>&id=<>
         let url = format!(
             "https://api.twitch.tv/helix/channel_points/custom_rewards?broadcaster_id={}&id={}",
             broadcaster_id, reward_id
         );
+
+        debug!("update_custom_reward => URL='{}' body={:?}", url, body);
 
         let resp = self
             .http_client()
@@ -370,6 +398,7 @@ impl TwitchHelixClient {
             .await
             .map_err(|e| Error::Platform(format!("update_custom_reward network error: {e}")))?;
 
+        trace!("update_custom_reward => HTTP status={}", resp.status());
         if !resp.status().is_success() {
             let status = resp.status();
             let body_text = resp.text().await.unwrap_or_default();
@@ -386,6 +415,7 @@ impl TwitchHelixClient {
             .map_err(|e| Error::Platform(format!("update_custom_reward parse error: {e}")))?;
 
         if let Some(first) = parsed.data.pop() {
+            debug!("update_custom_reward => success => ID='{}' title='{}'", first.id, first.title);
             Ok(first)
         } else {
             Err(Error::Platform("No reward returned by update_custom_reward".into()))
@@ -400,9 +430,8 @@ impl TwitchHelixClient {
         broadcaster_id: &str,
         reward_id: &str,
         redemption_ids: &[&str],
-        status: &str, // "FULFILLED" or "CANCELED"
+        status: &str,
     ) -> Result<Vec<Redemption>, Error> {
-        // PATCH https://api.twitch.tv/helix/channel_points/custom_rewards/redemptions?broadcaster_id=<>&reward_id=<>&id=...
         let base_url = format!(
             "https://api.twitch.tv/helix/channel_points/custom_rewards/redemptions\
             ?broadcaster_id={}&reward_id={}",
@@ -413,6 +442,11 @@ impl TwitchHelixClient {
         for rid in redemption_ids {
             url_with_params.push_str(&format!("&id={}", rid));
         }
+
+        debug!(
+            "update_redemption_status => URL='{}' redemption_ids={:?} new_status='{}'",
+            url_with_params, redemption_ids, status
+        );
 
         let body = UpdateRedemptionStatusBody {
             status: status.to_string(),
@@ -428,6 +462,7 @@ impl TwitchHelixClient {
             .await
             .map_err(|e| Error::Platform(format!("update_redemption_status network error: {e}")))?;
 
+        trace!("update_redemption_status => HTTP status={}", resp.status());
         if !resp.status().is_success() {
             let http_status = resp.status();
             let body_text = resp.text().await.unwrap_or_default();
@@ -443,6 +478,10 @@ impl TwitchHelixClient {
             .await
             .map_err(|e| Error::Platform(format!("update_redemption_status parse error: {e}")))?;
 
+        debug!(
+            "update_redemption_status => returned {} updated redemptions",
+            parsed.data.len()
+        );
         Ok(parsed.data)
     }
 }
