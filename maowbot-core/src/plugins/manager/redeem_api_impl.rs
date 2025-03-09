@@ -8,6 +8,7 @@ use crate::plugins::manager::core::PluginManager;
 use crate::repositories::{
     RedeemUsageRepository,
 };
+use crate::tasks::redeem_sync;
 
 #[async_trait]
 impl RedeemApi for PluginManager {
@@ -55,6 +56,17 @@ impl RedeemApi for PluginManager {
     async fn update_redeem(&self, redeem: &Redeem) -> Result<(), Error> {
         let rsvc = self.resolve_redeem_service()?;  // Possibly calls `self.redeem_service.clone()`
         rsvc.redeem_repo.update_redeem(redeem).await
+    }
+
+    async fn sync_redeems(&self) -> Result<(), Error> {
+        // For example, run the actual sync logic:
+        redeem_sync::sync_channel_redeems(
+            &self.redeem_service,
+            &self.platform_manager,
+            &self.user_service,
+            self.command_service.bot_config_repo.as_ref(),
+            false
+        ).await
     }
 }
 

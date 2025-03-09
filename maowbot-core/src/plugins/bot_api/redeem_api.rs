@@ -17,4 +17,5 @@ pub trait RedeemApi: Send + Sync {
     async fn get_usage_for_redeem(&self, redeem_id: Uuid, limit: i64) -> Result<Vec<RedeemUsage>, Error>;
     async fn get_usage_for_user(&self, user_id: Uuid, limit: i64) -> Result<Vec<RedeemUsage>, Error>;
     async fn update_redeem(&self, redeem: &Redeem) -> Result<(), Error>;
+    async fn sync_redeems(&self) -> Result<(), Error>;
 }
