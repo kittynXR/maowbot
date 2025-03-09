@@ -2,10 +2,11 @@ use async_trait::async_trait;
 use sqlx::{Pool, Postgres, Row};
 use uuid::Uuid;
 use chrono::Utc;
+
 use crate::Error;
 use crate::models::Redeem;
 
-/// Repository for channel point rewards (redeems)
+/// Repository for channel point rewards (redeems).
 #[async_trait]
 pub trait RedeemRepository: Send + Sync {
     async fn create_redeem(&self, rd: &Redeem) -> Result<(), Error>;
@@ -16,6 +17,7 @@ pub trait RedeemRepository: Send + Sync {
     async fn delete_redeem(&self, redeem_id: Uuid) -> Result<(), Error>;
 }
 
+/// Concrete Postgres-based implementation.
 #[derive(Clone)]
 pub struct PostgresRedeemRepository {
     pool: Pool<Postgres>,
@@ -33,10 +35,21 @@ impl RedeemRepository for PostgresRedeemRepository {
         sqlx::query(
             r#"
             INSERT INTO redeems (
-                redeem_id, platform, reward_id, reward_name, cost,
-                is_active, dynamic_pricing, created_at, updated_at
+                redeem_id,
+                platform,
+                reward_id,
+                reward_name,
+                cost,
+                is_active,
+                dynamic_pricing,
+                created_at,
+                updated_at,
+                active_offline,
+                is_managed,
+                plugin_name,
+                command_name
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
             "#,
         )
             .bind(rd.redeem_id)
@@ -48,6 +61,10 @@ impl RedeemRepository for PostgresRedeemRepository {
             .bind(rd.dynamic_pricing)
             .bind(rd.created_at)
             .bind(rd.updated_at)
+            .bind(rd.active_offline)
+            .bind(rd.is_managed)
+            .bind(&rd.plugin_name)
+            .bind(&rd.command_name)
             .execute(&self.pool)
             .await?;
 
@@ -57,8 +74,19 @@ impl RedeemRepository for PostgresRedeemRepository {
     async fn get_redeem_by_id(&self, redeem_id: Uuid) -> Result<Option<Redeem>, Error> {
         let row_opt = sqlx::query(
             r#"
-            SELECT redeem_id, platform, reward_id, reward_name, cost,
-                   is_active, dynamic_pricing, created_at, updated_at
+            SELECT redeem_id,
+                   platform,
+                   reward_id,
+                   reward_name,
+                   cost,
+                   is_active,
+                   dynamic_pricing,
+                   created_at,
+                   updated_at,
+                   active_offline,
+                   is_managed,
+                   plugin_name,
+                   command_name
             FROM redeems
             WHERE redeem_id = $1
             "#,
@@ -78,6 +106,10 @@ impl RedeemRepository for PostgresRedeemRepository {
                 dynamic_pricing: row.try_get("dynamic_pricing")?,
                 created_at: row.try_get("created_at")?,
                 updated_at: row.try_get("updated_at")?,
+                active_offline: row.try_get("active_offline")?,
+                is_managed: row.try_get("is_managed")?,
+                plugin_name: row.try_get("plugin_name")?,
+                command_name: row.try_get("command_name")?,
             };
             Ok(Some(rd))
         } else {
@@ -88,8 +120,19 @@ impl RedeemRepository for PostgresRedeemRepository {
     async fn get_redeem_by_reward_id(&self, platform: &str, reward_id: &str) -> Result<Option<Redeem>, Error> {
         let row_opt = sqlx::query(
             r#"
-            SELECT redeem_id, platform, reward_id, reward_name, cost,
-                   is_active, dynamic_pricing, created_at, updated_at
+            SELECT redeem_id,
+                   platform,
+                   reward_id,
+                   reward_name,
+                   cost,
+                   is_active,
+                   dynamic_pricing,
+                   created_at,
+                   updated_at,
+                   active_offline,
+                   is_managed,
+                   plugin_name,
+                   command_name
             FROM redeems
             WHERE platform = $1
               AND reward_id = $2
@@ -111,6 +154,10 @@ impl RedeemRepository for PostgresRedeemRepository {
                 dynamic_pricing: row.try_get("dynamic_pricing")?,
                 created_at: row.try_get("created_at")?,
                 updated_at: row.try_get("updated_at")?,
+                active_offline: row.try_get("active_offline")?,
+                is_managed: row.try_get("is_managed")?,
+                plugin_name: row.try_get("plugin_name")?,
+                command_name: row.try_get("command_name")?,
             };
             Ok(Some(rd))
         } else {
@@ -121,8 +168,19 @@ impl RedeemRepository for PostgresRedeemRepository {
     async fn list_redeems(&self, platform: &str) -> Result<Vec<Redeem>, Error> {
         let rows = sqlx::query(
             r#"
-            SELECT redeem_id, platform, reward_id, reward_name, cost,
-                   is_active, dynamic_pricing, created_at, updated_at
+            SELECT redeem_id,
+                   platform,
+                   reward_id,
+                   reward_name,
+                   cost,
+                   is_active,
+                   dynamic_pricing,
+                   created_at,
+                   updated_at,
+                   active_offline,
+                   is_managed,
+                   plugin_name,
+                   command_name
             FROM redeems
             WHERE platform = $1
             ORDER BY reward_name ASC
@@ -144,6 +202,10 @@ impl RedeemRepository for PostgresRedeemRepository {
                 dynamic_pricing: row.try_get("dynamic_pricing")?,
                 created_at: row.try_get("created_at")?,
                 updated_at: row.try_get("updated_at")?,
+                active_offline: row.try_get("active_offline")?,
+                is_managed: row.try_get("is_managed")?,
+                plugin_name: row.try_get("plugin_name")?,
+                command_name: row.try_get("command_name")?,
             };
             result.push(rd);
         }
@@ -154,12 +216,16 @@ impl RedeemRepository for PostgresRedeemRepository {
         sqlx::query(
             r#"
             UPDATE redeems
-            SET reward_name = $1,
-                cost = $2,
-                is_active = $3,
-                dynamic_pricing = $4,
-                updated_at = $5
-            WHERE redeem_id = $6
+            SET reward_name      = $1,
+                cost             = $2,
+                is_active        = $3,
+                dynamic_pricing  = $4,
+                updated_at       = $5,
+                active_offline   = $6,
+                is_managed       = $7,
+                plugin_name      = $8,
+                command_name     = $9
+            WHERE redeem_id      = $10
             "#,
         )
             .bind(&rd.reward_name)
@@ -167,6 +233,10 @@ impl RedeemRepository for PostgresRedeemRepository {
             .bind(rd.is_active)
             .bind(rd.dynamic_pricing)
             .bind(rd.updated_at)
+            .bind(rd.active_offline)
+            .bind(rd.is_managed)
+            .bind(&rd.plugin_name)
+            .bind(&rd.command_name)
             .bind(rd.redeem_id)
             .execute(&self.pool)
             .await?;

@@ -2,6 +2,7 @@
 
 use std::sync::Arc;
 use reqwest::Client as ReqwestClient;
+use serde::Deserialize;
 use tracing::{warn};
 use crate::Error;
 
@@ -13,6 +14,15 @@ pub struct TwitchHelixClient {
     http: Arc<ReqwestClient>,
     bearer_token: String,
     client_id: String,
+}
+
+
+#[derive(Debug, Deserialize)]
+pub struct ValidateTokenResponse {
+    pub client_id: String,
+    pub login: String,
+    pub user_id: String,
+    pub expires_in: u64,
 }
 
 impl TwitchHelixClient {
@@ -41,5 +51,29 @@ impl TwitchHelixClient {
     /// Returns an `Arc<ReqwestClient>` reference for advanced usage.
     pub fn http_client(&self) -> Arc<ReqwestClient> {
         self.http.clone()
+    }
+
+    pub async fn validate_token(&self) -> Result<Option<ValidateTokenResponse>, Error> {
+        let url = "https://id.twitch.tv/oauth2/validate";
+
+        let resp = self.http_client()
+            .get(url)
+            // Twitch says: "Authorization: OAuth <token>"
+            .header("Authorization", format!("OAuth {}", self.bearer_token()))
+            .send()
+            .await
+            .map_err(|e| Error::Platform(format!("validate_token network error: {e}")))?;
+
+        if !resp.status().is_success() {
+            // e.g. 401 => token invalid
+            return Ok(None);
+        }
+
+        let parsed: ValidateTokenResponse = resp
+            .json()
+            .await
+            .map_err(|e| Error::Platform(format!("validate_token parse error: {e}")))?;
+
+        Ok(Some(parsed))
     }
 }

@@ -1,6 +1,5 @@
 use crate::Error;
 
-/// Stubs for various channel.chat.* events
 pub async fn handle_chat_message() -> Result<(), Error> {
     // e.g. channel.chat.message
     Ok(())

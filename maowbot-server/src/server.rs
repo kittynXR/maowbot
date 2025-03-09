@@ -27,6 +27,7 @@ use maowbot_core::tasks::biweekly_maintenance::{
 };
 use maowbot_core::tasks::credential_refresh::refresh_all_refreshable_credentials;
 use maowbot_core::tasks::autostart::run_autostart;
+use maowbot_core::tasks::redeem_sync;
 use maowbot_tui::TuiModule;
 
 pub async fn run_server(args: Args) -> Result<(), Error> {
@@ -41,6 +42,14 @@ pub async fn run_server(args: Args) -> Result<(), Error> {
         maowbot_core::repositories::postgres::user_analysis::PostgresUserAnalysisRepository::new(ctx.db.pool().clone()),
         ctx.event_bus.clone()
     );
+
+    redeem_sync::sync_channel_redeems(
+        &ctx.redeem_service,
+        &ctx.platform_manager,
+        &ctx.message_service.user_service,
+        &*ctx.bot_config_repo.clone(),
+        false
+    ).await?;
 
     // 3) Refresh credentials
     {
@@ -69,6 +78,11 @@ pub async fn run_server(args: Args) -> Result<(), Error> {
             p.set_bot_api(bot_api.clone());
         }
     }
+
+    let eventsub_svc_clone = ctx.eventsub_service.clone();
+    tokio::spawn(async move {
+        eventsub_svc_clone.start().await;
+    });
 
     // 6) Start the gRPC server
     let identity = load_or_generate_certs()?;

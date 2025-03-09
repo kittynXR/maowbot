@@ -236,6 +236,10 @@ CREATE TABLE redeems (
      cost       INT  NOT NULL,
      is_active  BOOLEAN NOT NULL DEFAULT true,
      dynamic_pricing BOOLEAN NOT NULL DEFAULT false,
+     active_offline BOOLEAN NOT NULL DEFAULT false,
+     is_managed BOOLEAN NOT NULL DEFAULT false,
+     plugin_name TEXT,
+     command_name TEXT,
      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
      updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );

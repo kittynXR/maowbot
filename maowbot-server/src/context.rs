@@ -8,10 +8,7 @@ use maowbot_core::db::Database;
 use maowbot_core::eventbus::EventBus;
 use maowbot_core::auth::{AuthManager, DefaultUserManager};
 use maowbot_core::crypto::Encryptor;
-use maowbot_core::services::{
-    message_service::MessageService,
-    user_service::UserService,
-};
+use maowbot_core::services::{message_service::MessageService, user_service::UserService, EventSubService};
 use maowbot_core::services::twitch::{
     command_service::CommandService,
     redeem_service::RedeemService,
@@ -32,7 +29,7 @@ use keyring::Entry;
 use base64;
 use std::fs;
 use std::path::Path;
-
+use maowbot_core::repositories::BotConfigRepository;
 use maowbot_core::repositories::postgres::{
     PostgresCredentialsRepository,
     PostgresPlatformConfigRepository,
@@ -56,12 +53,13 @@ pub struct ServerContext {
     pub message_service: Arc<MessageService>,
     pub platform_manager: Arc<PlatformManager>,
     pub plugin_manager: PluginManager,
+    pub eventsub_service: Arc<EventSubService>,
     pub command_service: Arc<CommandService>,
     pub redeem_service: Arc<RedeemService>,
 
     /// The raw references in case you need them.
     pub creds_repo: Arc<PostgresCredentialsRepository>,
-    pub bot_config_repo: Arc<PostgresBotConfigRepository>,
+    pub bot_config_repo: Arc<dyn BotConfigRepository + Send + Sync>,
 }
 
 impl ServerContext {
@@ -93,7 +91,9 @@ impl ServerContext {
         let encryptor = Encryptor::new(&get_master_key()?)?;
         let creds_repo_arc = Arc::new(PostgresCredentialsRepository::new(db.pool().clone(), encryptor));
         let platform_config_repo = Arc::new(PostgresPlatformConfigRepository::new(db.pool().clone()));
-        let bot_config_repo = Arc::new(PostgresBotConfigRepository::new(db.pool().clone()));
+        let bot_config_repo: Arc<dyn BotConfigRepository + Send + Sync> = Arc::new(
+            PostgresBotConfigRepository::new(db.pool().clone())
+        );
         let analytics_repo = Arc::new(PostgresAnalyticsRepository::new(db.pool().clone()));
         let user_analysis_repo = Arc::new(PostgresUserAnalysisRepository::new(db.pool().clone()));
         let user_repo_arc = Arc::new(UserRepository::new(db.pool().clone()));
@@ -172,6 +172,15 @@ impl ServerContext {
             redeem_repo.clone(),
             redeem_usage_repo.clone(),
             user_service.clone(),
+            platform_manager.clone(),
+        ));
+
+        let eventsub_service = Arc::new(EventSubService::new(
+            event_bus.clone(),
+            redeem_service.clone(),
+            user_service.clone(),
+            platform_manager.clone(),
+            bot_config_repo.clone(),
         ));
 
         // 7) Plugin manager
@@ -211,6 +220,7 @@ impl ServerContext {
             message_service,
             platform_manager,
             plugin_manager,
+            eventsub_service,
             command_service,
             redeem_service,
             creds_repo: creds_repo_arc,

@@ -22,7 +22,7 @@ pub struct MessageService {
     chat_cache: Arc<Mutex<ChatCache<PostgresUserAnalysisRepository>>>,
     event_bus: Arc<EventBus>,
     user_manager: Arc<DefaultUserManager>,
-    user_service: Arc<UserService>,
+    pub user_service: Arc<UserService>,
     command_service: Arc<CommandService>,
     platform_manager: Arc<PlatformManager>,
     credentials_repo: Arc<dyn CredentialsRepository + Send + Sync>,

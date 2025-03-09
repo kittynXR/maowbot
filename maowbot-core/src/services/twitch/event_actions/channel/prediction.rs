@@ -1,6 +1,5 @@
 use crate::Error;
 
-/// Stubs for channel.prediction.begin, .progress, .lock, .end
 pub async fn handle_prediction_begin() -> Result<(), Error> {
     Ok(())
 }

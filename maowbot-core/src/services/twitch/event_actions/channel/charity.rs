@@ -1,6 +1,5 @@
 use crate::Error;
 
-/// Stubs for channel.charity_campaign.donate, .start, .progress, .stop
 pub async fn handle_charity_donate() -> Result<(), Error> {
     Ok(())
 }

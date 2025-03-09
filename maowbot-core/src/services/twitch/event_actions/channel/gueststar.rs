@@ -1,6 +1,5 @@
 use crate::Error;
 
-/// Stubs for Guest Star events: channel.guest_star_session.begin, .end, .update, .settings.update
 pub async fn handle_guest_star_session_begin() -> Result<(), Error> {
     // ...
     Ok(())

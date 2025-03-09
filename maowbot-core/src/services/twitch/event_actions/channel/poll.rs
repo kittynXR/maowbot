@@ -1,6 +1,5 @@
 use crate::Error;
 
-/// Stubs for channel.poll.begin, .progress, .end
 pub async fn handle_poll_begin() -> Result<(), Error> {
     Ok(())
 }

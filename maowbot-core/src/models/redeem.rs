@@ -14,6 +14,10 @@ pub struct Redeem {
     pub dynamic_pricing: bool,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+    pub active_offline: bool,
+    pub is_managed: bool,
+    pub plugin_name: Option<String>,
+    pub command_name: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

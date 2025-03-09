@@ -2,7 +2,10 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::{debug, error, info};
 use crate::eventbus::{EventBus, BotEvent, TwitchEventSubData};
-
+use crate::platforms::manager::PlatformManager;
+use crate::repositories::BotConfigRepository;
+use crate::services::RedeemService;
+use crate::services::user_service::UserService;
 use super::event_actions::{
     channel::update as channel_update_actions,
     stream::online as stream_online_actions,
@@ -13,11 +16,28 @@ use super::event_actions::{
 /// and dispatch to the appropriate event_actions submodule.
 pub struct EventSubService {
     event_bus: Arc<EventBus>,
+    pub redeem_service: Arc<RedeemService>,
+    pub user_service: Arc<UserService>,
+    pub platform_manager: Arc<PlatformManager>,
+    pub bot_config_repo: Arc<dyn BotConfigRepository + Send + Sync>,
 }
 
+
 impl EventSubService {
-    pub fn new(event_bus: Arc<EventBus>) -> Self {
-        Self { event_bus }
+    pub fn new(
+        event_bus: Arc<EventBus>,
+        redeem_service: Arc<RedeemService>,
+        user_service: Arc<UserService>,
+        platform_manager: Arc<PlatformManager>,
+        bot_config_repo: Arc<dyn BotConfigRepository + Send + Sync>,
+    ) -> Self {
+        Self {
+            event_bus,
+            redeem_service,
+            user_service,
+            platform_manager,
+            bot_config_repo,
+        }
     }
 
     /// Spawn a task to listen to the event bus and handle EventSub-related events.
@@ -39,12 +59,12 @@ impl EventSubService {
                             }
                         },
                         TwitchEventSubData::StreamOnline(ev) => {
-                            if let Err(e) = stream_online_actions::handle_stream_online(ev).await {
+                            if let Err(e) = stream_online_actions::handle_stream_online(ev, &*self.redeem_service, &*self.platform_manager, &*self.user_service, &*self.bot_config_repo).await {
                                 error!("Error handling stream.online: {:?}", e);
                             }
                         },
                         TwitchEventSubData::StreamOffline(ev) => {
-                            if let Err(e) = stream_offline_actions::handle_stream_offline(ev).await {
+                            if let Err(e) = stream_offline_actions::handle_stream_offline(ev, &*self.redeem_service, &*self.platform_manager, &*self.user_service, &*self.bot_config_repo).await {
                                 error!("Error handling stream.offline: {:?}", e);
                             }
                         },

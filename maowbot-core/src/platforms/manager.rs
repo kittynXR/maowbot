@@ -36,7 +36,7 @@ pub struct PlatformManager {
     message_service: Mutex<Option<Arc<MessageService>>>,
     user_svc: Arc<UserService>,
     event_bus: Arc<EventBus>,
-    credentials_repo: Arc<dyn CredentialsRepository + Send + Sync>,
+    pub(crate) credentials_repo: Arc<dyn CredentialsRepository + Send + Sync>,
 
     /// Use an AsyncMutex for concurrency around the map of runtimes.
     pub active_runtimes: AsyncMutex<HashMap<(String, String), PlatformRuntimeHandle>>,
