@@ -10,6 +10,7 @@ use super::event_actions::{
     channel::update as channel_update_actions,
     stream::online as stream_online_actions,
     stream::offline as stream_offline_actions,
+    channel::points as channel_points_actions,
 };
 
 /// The EventSubService will subscribe to the EventBus, look for `BotEvent::TwitchEventSub`,
@@ -21,7 +22,6 @@ pub struct EventSubService {
     pub platform_manager: Arc<PlatformManager>,
     pub bot_config_repo: Arc<dyn BotConfigRepository + Send + Sync>,
 }
-
 
 impl EventSubService {
     pub fn new(
@@ -52,24 +52,53 @@ impl EventSubService {
                 BotEvent::TwitchEventSub(twitch_evt) => {
                     // Dispatch by subscription type
                     match twitch_evt {
-                        // For each event, call a submodule function
                         TwitchEventSubData::ChannelUpdate(ev) => {
                             if let Err(e) = channel_update_actions::handle_channel_update(ev).await {
                                 error!("Error handling channel.update: {:?}", e);
                             }
                         },
                         TwitchEventSubData::StreamOnline(ev) => {
-                            if let Err(e) = stream_online_actions::handle_stream_online(ev, &*self.redeem_service, &*self.platform_manager, &*self.user_service, &*self.bot_config_repo).await {
+                            if let Err(e) = stream_online_actions::handle_stream_online(
+                                ev,
+                                &*self.redeem_service,
+                                &*self.platform_manager,
+                                &*self.user_service,
+                                &*self.bot_config_repo
+                            ).await {
                                 error!("Error handling stream.online: {:?}", e);
                             }
                         },
                         TwitchEventSubData::StreamOffline(ev) => {
-                            if let Err(e) = stream_offline_actions::handle_stream_offline(ev, &*self.redeem_service, &*self.platform_manager, &*self.user_service, &*self.bot_config_repo).await {
+                            if let Err(e) = stream_offline_actions::handle_stream_offline(
+                                ev,
+                                &*self.redeem_service,
+                                &*self.platform_manager,
+                                &*self.user_service,
+                                &*self.bot_config_repo
+                            ).await {
                                 error!("Error handling stream.offline: {:?}", e);
                             }
                         },
 
-                        // If you implement more events, add them here:
+                        // ----------------- NEW MATCH ARM ---------------------
+                        TwitchEventSubData::ChannelPointsCustomRewardRedemptionAdd(ev) => {
+                            if let Err(e) = channel_points_actions::handle_custom_reward_redemption_add(
+                                ev,
+                                &*self.redeem_service,
+                                &*self.user_service
+                            ).await
+                            {
+                                error!("Error handling custom_reward_redemption.add: {:?}", e);
+                            }
+                        }
+                        // -----------------------------------------------------
+
+                        // If you add more channel points events, do similar arms here:
+                        //    ChannelPointsCustomRewardRedemptionUpdate(ev) => { ... }
+                        //    ChannelPointsCustomRewardAdd(ev) => { ... }
+                        // etc.
+
+                        // If not matched, log "ignoring unhandled variant"
                         _ => {
                             debug!("(EventSubService) Ignoring unhandled TwitchEventSubData variant: {:?}", twitch_evt);
                         }
