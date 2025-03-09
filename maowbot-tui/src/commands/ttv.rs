@@ -18,12 +18,12 @@ pub async fn handle_ttv_command(
 ) -> String {
     if args.is_empty() {
         return r#"Usage:
-  ttv broadcaster <channel>
-  ttv secondary <account>
+  ttv broadcaster <channelName>
+  ttv secondary <accountName>
   ttv active <accountName>
-  ttv join <channel>
-  ttv part <channel>
-  ttv msg <channel> <message text>
+  ttv join <channelName>
+  ttv part <channelName>
+  ttv msg <channelName> <message text>
   ttv chat
 "#.to_string();
     }
@@ -38,21 +38,21 @@ pub async fn handle_ttv_command(
 
         "join" => {
             if args.len() < 2 {
-                return "Usage: ttv join <channel>".to_string();
+                return "Usage: ttv join <channelName>".to_string();
             }
             do_join_channel(args[1], bot_api, tui_module).await
         }
 
         "part" => {
             if args.len() < 2 {
-                return "Usage: ttv part <channel>".to_string();
+                return "Usage: ttv part <channelName>".to_string();
             }
             do_part_channel(args[1], bot_api, tui_module).await
         }
 
         "msg" => {
             if args.len() < 3 {
-                return "Usage: ttv msg <channel> <message text...>".to_string();
+                return "Usage: ttv msg <channelName> <message text...>".to_string();
             }
             let channel = args[1];
             let text = args[2..].join(" ");
@@ -63,7 +63,7 @@ pub async fn handle_ttv_command(
             // Enter chat mode
             let mut st = tui_module.ttv_state.lock().unwrap();
             if st.joined_channels.is_empty() {
-                return "No channels joined. Use 'ttv join <channel>' first.".to_string();
+                return "No channels joined. Use 'ttv join <channelName>' first.".to_string();
             } else {
                 st.is_in_chat_mode = true;
                 st.current_channel_index = 0;
@@ -76,14 +76,14 @@ pub async fn handle_ttv_command(
 
         "broadcaster" => {
             if args.len() < 2 {
-                return "Usage: ttv broadcaster <channel>".to_string();
+                return "Usage: ttv broadcaster <channelName>".to_string();
             }
             set_named_broadcaster(args[1], bot_api, tui_module).await
         }
 
         "secondary" => {
             if args.len() < 2 {
-                return "Usage: ttv secondary <account>".to_string();
+                return "Usage: ttv secondary <accountName>".to_string();
             }
             set_secondary_account(args[1], bot_api, tui_module).await
         }
@@ -103,7 +103,8 @@ async fn do_join_channel(
     bot_api: &Arc<dyn BotApi>,
     tui_module: &Arc<TuiModule>,
 ) -> String {
-    let chname = normalize_channel_name(channel);
+    // We now store the channelName WITHOUT '#'.
+    let chname = strip_channel_prefix(channel);
 
     let (already_joined, maybe_acct) = {
         let mut st = tui_module.ttv_state.lock().unwrap();
@@ -116,16 +117,15 @@ async fn do_join_channel(
     };
 
     if already_joined {
-        return format!("We've already joined channel '{}'.", chname);
+        return format!("We're already joined to channel '{}'.", chname);
     }
 
-    // If no active account set, bail
     let active_account = match require_active_account(&maybe_acct) {
         Ok(a) => a,
         Err(e) => return e,
     };
 
-    // Ensure the runtime is started, then join the channel
+    // Ensure the runtime is started, then join
     if let Err(e) = bot_api.start_platform_runtime("twitch-irc", active_account).await {
         return format!("Error starting twitch-irc => {:?}", e);
     }
@@ -140,7 +140,7 @@ async fn do_part_channel(
     bot_api: &Arc<dyn BotApi>,
     tui_module: &Arc<TuiModule>,
 ) -> String {
-    let chname = normalize_channel_name(channel);
+    let chname = strip_channel_prefix(channel);
 
     let (pos_opt, maybe_acct) = {
         let mut st = tui_module.ttv_state.lock().unwrap();
@@ -158,7 +158,6 @@ async fn do_part_channel(
     };
 
     {
-        // remove from joined_channels
         let mut st = tui_module.ttv_state.lock().unwrap();
         if let Some(idx) = pos_opt {
             st.joined_channels.remove(idx);
@@ -167,7 +166,7 @@ async fn do_part_channel(
 
     match bot_api.part_twitch_irc_channel(active_account, &chname).await {
         Ok(_) => format!("Parted channel '{}'.", chname),
-        Err(e) => format!("Error parting channel '{}': {:?}", chname, e),
+        Err(e) => format!("Error parting '{}': {:?}", chname, e),
     }
 }
 
@@ -177,7 +176,7 @@ async fn do_send_message(
     bot_api: &Arc<dyn BotApi>,
     tui_module: &Arc<TuiModule>,
 ) -> String {
-    let chname = normalize_channel_name(channel);
+    let chname = strip_channel_prefix(channel);
 
     let maybe_acct = {
         let st = tui_module.ttv_state.lock().unwrap();
@@ -195,14 +194,17 @@ async fn do_send_message(
     }
 }
 
-/// Called when `ttv broadcaster <channel>` is used.
 async fn set_named_broadcaster(
     channel: &str,
     bot_api: &Arc<dyn BotApi>,
     tui_module: &Arc<TuiModule>,
 ) -> String {
-    let chname = normalize_channel_name(channel);
-    let store_res = bot_api.set_bot_config_value("ttv_broadcaster_channel", &chname).await;
+    let chname = strip_channel_prefix(channel);
+
+    // Store in DB WITHOUT '#'
+    let store_res = bot_api
+        .set_bot_config_value("ttv_broadcaster_channel", &chname)
+        .await;
     if let Err(e) = store_res {
         return format!("Error storing ttv_broadcaster_channel => {:?}", e);
     }
@@ -215,14 +217,15 @@ async fn set_named_broadcaster(
     format!("Broadcaster channel set to '{}'. Will auto-join on start.", chname)
 }
 
-/// Called when `ttv secondary <account>` is used.
-/// We store that in “ttv_secondary_account” in bot_config, so commands can respond from that user.
 async fn set_secondary_account(
     account: &str,
     bot_api: &Arc<dyn BotApi>,
     tui_module: &Arc<TuiModule>,
 ) -> String {
-    let store_res = bot_api.set_bot_config_value("ttv_secondary_account", account).await;
+    // store as-is
+    let store_res = bot_api
+        .set_bot_config_value("ttv_secondary_account", account)
+        .await;
     if let Err(e) = store_res {
         return format!("Error storing ttv_secondary_account => {:?}", e);
     }
@@ -235,11 +238,9 @@ async fn set_secondary_account(
     format!("Secondary Twitch-IRC account set to '{}'. This will be used to respond to commands by default.", account)
 }
 
-fn normalize_channel_name(chan: &str) -> String {
-    let c = chan.trim();
-    if c.starts_with('#') {
-        c.to_string()
-    } else {
-        format!("#{}", c)
-    }
+/// Removes a leading '#' if present, so we never store or track
+/// channel names with the '#' prefix in the database.
+fn strip_channel_prefix(raw: &str) -> String {
+    let trimmed = raw.trim();
+    trimmed.trim_start_matches('#').to_string()
 }

@@ -506,19 +506,19 @@ fn format_redeem_details(rd: &Redeem) -> String {
     format!(
         "Redeem Info\n\
          -------------\n\
-         redeem_id:      {}\n\
-         platform:       {}\n\
-         reward_id:      {}\n\
-         reward_name:    {}\n\
-         cost:           {}\n\
-         is_active:      {}\n\
-         dynamic_pricing: {}\n\
-         created_at:     {}\n\
-         updated_at:     {}\n\
-         active_offline: {}\n\
-         is_managed:     {}\n\
-         plugin_name:    {}\n\
-         command_name:   {}\n",
+         redeem_id:        {}\n\
+         platform:         {}\n\
+         reward_id:        {}\n\
+         reward_name:      {}\n\
+         cost:             {}\n\
+         is_active:        {}\n\
+         dynamic_pricing:  {}\n\
+         created_at:       {}\n\
+         updated_at:       {}\n\
+         active_offline:   {}\n\
+         is_managed:       {}\n\
+         plugin_name:      {}\n\
+         command_name:     {}\n",
         rd.redeem_id,
         rd.platform,
         rd.reward_id,
