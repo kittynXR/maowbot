@@ -6,7 +6,7 @@ use uuid::Uuid;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Redeem {
     pub redeem_id: Uuid,
-    pub platform: String,        // likely "twitch-eventsub"
+    pub platform: String,
     pub reward_id: String,
     pub reward_name: String,
     pub cost: i32,

@@ -9,9 +9,8 @@ pub mod help_plugin;
 pub mod help_ttv;
 pub mod help_user;
 pub mod help_vrchat;
-
-// NEW FILE:
-pub mod help_command;  // <--- newly added for the "command" subcommand
+pub mod help_command;
+pub mod help_redeem;
 
 fn show_general_help() -> String {
     let text = r#"MaowBot TUI - Available Commands:

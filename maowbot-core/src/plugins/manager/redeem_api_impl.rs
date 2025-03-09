@@ -51,6 +51,11 @@ impl RedeemApi for PluginManager {
         };
         usage_repo.list_usage_for_user(user_id, limit).await
     }
+
+    async fn update_redeem(&self, redeem: &Redeem) -> Result<(), Error> {
+        let rsvc = self.resolve_redeem_service()?;  // Possibly calls `self.redeem_service.clone()`
+        rsvc.redeem_repo.update_redeem(redeem).await
+    }
 }
 
 impl PluginManager {

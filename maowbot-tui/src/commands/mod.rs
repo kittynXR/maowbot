@@ -13,11 +13,11 @@ mod platform;
 mod plugin;
 mod ttv;
 mod user;
-// Remove the old "vrchat" module in favor of the new one that handles "vrchat account" command
-// mod vrchat;
-mod vrchat;  // NEW: Handles "vrchat account [accountname]" command
+mod vrchat;
 mod member;
 mod command;
+mod redeem;
+// <-- newly added for redeem subcommands
 
 /// Asynchronous command dispatcher. Returns (quit_requested, optional_output_message).
 pub async fn dispatch_async(
@@ -40,14 +40,12 @@ pub async fn dispatch_async(
         }
 
         "vrchat" => {
-            // Dispatch to our new vrchat_command handler.
-            // For example: "vrchat account kittyn"
             let msg = handle_vrchat_command(args, bot_api).await;
             (false, Some(msg))
         }
 
         "list" => {
-            // Example: list all plugins
+            // Example usage: "list" (just a placeholder demonstration)
             let result = bot_api.list_plugins().await;
             let mut output = String::new();
             output.push_str("All known plugins:\n");
@@ -58,14 +56,10 @@ pub async fn dispatch_async(
         }
 
         "status" => {
-            // existing logic
             let subcmd = args.get(0).map(|s| s.to_lowercase());
             let status_data = bot_api.status().await;
 
-            let mut output = format!(
-                "Uptime={}s\nConnected Plugins:\n",
-                status_data.uptime_seconds
-            );
+            let mut output = format!("Uptime={}s\nConnected Plugins:\n", status_data.uptime_seconds);
             for c in status_data.connected_plugins {
                 output.push_str(&format!("  {}\n", c));
             }
@@ -136,15 +130,21 @@ pub async fn dispatch_async(
             (false, Some(message))
         }
 
-        // NEW: "member" command
+        // "member" command
         "member" => {
             let msg = member::handle_member_command(args, bot_api).await;
             (false, Some(msg))
         }
 
-        // NEW: "command" command - opens the command editor / management functionality.
+        // "command" subcommand
         "command" => {
             let msg = command::handle_command_command(args, bot_api).await;
+            (false, Some(msg))
+        }
+
+        // "redeem" subcommand (NEW)
+        "redeem" => {
+            let msg = redeem::handle_redeem_command(args, bot_api).await;
             (false, Some(msg))
         }
 
@@ -158,7 +158,6 @@ pub async fn dispatch_async(
             (false, Some(message))
         }
 
-        // The new TTV subcommands
         "ttv" => {
             let msg = ttv::handle_ttv_command(args, bot_api, tui_module).await;
             (false, Some(msg))
