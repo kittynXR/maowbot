@@ -90,7 +90,7 @@ impl RedeemService {
             user_id,
             used_at: Utc::now(),
             channel: Some(channel.to_string()),
-            usage_data: None, // You can store redemption.user_input, etc.
+            usage_data: None,
         };
         self.usage_repo.insert_usage(&usage).await?;
 
@@ -101,15 +101,21 @@ impl RedeemService {
         };
 
         // 4) Decide if it’s built-in or plugin-based
-        if rd.plugin_name.is_some() {
-            // In the future, dispatch to plugin
-            info!(
-                "Redeem '{}' is plugin-based => not yet implemented plugin logic.",
-                rd.reward_name
-            );
+        if let Some(plugin) = &rd.plugin_name {
+            if plugin == "builtin" {
+                // We'll parse the command_name
+                let subcmd = rd.command_name.as_deref().unwrap_or("unknown");
+                builtin_redeems::handle_builtin_redeem(&ctx, redemption, subcmd).await?;
+            } else {
+                info!(
+                    "Redeem '{}' is plugin-based => plugin_name='{}'; not yet implemented plugin logic.",
+                    rd.reward_name, plugin
+                );
+            }
         } else {
-            // Built-in logic by reward_name:
-            builtin_redeems::handle_builtin_redeem(&ctx, redemption, &rd.reward_name).await?;
+            // no plugin_name => ignoring
+            debug!("Redeem '{}' has no plugin_name => ignoring event", rd.reward_name);
+            return Ok(());
         }
 
         Ok(())

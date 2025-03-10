@@ -3,24 +3,26 @@
 pub mod cute;
 
 // Re-export or define a small “dispatcher” function:
+use tracing::info;
 use crate::Error;
 use crate::platforms::twitch::requests::channel_points::Redemption;
 use crate::services::twitch::redeem_service::RedeemHandlerContext;
 
-/// If you expect multiple built-in redeems, you can do a match by “internal name,”
-/// or by the reward title. In this example, we do a simple function that
-/// checks if the reward_name is “cute”, then calls `handle_cute_redeem`.
+/// If plugin_name=="builtin", we look at the `command_name` column
+/// in the `redeems` table and dispatch accordingly.
 pub async fn handle_builtin_redeem(
     ctx: &RedeemHandlerContext<'_>,
     redemption: &Redemption,
-    reward_name: &str,
+    command_name: &str,
 ) -> Result<(), Error> {
-    match reward_name.to_lowercase().as_str() {
+    match command_name.to_lowercase().as_str() {
         "cute" => {
-            super::builtin_redeems::cute::handle_cute_redeem(ctx, redemption).await?;
+            cute::handle_cute_redeem(ctx, redemption).await?;
         },
-        // Add further matches for your other future built-in redeems:
-        _ => {}
+        // Additional built-in redeems can be matched here...
+        _ => {
+            info!("No built-in redeem logic found for command_name='{}'", command_name);
+        }
     }
     Ok(())
 }

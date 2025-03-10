@@ -31,4 +31,4 @@ VALUES (
            'builtin',               -- plugin_name => "builtin"
            'cute'                   -- command_name => "cute"
        )
-    ON CONFLICT (platform, reward_id) DO NOTHING;
+    ON CONFLICT (plugin_name, command_name) DO NOTHING;

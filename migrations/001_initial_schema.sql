@@ -245,7 +245,7 @@ CREATE TABLE redeems (
 );
 
 -- You can ensure uniqueness for (platform, reward_id):
-CREATE UNIQUE INDEX ON redeems (platform, reward_id);
+CREATE UNIQUE INDEX ON redeems (plugin_name, command_name);
 
 
 DROP TABLE IF EXISTS redeem_usage CASCADE;
