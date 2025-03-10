@@ -10,6 +10,7 @@ pub mod robo;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use thiserror::Error;
+use crate::oscquery::OscQueryServer;
 
 #[derive(Error, Debug)]
 pub enum OscError {
@@ -43,6 +44,7 @@ pub type Result<T> = std::result::Result<T, OscError>;
 /// This is a placeholder skeleton for your integrated approach.
 pub struct MaowOscManager {
     inner: Arc<Mutex<OscManagerInner>>,
+    pub oscquery_server: Arc<Mutex<OscQueryServer>>,
 }
 
 struct OscManagerInner {
@@ -57,9 +59,58 @@ impl MaowOscManager {
             listening_port: None,
             is_running: false,
         };
+        // Suppose we want to run the OSCQuery server on port 8080 for HTTP
+        let oscquery_server = OscQueryServer::new(8080);
+
         Self {
-            inner: Arc::new(Mutex::new(inner))
+            inner: Arc::new(Mutex::new(inner)),
+            oscquery_server: Arc::new(Mutex::new(oscquery_server)),
         }
+    }
+
+    /// Starts the OSC server (UDP) and the OSCQuery server (HTTP).
+    /// Then optionally performs a quick discovery.
+    pub async fn start_all(&self) -> Result<()> {
+        // 1) Start the OSC server on a free UDP port:
+        let chosen_port = self.start_server().await?;
+
+        // 2) Start the OSCQuery server:
+        {
+            let mut oscq = self.oscquery_server.lock().await;
+            oscq.start().await?;
+        }
+        tracing::info!("OSCQuery server started.");
+
+        // 3) Optionally discover local OSCQuery peers:
+        self.discover_local_peers().await?;
+
+        Ok(())
+    }
+
+    pub async fn stop_all(&self) -> Result<()> {
+        // Stop the UDP OSC
+        self.stop_server().await?;
+
+        // Stop the OSCQuery server
+        {
+            let mut oscq = self.oscquery_server.lock().await;
+            oscq.stop().await?;
+        }
+        Ok(())
+    }
+
+    /// A quick method to discover local peers (optional).
+    pub async fn discover_local_peers(&self) -> Result<()> {
+        let mut oscq = self.oscquery_server.lock().await;
+        if let Some(discovery) = &oscq.discovery {
+            let discovered = discovery.discover_peers().await?;
+            for svc_name in discovered {
+                tracing::info!("Found local OSCQuery service => {svc_name}");
+            }
+        } else {
+            tracing::info!("OSCQuery discovery not initialized.");
+        }
+        Ok(())
     }
 
     /// Attempt to start an OSC server, searching for a free port

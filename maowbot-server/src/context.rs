@@ -45,6 +45,7 @@ use maowbot_core::repositories::postgres::{
     redeem_usage::PostgresRedeemUsageRepository,
 };
 use maowbot_osc::MaowOscManager;
+use maowbot_osc::oscquery::OscQueryServer;
 use maowbot_osc::robo::RoboControlSystem;
 
 /// The global server context (a bag of references to DB, event bus, plugin manager, etc.).
@@ -65,6 +66,7 @@ pub struct ServerContext {
 
     pub osc_manager: Arc<MaowOscManager>,
     pub robo_control: Arc<Mutex<RoboControlSystem>>,
+    pub oscquery_server: Arc<Mutex<OscQueryServer>>,
 }
 
 impl ServerContext {
@@ -220,6 +222,8 @@ impl ServerContext {
 
         // Create the new manager for OSC:
         let osc_manager = Arc::new(MaowOscManager::new());
+        let oscquery_port = 8080;
+        let oscquery_server = Arc::new(tokio::sync::Mutex::new(OscQueryServer::new(oscquery_port)));
 
         // Create the new robo system:
         let robo_control = Arc::new(Mutex::new(RoboControlSystem::new()));
@@ -238,6 +242,7 @@ impl ServerContext {
             bot_config_repo: bot_config_repo,
             osc_manager,
             robo_control,
+            oscquery_server,
         })
     }
 

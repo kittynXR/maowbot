@@ -35,13 +35,10 @@ pub async fn run_server(args: Args) -> Result<(), Error> {
     let ctx = ServerContext::new(&args).await?;
 
     // Start your OSC server on a free port:
-    match ctx.osc_manager.start_server().await {
-        Ok(port) => {
-            tracing::info!("OSC server is running on port {}", port);
-        }
-        Err(e) => {
-            tracing::error!("Failed to start OSC server: {:?}", e);
-        }
+    if let Err(e) = ctx.osc_manager.start_all().await {
+        tracing::error!("Failed to start OSC/OSCQuery: {:?}", e);
+    } else {
+        tracing::info!("OSC and OSCQuery servers started successfully.");
     }
 
     // 1) Spawn DB logger
@@ -139,6 +136,12 @@ pub async fn run_server(args: Args) -> Result<(), Error> {
                 }
             }
         }
+    }
+
+    if let Err(e) = ctx.osc_manager.stop_all().await {
+        error!("Failed to stop OSC/OSCQuery: {:?}", e);
+    } else {
+        info!("OSC and OSCQuery servers stopped successfully.");
     }
 
     // Cleanup
