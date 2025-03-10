@@ -1,8 +1,11 @@
+// File: maowbot-osc/src/vrchat/toggles/mod.rs
 //! maowbot-osc/src/vrchat/toggles/mod.rs
 //!
 //! Specific logic for "simple toggles" that can be turned on/off.
 //! These might be subsets of the avatar parameters or
 //! separate user-defined toggles.
+
+pub mod avatar_toggle_menu;  // <--- ADDED
 
 use crate::Result;
 

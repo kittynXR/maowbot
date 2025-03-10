@@ -1,3 +1,4 @@
+// File: maowbot-osc/src/vrchat/mod.rs
 //! maowbot-osc/src/vrchat/mod.rs
 //!
 //! Various VRChat-specific code for parsing avatar JSON files,
@@ -7,14 +8,14 @@ pub mod avatar;
 pub mod toggles;
 pub mod chatbox;
 
-use crate::{Result, OscError};
-use std::path::{Path, PathBuf};
+use crate::{OscError, Result};
+use std::path::Path;
 use std::fs;
 use serde::{Deserialize, Serialize};
 
 /// A minimal definition matching the structure of VRChat's generated JSON
 /// (the "id", "name", "parameters" list).
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct VrchatAvatarConfig {
     pub id: String,
     pub name: String,
@@ -22,7 +23,7 @@ pub struct VrchatAvatarConfig {
 }
 
 /// Each parameter includes an input and/or output spec.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct VrchatParameterConfig {
     pub name: String,
     #[serde(default)]
@@ -31,7 +32,7 @@ pub struct VrchatParameterConfig {
     pub output: Option<VrchatParamEndpoint>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct VrchatParamEndpoint {
     pub address: String,
     #[serde(rename = "type")]
@@ -74,3 +75,9 @@ pub fn load_all_vrchat_avatar_configs<P: AsRef<Path>>(dir: P) -> Vec<VrchatAvata
     }
     results
 }
+
+// NEW: Re-export the new 'avatar_watcher' and 'avatar_toggle_menu'
+pub mod avatar_watcher;
+
+pub use avatar_watcher::AvatarWatcher;
+

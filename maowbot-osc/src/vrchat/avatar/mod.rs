@@ -5,7 +5,7 @@
 
 use crate::Result;
 use crate::vrchat::VrchatAvatarConfig;
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
 /// Represent a parameter type so we can store or manipulate it in memory.
 #[derive(Debug, Clone, Serialize, Deserialize)]
