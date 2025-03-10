@@ -6,7 +6,7 @@
 
 use crate::Result;
 
-/// A placeholder for your future toggles logic
+#[derive(Debug)]
 pub struct SimpleToggle {
     pub name: String,
     pub is_on: bool,
@@ -22,6 +22,11 @@ impl SimpleToggle {
 
     pub fn set(&mut self, on: bool) {
         self.is_on = on;
+    }
+
+    /// Flip the toggle from on->off or off->on
+    pub fn toggle(&mut self) {
+        self.is_on = !self.is_on;
     }
 }
 
@@ -44,5 +49,22 @@ impl ToggleManager {
             t.set(on);
         }
         Ok(())
+    }
+
+    pub fn toggle(&mut self, name: &str) -> Result<()> {
+        if let Some(t) = self.toggles.iter_mut().find(|t| t.name == name) {
+            t.toggle();
+        }
+        Ok(())
+    }
+
+    pub fn get_toggle(&self, name: &str) -> Option<bool> {
+        self.toggles.iter().find_map(|t| {
+            if t.name == name {
+                Some(t.is_on)
+            } else {
+                None
+            }
+        })
     }
 }

@@ -5,6 +5,7 @@
 
 pub mod avatar;
 pub mod toggles;
+pub mod chatbox;
 
 use crate::{Result, OscError};
 use std::path::{Path, PathBuf};
@@ -37,8 +38,8 @@ pub struct VrchatParamEndpoint {
     pub param_type: String, // "Int", "Float", or "Bool"
 }
 
-/// A helper that attempts to parse a VRChat avatar config JSON file
-/// ( e.g. `C:\Users\YOU\AppData\LocalLow\VRChat\VRChat\OSC\usr_\Avatars\avtr_\*.json` ).
+/// A helper that attempts to parse a VRChat avatar config JSON file.
+/// (e.g. `C:\Users\YOU\AppData\LocalLow\VRChat\VRChat\OSC\usr_\Avatars\avtr_\*.json`).
 pub fn parse_vrchat_avatar_config<P: AsRef<Path>>(path: P) -> Result<VrchatAvatarConfig> {
     let p = path.as_ref();
     let data = fs::read_to_string(p)
@@ -47,4 +48,29 @@ pub fn parse_vrchat_avatar_config<P: AsRef<Path>>(path: P) -> Result<VrchatAvata
     let cfg: VrchatAvatarConfig = serde_json::from_str(&data)
         .map_err(|e| OscError::AvatarConfigError(format!("JSON parse error: {e}")))?;
     Ok(cfg)
+}
+
+/// Utility to scan a directory for all `.json` files and parse them as VRChat avatar configs.
+/// Returns a vector of successfully parsed configs. Ignores parse failures (just logs them).
+pub fn load_all_vrchat_avatar_configs<P: AsRef<Path>>(dir: P) -> Vec<VrchatAvatarConfig> {
+    let mut results = Vec::new();
+    let dir = dir.as_ref();
+    if let Ok(entries) = fs::read_dir(dir) {
+        for entry in entries {
+            if let Ok(ent) = entry {
+                let path = ent.path();
+                if path.extension().map(|s| s.to_string_lossy()) == Some("json".into()) {
+                    match parse_vrchat_avatar_config(&path) {
+                        Ok(cfg) => {
+                            results.push(cfg);
+                        }
+                        Err(e) => {
+                            eprintln!("Failed to parse {:?}: {}", path, e);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    results
 }

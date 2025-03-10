@@ -7,10 +7,13 @@ pub mod oscquery;
 pub mod vrchat;
 pub mod robo;
 
+use std::net::UdpSocket;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use thiserror::Error;
+
 use crate::oscquery::OscQueryServer;
+use rosc::{OscPacket, OscType};
 
 #[derive(Error, Debug)]
 pub enum OscError {
@@ -36,12 +39,13 @@ pub type Result<T> = std::result::Result<T, OscError>;
 /// all VRChat toggles/robotic logic.
 ///
 /// For instance, it can:
-/// - spin up an OSC server
-/// - run the OSCQuery discovery
-/// - parse VRChat's avatar JSON
-/// - maintain a list of toggles
+/// - Spin up an OSC server
+/// - Run the OSCQuery discovery
+/// - Parse VRChat's avatar JSON
+/// - Maintain a list of toggles
+/// - Send toggles & chatbox messages to VRChat
 ///
-/// This is a placeholder skeleton for your integrated approach.
+/// This is an example integrated approach.
 pub struct MaowOscManager {
     inner: Arc<Mutex<OscManagerInner>>,
     pub oscquery_server: Arc<Mutex<OscQueryServer>>,
@@ -79,7 +83,7 @@ impl MaowOscManager {
             let mut oscq = self.oscquery_server.lock().await;
             oscq.start().await?;
         }
-        tracing::info!("OSCQuery server started.");
+        tracing::info!("OSCQuery server started on port 8080.");
 
         // 3) Optionally discover local OSCQuery peers:
         self.discover_local_peers().await?;
@@ -117,7 +121,6 @@ impl MaowOscManager {
     /// (starting at 9002) if needed.
     /// Also start the OSCQuery advertisement if desired.
     pub async fn start_server(&self) -> Result<u16> {
-        // minimal placeholder
         let mut guard = self.inner.lock().await;
         if guard.is_running {
             return Ok(guard.listening_port.unwrap_or(9002));
@@ -126,14 +129,11 @@ impl MaowOscManager {
         let start_port = 9002;
         let max_port = 9100; // arbitrary upper bound
 
-        // Example: try multiple ports until success
         let mut port_found = None;
         for port in start_port..max_port {
-            // You might attempt to bind UDP here. If successful, store port and break.
-            // rosc uses "SocketAddr" etc.
             let addr = format!("127.0.0.1:{port}");
-            if let Ok(_sock) = std::net::UdpSocket::bind(&addr) {
-                // We won't actually keep _sock in this skeleton.
+            if let Ok(_sock) = UdpSocket::bind(&addr) {
+                // In a real server, we'd keep this socket open and pass it to a rosc listener.
                 port_found = Some(port);
                 break;
             }
@@ -141,20 +141,14 @@ impl MaowOscManager {
 
         let chosen_port = match port_found {
             Some(p) => p,
-            None => {
-                return Err(OscError::PortError);
-            }
+            None => return Err(OscError::PortError),
         };
 
-        // In real usage, you'd pass that open socket to a rosc server task
-        // that listens and processes messages.
         guard.listening_port = Some(chosen_port);
         guard.is_running = true;
-
         tracing::info!("OSC server started on port {chosen_port}.");
 
-        // Start OSCQuery advertisement here, if desired
-        // (mdns or other approach).
+        // If you want to run your own rosc receiver loop, you could spawn a task here.
 
         Ok(chosen_port)
     }
@@ -169,30 +163,63 @@ impl MaowOscManager {
         Ok(())
     }
 
-    /// A placeholder for sending a single OSC message to VRChat
-    /// (e.g., toggling an avatar parameter).
-    pub async fn send_osc_toggle(&self, param_name: &str, value: f32) -> Result<()> {
-        let guard = self.inner.lock().await;
-        let port = guard.listening_port.unwrap_or(9002);
-        let address = format!("127.0.0.1:9000"); // VRChat typically listens on 9000
+    // ------------------------------------------------------------------------
+    // Common helper for sending a raw OSC packet to VRChat (which listens on 9000 by default).
 
-        // Build rosc::OscPacket
-        let osc_msg = rosc::OscMessage {
-            addr: format!("/avatar/parameters/{}", param_name),
-            args: vec![rosc::OscType::Float(value)],
-        };
-        let packet = rosc::OscPacket::Message(osc_msg);
-
+    fn send_osc_packet(&self, packet: OscPacket) -> Result<()> {
+        let address = "127.0.0.1:9000"; // VRChat typically listens on this
         let buf = rosc::encoder::encode(&packet)
             .map_err(|e| OscError::IoError(format!("Encode error: {e:?}")))?;
 
-        // Send the packet
-        let sock = std::net::UdpSocket::bind(("127.0.0.1", 0))
+        let sock = UdpSocket::bind(("127.0.0.1", 0))
             .map_err(|e| OscError::IoError(format!("Bind sock error: {e}")))?;
-        sock.send_to(&buf, &address)
+        sock.send_to(&buf, address)
             .map_err(|e| OscError::IoError(format!("Send error: {e}")))?;
-
-        tracing::debug!("Sent OSC toggle => param={param_name}, value={value}, to VRChat:9000");
         Ok(())
     }
+
+    // ------------------------------------------------------------------------
+    // Single-argument sending methods for avatar parameters (bool, int, float).
+    // You can also expand or unify them into one function if you prefer.
+
+    /// Send a boolean value to an avatar parameter:
+    /// address => `/avatar/parameters/<param_name>`, type => bool
+    pub fn send_avatar_parameter_bool(&self, param_name: &str, value: bool) -> Result<()> {
+        let packet = OscPacket::Message(rosc::OscMessage {
+            addr: format!("/avatar/parameters/{param_name}"),
+            args: vec![OscType::Bool(value)],
+        });
+        self.send_osc_packet(packet)
+    }
+
+    /// Send an integer value to an avatar parameter:
+    /// address => `/avatar/parameters/<param_name>`, type => int
+    pub fn send_avatar_parameter_int(&self, param_name: &str, value: i32) -> Result<()> {
+        let packet = OscPacket::Message(rosc::OscMessage {
+            addr: format!("/avatar/parameters/{param_name}"),
+            args: vec![OscType::Int(value)],
+        });
+        self.send_osc_packet(packet)
+    }
+
+    /// Send a float value to an avatar parameter:
+    /// address => `/avatar/parameters/<param_name>`, type => float
+    pub fn send_avatar_parameter_float(&self, param_name: &str, value: f32) -> Result<()> {
+        let packet = OscPacket::Message(rosc::OscMessage {
+            addr: format!("/avatar/parameters/{param_name}"),
+            args: vec![OscType::Float(value)],
+        });
+        self.send_osc_packet(packet)
+    }
+
+    /// A legacy example that sends a float "toggle" to a parameter. For many toggles, you
+    /// might want to send 0.0 or 1.0 as a float. Prefer the typed methods above.
+    pub async fn send_osc_toggle(&self, param_name: &str, value: f32) -> Result<()> {
+        let packet = OscPacket::Message(rosc::OscMessage {
+            addr: format!("/avatar/parameters/{}", param_name),
+            args: vec![OscType::Float(value)],
+        });
+        self.send_osc_packet(packet)
+    }
 }
+
