@@ -10,6 +10,7 @@ tokio = { workspace = true }
 maowbot-core = { path = "../maowbot-core" }
 maowbot-proto = { path = "../maowbot-proto" }
 maowbot-tui = { path = "../maowbot-tui" }
+maowbot_osc = { path = "../maowbot-osc" }
 
 # plus any additional you need
 sqlx = { workspace = true }

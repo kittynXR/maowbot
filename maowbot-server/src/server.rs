@@ -34,6 +34,16 @@ pub async fn run_server(args: Args) -> Result<(), Error> {
     // Build the global context
     let ctx = ServerContext::new(&args).await?;
 
+    // Start your OSC server on a free port:
+    match ctx.osc_manager.start_server().await {
+        Ok(port) => {
+            tracing::info!("OSC server is running on port {}", port);
+        }
+        Err(e) => {
+            tracing::error!("Failed to start OSC server: {:?}", e);
+        }
+    }
+
     // 1) Spawn DB logger
     let (db_logger_handle, db_logger_control) = start_db_logger(&ctx);
     // 2) Spawn maintenance

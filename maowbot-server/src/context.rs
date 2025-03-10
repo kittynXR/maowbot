@@ -44,6 +44,8 @@ use maowbot_core::repositories::postgres::{
     redeems::PostgresRedeemRepository,
     redeem_usage::PostgresRedeemUsageRepository,
 };
+use maowbot_osc::MaowOscManager;
+use maowbot_osc::robo::RoboControlSystem;
 
 /// The global server context (a bag of references to DB, event bus, plugin manager, etc.).
 pub struct ServerContext {
@@ -60,6 +62,9 @@ pub struct ServerContext {
     /// The raw references in case you need them.
     pub creds_repo: Arc<PostgresCredentialsRepository>,
     pub bot_config_repo: Arc<dyn BotConfigRepository + Send + Sync>,
+
+    pub osc_manager: Arc<MaowOscManager>,
+    pub robo_control: Arc<Mutex<RoboControlSystem>>,
 }
 
 impl ServerContext {
@@ -213,6 +218,12 @@ impl ServerContext {
             error!("Failed to load plugins from 'plugs': {:?}", e);
         }
 
+        // Create the new manager for OSC:
+        let osc_manager = Arc::new(MaowOscManager::new());
+
+        // Create the new robo system:
+        let robo_control = Arc::new(Mutex::new(RoboControlSystem::new()));
+
         Ok(ServerContext {
             db,
             event_bus,
@@ -225,6 +236,8 @@ impl ServerContext {
             redeem_service,
             creds_repo: creds_repo_arc,
             bot_config_repo: bot_config_repo,
+            osc_manager,
+            robo_control,
         })
     }
 

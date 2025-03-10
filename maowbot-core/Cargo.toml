@@ -10,6 +10,7 @@ maowbot-proto = { path = "../maowbot-proto" }
 
 twitch_api = {  workspace = true }
 vrchatapi = { version = "^1.19" }
+rosc = { version = "^0.11", features = ["default"]}
 
 sqlx = { workspace = true }
 

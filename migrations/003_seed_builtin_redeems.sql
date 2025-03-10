@@ -17,18 +17,33 @@ INSERT INTO redeems (
     command_name
 )
 VALUES (
-           uuid_generate_v4(),
-           'twitch-eventsub',       -- Our local platform identifier for EventSub
-           '',                      -- reward_id is empty for built-in seeds
-           'cute',                  -- display name in DB
-           50,                      -- cost
-           true,                    -- is_active
-           false,                   -- dynamic_pricing
-           true,                    -- active_offline
-           true,                    -- is_managed
-           now(),
-           now(),
-           'builtin',               -- plugin_name => "builtin"
-           'cute'                   -- command_name => "cute"
-       )
-    ON CONFLICT (plugin_name, command_name) DO NOTHING;
+    uuid_generate_v4(),
+    'twitch-eventsub',
+    '',
+    'cute',
+    50,
+    true,
+    false,
+    true,
+    true,
+    now(),
+    now(),
+    'builtin',
+    'cute'
+),
+(
+    uuid_generate_v4(),
+    'twitch-eventsub',
+    '',
+    'comfi pillo',
+    25,
+    true,
+    false,
+    true,
+    true,
+    now(),
+    now(),
+    'builtin',
+    'pillo'
+)
+ON CONFLICT (plugin_name, command_name) DO NOTHING;
