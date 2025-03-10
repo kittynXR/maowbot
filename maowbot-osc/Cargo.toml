@@ -13,7 +13,7 @@ thiserror = { workspace = true }
 
 rosc = { version = "^0.11" }
 
-mdns = { version = "^0.3" }
+mdns-sd = { version = "^0.13" }
 warp = "^0.3"
 
 # Optionally for filesystem watch
