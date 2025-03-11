@@ -31,13 +31,13 @@ pub async fn handle_drip_command(
             } else {
                 // e.g. set i/ignore <prefix> or set s/strip <prefix> or set name <value>
                 match args[1] {
-                    "i/ignore" if args.len() > 2 => {
+                    "i" | "ignore" if args.len() > 2 => {
                         match drip_api.drip_set_ignore_prefix(args[2]).await {
                             Ok(msg) => msg,
                             Err(e) => format!("Error: {:?}", e),
                         }
                     }
-                    "s/strip" if args.len() > 2 => {
+                    "s" | "strip" if args.len() > 2 => {
                         match drip_api.drip_set_strip_prefix(args[2]).await {
                             Ok(msg) => msg,
                             Err(e) => format!("Error: {:?}", e),
