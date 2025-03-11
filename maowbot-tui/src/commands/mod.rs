@@ -18,6 +18,7 @@ mod member;
 mod command;
 mod redeem;
 mod osc;
+mod drip;
 
 /// Asynchronous command dispatcher. Returns (quit_requested, optional_output_message).
 pub async fn dispatch_async(
@@ -108,6 +109,11 @@ pub async fn dispatch_async(
 
         "osc" => {
             let output = osc::handle_osc_command(args, bot_api, tui_module).await;
+            (false, Some(output))
+        }
+
+        "drip" => {
+            let output = drip::handle_drip_command(args, bot_api, tui_module).await;
             (false, Some(output))
         }
 

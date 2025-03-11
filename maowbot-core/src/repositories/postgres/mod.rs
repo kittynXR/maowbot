@@ -15,6 +15,7 @@ pub mod commands;
 pub mod command_usage;
 pub mod redeems;
 pub mod redeem_usage;
+pub mod drip;
 
 pub use user::UserRepository;
 pub use platform_identity::PlatformIdentityRepository;

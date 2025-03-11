@@ -34,6 +34,7 @@ use crate::services::message_service::MessageService;
 use crate::plugins::manager::plugin_api_impl::build_status_response;
 use crate::repositories::{CommandUsageRepository, RedeemUsageRepository};
 // or you can keep the function local
+use crate::repositories::postgres::drip::DripRepository;
 use crate::repositories::postgres::bot_config::BotConfigRepository;
 use crate::repositories::postgres::credentials::CredentialsRepository;
 use crate::repositories::postgres::platform_config::PlatformConfigRepository;
@@ -72,7 +73,7 @@ pub struct PluginManager {
 
     /// A user repository so we can create/remove user rows, etc.
     pub user_repo: Arc<UserRepository>,
-
+    pub drip_repo: Arc<DripRepository>,
     /// The manager for platform logic (starting/stopping runtimes, etc.).
     pub platform_manager: Arc<PlatformManager>,
 
@@ -97,6 +98,7 @@ impl PluginManager {
     pub fn new(
         passphrase: Option<String>,
         user_repo: Arc<UserRepository>,
+        drip_repo: Arc<DripRepository>,
         analytics_repo: Arc<PostgresAnalyticsRepository>,
         user_analysis_repo: Arc<PostgresUserAnalysisRepository>,
         platform_identity_repo: Arc<PlatformIdentityRepository>,
@@ -117,6 +119,7 @@ impl PluginManager {
             persist_path: PathBuf::from("plugs/plugins_state.json"),
             auth_manager: None,
             user_repo,
+            drip_repo,
             platform_manager,
 
             analytics_repo,
@@ -149,6 +152,9 @@ impl PluginManager {
         self.event_bus = Some(bus);
     }
 
+    pub fn set_osc_manager(&mut self, osc_mgr: Arc<MaowOscManager>) {
+        self.osc_manager = Some(osc_mgr);
+    }
     /// Subscribes the manager to events from the bus, so we can broadcast them to plugins if needed.
     pub async fn subscribe_to_event_bus(&self, bus: Arc<EventBus>) {
         let mut rx = bus.subscribe(None).await;
@@ -633,12 +639,5 @@ impl PluginManager {
             }
         }
         Ok(())
-    }
-
-    // ----------------------------------------------------------------------
-    // NEW: Provide a setter for the `osc_manager`
-    // ----------------------------------------------------------------------
-    pub fn set_osc_manager(&mut self, osc_mgr: Arc<MaowOscManager>) {
-        self.osc_manager = Some(osc_mgr);
     }
 }

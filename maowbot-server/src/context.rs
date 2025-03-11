@@ -44,6 +44,7 @@ use maowbot_core::repositories::postgres::{
     redeems::PostgresRedeemRepository,
     redeem_usage::PostgresRedeemUsageRepository,
 };
+use maowbot_core::repositories::postgres::drip::DripRepository;
 use maowbot_osc::MaowOscManager;
 use maowbot_osc::oscquery::OscQueryServer;
 use maowbot_osc::robo::RoboControlSystem;
@@ -104,6 +105,7 @@ impl ServerContext {
         let analytics_repo = Arc::new(PostgresAnalyticsRepository::new(db.pool().clone()));
         let user_analysis_repo = Arc::new(PostgresUserAnalysisRepository::new(db.pool().clone()));
         let user_repo_arc = Arc::new(UserRepository::new(db.pool().clone()));
+        let drip_repo = Arc::new(DripRepository::new(db.pool().clone()));
         let platform_identity_repo = Arc::new(PlatformIdentityRepository::new(db.pool().clone()));
         let cmd_repo = Arc::new(PostgresCommandRepository::new(db.pool().clone()));
         let cmd_usage_repo = Arc::new(PostgresCommandUsageRepository::new(db.pool().clone()));
@@ -194,6 +196,7 @@ impl ServerContext {
         let mut plugin_manager = PluginManager::new(
             args.plugin_passphrase.clone(),
             user_repo_arc,
+            drip_repo,
             analytics_repo,
             user_analysis_repo,
             platform_identity_repo,

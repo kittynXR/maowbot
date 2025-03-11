@@ -11,10 +11,12 @@ use uuid::Uuid;
 pub mod user_analysis;
 pub mod command;
 pub mod redeem;
+pub mod drip;
 
 pub use user_analysis::UserAnalysis;
 pub use command::{Command, CommandUsage};
 pub use redeem::{Redeem, RedeemUsage};
+pub use drip::{DripAvatar, DripFit, DripFitParam, DripProp};
 
 #[derive(Debug, Serialize, Deserialize, Clone, sqlx::FromRow)]
 pub struct User {
