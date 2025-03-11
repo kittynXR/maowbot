@@ -19,15 +19,8 @@ use crate::commands::dispatch_async;
 #[derive(Debug)]
 pub struct TtvState {
     pub active_account: Option<String>,
-
-    /// The broadcaster channel name is still stored as text (e.g. "#kittyn").
-    /// We have not changed this to an “account”, because the user might want to
-    /// keep the broadcaster as a channel name.
     pub broadcaster_channel: Option<String>,
-
-    /// The new "secondary_account" is the user account for responding to commands.
     pub secondary_account: Option<String>,
-
     pub joined_channels: Vec<String>,
     pub is_in_chat_mode: bool,
     pub current_channel_index: usize,
@@ -54,6 +47,22 @@ pub struct ChatState {
     pub account_filter: Option<String>,
 }
 
+// ------------------------------------
+// NEW: track "osc chat mode" state
+// ------------------------------------
+#[derive(Debug)]
+pub struct OscState {
+    pub is_in_chat_mode: bool,
+}
+
+impl OscState {
+    pub fn new() -> Self {
+        Self {
+            is_in_chat_mode: false,
+        }
+    }
+}
+
 pub struct TuiModule {
     pub bot_api: Arc<dyn BotApi>,
     pub event_bus: Arc<EventBus>,
@@ -62,19 +71,22 @@ pub struct TuiModule {
 
     pub chat_state: Arc<Mutex<ChatState>>,
     pub ttv_state: Arc<Mutex<TtvState>>,
+
+    // ---------------------------
+    // NEW: store an OSC TUI state
+    // ---------------------------
+    pub osc_state: Arc<Mutex<OscState>>,
 }
 
 impl TuiModule {
     pub async fn new(bot_api: Arc<dyn BotApi>, event_bus: Arc<EventBus>) -> Self {
-        // Attempt to load broadcaster channel from bot_config
-        let broadcaster_channel = bot_api.get_bot_config_value("ttv_broadcaster_channel").await
-            .ok().flatten();
+        // Attempt to load broadcaster channel & secondary from config, or default.
+        let broadcaster_channel = bot_api.get_bot_config_value("ttv_broadcaster_channel")
+            .await.ok().flatten();
+        let secondary_account = bot_api.get_bot_config_value("ttv_secondary_account")
+            .await.ok().flatten();
 
-        // Attempt to load the newly named "ttv_secondary_account" from bot_config
-        let secondary_account = bot_api.get_bot_config_value("ttv_secondary_account").await
-            .ok().flatten();
-
-        // Check if any Twitch-IRC credentials exist to guess an active account
+        // If any Twitch-IRC creds exist, pick the first as active:
         let ttv_creds = bot_api.list_credentials(Some(Platform::TwitchIRC)).await;
         let mut ttv_state = TtvState::new();
         ttv_state.broadcaster_channel = broadcaster_channel;
@@ -82,7 +94,6 @@ impl TuiModule {
 
         if let Ok(creds_list) = ttv_creds {
             if !creds_list.is_empty() {
-                // pick the first user_name as a default
                 ttv_state.active_account = Some(creds_list[0].user_name.clone());
             }
         }
@@ -93,6 +104,7 @@ impl TuiModule {
             shutdown_flag: Arc::new(AtomicBool::new(false)),
             chat_state: Arc::new(Mutex::new(ChatState::default())),
             ttv_state: Arc::new(Mutex::new(ttv_state)),
+            osc_state: Arc::new(Mutex::new(OscState::new())),
         }
     }
 
@@ -141,19 +153,33 @@ impl TuiModule {
                 continue;
             }
 
-            // If chat mode is on, interpret line as chat text
+            // 1) If we're in Twitch chat mode, interpret line as chat text
             {
                 let is_in_chat_mode = {
                     let st = self.ttv_state.lock().unwrap();
                     st.is_in_chat_mode
                 };
                 if is_in_chat_mode {
-                    if self.handle_chat_mode_line(&line).await {
+                    if self.handle_ttv_chat_line(&line).await {
                         continue;
                     }
                 }
             }
 
+            // 2) If we're in OSC chat mode, interpret line as VRChat chat text
+            {
+                let is_in_osc_chat_mode = {
+                    let st = self.osc_state.lock().unwrap();
+                    st.is_in_chat_mode
+                };
+                if is_in_osc_chat_mode {
+                    if self.handle_osc_chat_line(&line).await {
+                        continue;
+                    }
+                }
+            }
+
+            // 3) Otherwise, interpret line as a command:
             let (quit_requested, output) = dispatch_async(&line, &self.bot_api, self).await;
             if let Some(msg) = output {
                 println!("{}", msg);
@@ -167,11 +193,12 @@ impl TuiModule {
         println!("(TUI) Exiting input loop. Goodbye!");
     }
 
-    async fn handle_chat_mode_line(&self, line: &str) -> bool {
+    /// Called when TTV chat mode is enabled, returns `true` if the line was consumed.
+    async fn handle_ttv_chat_line(&self, line: &str) -> bool {
         if line.eq_ignore_ascii_case("/quit") {
             let mut st = self.ttv_state.lock().unwrap();
             st.is_in_chat_mode = false;
-            println!("Exited chat mode.");
+            println!("Exited TTV chat mode.");
             return true;
         }
         if line.eq_ignore_ascii_case("/c") {
@@ -197,31 +224,54 @@ impl TuiModule {
             (acct, chan)
         };
 
-        if maybe_acct.is_none() {
+        if let Some(account) = maybe_acct {
+            let res = self.bot_api.send_twitch_irc_message(&account, &channel, line).await;
+            if let Err(e) = res {
+                eprintln!("Error sending chat => {:?}", e);
+            }
+        } else {
             eprintln!("No active Twitch-IRC account is set. Cannot send chat.");
+        }
+        true
+    }
+
+    /// Called when OSC chat mode is enabled, returns `true` if the line was consumed.
+    async fn handle_osc_chat_line(&self, line: &str) -> bool {
+        if line.eq_ignore_ascii_case("/quit") {
+            let mut st = self.osc_state.lock().unwrap();
+            st.is_in_chat_mode = false;
+            println!("Exited OSC chatbox mode.");
             return true;
         }
 
-        let account = maybe_acct.unwrap();
-        let res = self.bot_api.send_twitch_irc_message(&account, &channel, line).await;
+        // Send the typed text to VRChat chatbox
+        let res = self.bot_api.osc_chatbox(line).await;
         if let Err(e) = res {
-            eprintln!("Error sending chat => {:?}", e);
+            eprintln!("Error sending OSC chat => {:?}", e);
         }
         true
     }
 
     fn prompt_string(&self) -> String {
-        let st = self.ttv_state.lock().unwrap();
-        if st.is_in_chat_mode {
-            if st.joined_channels.is_empty() {
-                "#??? > ".to_string()
+        // TTV chat mode has precedence in this example, but you can handle it differently.
+        let st_ttv = self.ttv_state.lock().unwrap();
+        if st_ttv.is_in_chat_mode {
+            if st_ttv.joined_channels.is_empty() {
+                return "#??? > ".to_string();
             } else {
-                let ch = &st.joined_channels[st.current_channel_index];
-                format!("{}> ", ch)
+                let ch = &st_ttv.joined_channels[st_ttv.current_channel_index];
+                return format!("{}> ", ch);
             }
-        } else {
-            "tui> ".to_string()
         }
+
+        let st_osc = self.osc_state.lock().unwrap();
+        if st_osc.is_in_chat_mode {
+            // just label it "chatbox"
+            return "chatbox> ".to_string();
+        }
+
+        // default TUI prompt
+        "tui> ".to_string()
     }
 
     async fn run_chat_display_loop(&self) {

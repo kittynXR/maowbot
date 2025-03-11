@@ -14,7 +14,6 @@ pub mod eventbus;
 pub mod cache;
 pub mod services;
 pub mod test_utils;
-mod vrchat_osc;
 
 pub use db::Database;
 pub use error::Error;

@@ -47,7 +47,7 @@ pub type Result<T> = std::result::Result<T, OscError>;
 ///
 /// This is an example integrated approach.
 pub struct MaowOscManager {
-    inner: Arc<Mutex<OscManagerInner>>,
+    pub inner: Arc<Mutex<OscManagerInner>>,
     pub oscquery_server: Arc<Mutex<OscQueryServer>>,
 }
 
@@ -56,6 +56,13 @@ struct OscManagerInner {
     pub is_running: bool,
     // placeholders for your future expansions
 }
+
+#[derive(Debug)]
+pub struct OscManagerStatus {
+    pub is_running: bool,
+    pub listening_port: Option<u16>,
+}
+
 
 impl MaowOscManager {
     pub fn new() -> Self {
@@ -70,6 +77,19 @@ impl MaowOscManager {
             inner: Arc::new(Mutex::new(inner)),
             oscquery_server: Arc::new(Mutex::new(oscquery_server)),
         }
+    }
+
+    pub async fn get_status(&self) -> Result<OscManagerStatus> {
+        // Lock the inner struct here:
+        let guard = self.inner.lock().await;
+
+        // We build a simple status object:
+        let status = OscManagerStatus {
+            is_running: guard.is_running,
+            listening_port: guard.listening_port,
+        };
+
+        Ok(status)
     }
 
     /// Starts the OSC server (UDP) and the OSCQuery server (HTTP).
@@ -104,17 +124,19 @@ impl MaowOscManager {
     }
 
     /// A quick method to discover local peers (optional).
-    pub async fn discover_local_peers(&self) -> Result<()> {
+    pub async fn discover_local_peers(&self) ->  Result<Vec<String>> {
         let mut oscq = self.oscquery_server.lock().await;
         if let Some(discovery) = &oscq.discovery {
+            // discover_peers() presumably returns a Vec<String>
             let discovered = discovery.discover_peers().await?;
-            for svc_name in discovered {
+            for svc_name in &discovered {
                 tracing::info!("Found local OSCQuery service => {svc_name}");
             }
+            Ok(discovered)
         } else {
-            tracing::info!("OSCQuery discovery not initialized.");
+            // If there's no discovery object, return an empty list or error
+            Ok(vec![])
         }
-        Ok(())
     }
 
     /// Attempt to start an OSC server, searching for a free port

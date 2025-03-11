@@ -7,6 +7,7 @@ edition.workspace = true
 
 [dependencies]
 maowbot-proto = { path = "../maowbot-proto" }
+maowbot_osc = { path = "../maowbot-osc" }
 
 twitch_api = {  workspace = true }
 vrchatapi = { version = "^1.19" }

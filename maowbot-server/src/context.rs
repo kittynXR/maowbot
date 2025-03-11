@@ -228,6 +228,8 @@ impl ServerContext {
         // Create the new robo system:
         let robo_control = Arc::new(Mutex::new(RoboControlSystem::new()));
 
+        plugin_manager.set_osc_manager(Arc::clone(&osc_manager));
+
         Ok(ServerContext {
             db,
             event_bus,

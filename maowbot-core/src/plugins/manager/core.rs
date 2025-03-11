@@ -41,6 +41,8 @@ use crate::repositories::postgres::{PlatformIdentityRepository, PostgresAnalytic
 use crate::services::{CommandService, RedeemService};
 use crate::services::user_service::UserService;
 
+use maowbot_osc::MaowOscManager;
+
 /// The main manager that loads/stores plugins, spawns connections,
 /// listens to inbound plugin messages, etc.
 #[derive(Clone)]
@@ -83,6 +85,11 @@ pub struct PluginManager {
     pub redeem_service: Arc<RedeemService>,
     pub command_usage_repo: Arc<dyn CommandUsageRepository + Send + Sync>,
     pub redeem_usage_repo: Arc<dyn RedeemUsageRepository + Send + Sync>,
+
+    // ---------------------------------------
+    // NEW: reference to the main OSC manager
+    // ---------------------------------------
+    pub osc_manager: Option<Arc<MaowOscManager>>,
 }
 
 impl PluginManager {
@@ -121,6 +128,8 @@ impl PluginManager {
             redeem_service,
             command_usage_repo: cmd_usage_repo,
             redeem_usage_repo,
+
+            osc_manager: None, // newly added
         };
         manager.load_plugin_states();
         manager
@@ -624,5 +633,12 @@ impl PluginManager {
             }
         }
         Ok(())
+    }
+
+    // ----------------------------------------------------------------------
+    // NEW: Provide a setter for the `osc_manager`
+    // ----------------------------------------------------------------------
+    pub fn set_osc_manager(&mut self, osc_mgr: Arc<MaowOscManager>) {
+        self.osc_manager = Some(osc_mgr);
     }
 }

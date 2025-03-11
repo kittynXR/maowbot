@@ -10,7 +10,7 @@ use tracing::{info, error};
 ///
 /// If you wish to discover or advertise other local services, see `OscQueryDiscovery`.
 pub struct OscQueryServer {
-    is_running: bool,
+    pub is_running: bool,
     pub http_port: u16,
     stop_tx: Option<tokio::sync::oneshot::Sender<()>>,
     pub discovery: Option<OscQueryDiscovery>,
@@ -28,6 +28,9 @@ impl OscQueryServer {
         }
     }
 
+    pub fn is_running(&self) -> bool {
+        self.is_running
+    }
     /// Start the OSCQuery HTTP server using `warp`. Also attempts to
     /// advertise via mDNS if possible.
     pub async fn start(&mut self) -> Result<()> {

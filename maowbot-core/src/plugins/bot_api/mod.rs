@@ -10,6 +10,7 @@ pub mod twitch_api;
 pub mod vrchat_api;
 pub mod command_api;
 pub mod redeem_api;
+pub mod osc_api;
 
 // Bring sub-traits into scope:
 use plugin_api::PluginApi;
@@ -20,6 +21,7 @@ use twitch_api::TwitchApi;
 use vrchat_api::VrchatApi;
 use command_api::CommandApi;
 use redeem_api::RedeemApi;
+use osc_api::OscApi;
 
 /// The new umbrella trait `BotApi` that extends all the sub-traits.
 /// Any type implementing all those sub-traits automatically implements `BotApi`.
@@ -32,6 +34,7 @@ PluginApi
 + VrchatApi
 + CommandApi
 + RedeemApi
++ OscApi
 {
 }
 
@@ -45,6 +48,7 @@ where
     + VrchatApi
     + CommandApi
     + RedeemApi
+    + OscApi
 {
     // No extra methods; it’s just a “marker” for convenience.
 }

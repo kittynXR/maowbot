@@ -17,7 +17,7 @@ mod vrchat;
 mod member;
 mod command;
 mod redeem;
-// <-- newly added for redeem subcommands
+mod osc;
 
 /// Asynchronous command dispatcher. Returns (quit_requested, optional_output_message).
 pub async fn dispatch_async(
@@ -103,6 +103,11 @@ pub async fn dispatch_async(
                 }
             }
 
+            (false, Some(output))
+        }
+
+        "osc" => {
+            let output = osc::handle_osc_command(args, bot_api, tui_module).await;
             (false, Some(output))
         }
 
