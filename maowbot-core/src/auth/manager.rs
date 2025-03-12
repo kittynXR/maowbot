@@ -1,11 +1,12 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 use uuid::Uuid;
+use maowbot_common::error::Error;
 
-use crate::auth::{PlatformAuthenticator, AuthenticationPrompt, AuthenticationResponse};
-use crate::Error;
-use crate::models::{Platform, PlatformCredential};
-use crate::repositories::{BotConfigRepository, CredentialsRepository};
+use maowbot_common::traits::auth_traits::PlatformAuthenticator;
+use maowbot_common::models::platform::{Platform, PlatformCredential};
+use maowbot_common::traits::repository_traits::{BotConfigRepository, CredentialsRepository};
+use crate::auth::{AuthenticationPrompt, AuthenticationResponse};
 use crate::repositories::postgres::platform_config::PlatformConfigRepository;
 
 use crate::platforms::discord::auth::DiscordAuthenticator;
@@ -18,10 +19,6 @@ pub struct AuthManager {
     pub credentials_repo: Arc<dyn CredentialsRepository + Send + Sync>,
     pub platform_config_repo: Arc<dyn PlatformConfigRepository + Send + Sync>,
     pub bot_config_repo: Arc<dyn BotConfigRepository + Send + Sync>,
-
-    /// We store active `PlatformAuthenticator` instances keyed by `Platform`.
-    /// The borrow checker will complain if we hold &mut references too long,
-    /// so we only keep them inside short scopes (not returned from functions).
     pub authenticators: HashMap<Platform, Box<dyn PlatformAuthenticator + Send + Sync>>,
 }
 

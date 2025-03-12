@@ -1,7 +1,7 @@
 // maowbot-server/src/portable_postgres.rs
 use std::{
     fs::File,
-    io::{Read, Write},
+    io::{Read},
     path::Path,
     process::Command,
 };

@@ -2,87 +2,13 @@
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use sqlx::{Pool, Postgres, FromRow, QueryBuilder, Row};
-use serde_json::Value;
+use sqlx::{Pool, Postgres, QueryBuilder};
 use uuid::Uuid;
+pub(crate) use maowbot_common::traits::repository_traits::AnalyticsRepo;
+pub(crate) use maowbot_common::models::analytics::{BotEvent, ChatMessage, ChatSession};
 use crate::Error;
 
-#[derive(Clone, Debug, FromRow)]
-pub struct ChatMessage {
-    pub message_id: Uuid,
-    pub platform: String,
-    pub channel: String,
-    pub user_id: Uuid,
-    pub message_text: String,
-    pub timestamp: DateTime<Utc>,
 
-    // Now stored as JSONB in the DB, so we directly store Option<Value>.
-    pub metadata: Option<Value>,
-}
-
-#[derive(Clone, Debug)]
-pub struct ChatSession {
-    pub session_id: Uuid,
-    pub platform: String,
-    pub channel: String,
-    pub user_id: Uuid,
-    pub joined_at: DateTime<Utc>,
-    pub left_at: Option<DateTime<Utc>>,
-    pub session_duration_seconds: Option<i64>,
-}
-
-#[derive(Clone, Debug)]
-pub struct BotEvent {
-    pub event_id: Uuid,
-    pub event_type: String,
-    pub event_timestamp: DateTime<Utc>,
-    pub data: Option<Value>,
-}
-
-#[async_trait]
-pub trait AnalyticsRepo: Send + Sync {
-    async fn insert_chat_message(&self, msg: &ChatMessage) -> Result<(), Error>;
-    async fn insert_chat_messages(&self, msgs: &[ChatMessage]) -> Result<(), Error>;
-
-    async fn get_recent_messages(
-        &self,
-        platform: &str,
-        channel: &str,
-        limit: i64
-    ) -> Result<Vec<ChatMessage>, Error>;
-
-    async fn insert_chat_session(&self, session: &ChatSession) -> Result<(), Error>;
-    async fn close_chat_session(
-        &self,
-        session_id: Uuid,
-        left_at: DateTime<Utc>,
-        duration_seconds: i64
-    ) -> Result<(), Error>;
-
-    async fn insert_bot_event(&self, event: &BotEvent) -> Result<(), Error>;
-    async fn update_daily_stats(
-        &self,
-        date_str: &str,
-        new_messages: i64,
-        new_visits: i64
-    ) -> Result<(), Error>;
-
-    async fn get_messages_for_user(
-        &self,
-        user_id: Uuid,
-        limit: i64,
-        offset: i64,
-        maybe_platform: Option<&str>,
-        maybe_channel: Option<&str>,
-        maybe_search: Option<&str>,
-    ) -> Result<Vec<ChatMessage>, Error>;
-
-    async fn reassign_user_messages(
-        &self,
-        from_user: Uuid,
-        to_user: Uuid
-    ) -> Result<u64, Error>;
-}
 
 #[derive(Clone)]
 pub struct PostgresAnalyticsRepository {
@@ -336,7 +262,7 @@ impl AnalyticsRepo for PostgresAnalyticsRepository {
 
         let mut query = sqlx::query_as::<_, ChatMessage>(&sql).bind(user_id);
 
-        for (i, val) in &binds {
+        for (_i, val) in &binds {
             query = query.bind(val);
         }
         query = query.bind(limit).bind(offset);

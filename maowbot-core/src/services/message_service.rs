@@ -2,15 +2,14 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use chrono::{DateTime, Utc};
 use tracing::{debug, info, error, warn};
-use uuid::Uuid;
-
-use crate::cache::{ChatCache, CachedMessage};
+use maowbot_common::models::cache::CachedMessage;
+use maowbot_common::models::platform::Platform;
 use crate::eventbus::{EventBus, BotEvent};
 use crate::Error;
 use crate::repositories::postgres::user_analysis::PostgresUserAnalysisRepository;
 
 use crate::auth::user_manager::{UserManager, DefaultUserManager};
-use crate::models::Platform;
+use crate::cache::message_cache::ChatCache;
 use crate::services::user_service::UserService;
 use crate::services::{CommandService, CommandResponse};
 use crate::platforms::manager::PlatformManager;
@@ -108,7 +107,7 @@ impl MessageService {
             user_roles: roles_list.to_vec(),
         };
         {
-            let mut lock = self.chat_cache.lock().await;
+            let lock = self.chat_cache.lock().await;
             lock.add_message(cached_msg).await;
         }
 

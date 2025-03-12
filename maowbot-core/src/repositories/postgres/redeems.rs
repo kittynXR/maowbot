@@ -1,22 +1,11 @@
 use async_trait::async_trait;
 use sqlx::{Pool, Postgres, Row};
 use uuid::Uuid;
-use chrono::Utc;
-
+use maowbot_common::models::Redeem;
+pub(crate) use maowbot_common::traits::repository_traits::RedeemRepository;
 use crate::Error;
-use crate::models::Redeem;
 
 /// Repository for channel point rewards (redeems).
-#[async_trait]
-pub trait RedeemRepository: Send + Sync {
-    async fn create_redeem(&self, rd: &Redeem) -> Result<(), Error>;
-    async fn get_redeem_by_id(&self, redeem_id: Uuid) -> Result<Option<Redeem>, Error>;
-    async fn get_redeem_by_reward_id(&self, platform: &str, reward_id: &str) -> Result<Option<Redeem>, Error>;
-    async fn list_redeems(&self, platform: &str) -> Result<Vec<Redeem>, Error>;
-    async fn update_redeem(&self, rd: &Redeem) -> Result<(), Error>;
-    async fn delete_redeem(&self, redeem_id: Uuid) -> Result<(), Error>;
-}
-
 /// Concrete Postgres-based implementation.
 #[derive(Clone)]
 pub struct PostgresRedeemRepository {

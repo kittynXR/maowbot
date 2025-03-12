@@ -1,31 +1,10 @@
-// File: maowbot-core/src/models/mod.rs
-
 use std::fmt;
 use std::str::FromStr;
 use chrono::{DateTime, Utc};
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use sqlx::FromRow;
 use uuid::Uuid;
-
-pub mod user_analysis;
-pub mod command;
-pub mod redeem;
-pub mod drip;
-
-pub use user_analysis::UserAnalysis;
-pub use command::{Command, CommandUsage};
-pub use redeem::{Redeem, RedeemUsage};
-pub use drip::{DripAvatar, DripFit, DripFitParam, DripProp};
-
-#[derive(Debug, Serialize, Deserialize, Clone, sqlx::FromRow)]
-pub struct User {
-    pub user_id: Uuid,
-    pub global_username: Option<String>,
-    pub created_at: DateTime<Utc>,
-    pub last_seen: DateTime<Utc>,
-    pub is_active: bool,
-}
+use crate::models::credential::CredentialType;
 
 /// Add sqlx::Type so that SQLx knows how to decode this enum.
 /// Here we tell SQLx that the enum is stored as TEXT.
@@ -73,49 +52,7 @@ impl From<String> for Platform {
     }
 }
 
-/// CredentialType now supports only the known types.
-/// We have removed the old data-bearing custom variant and replaced it
-/// with a unit variant for interactive 2FA.
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, sqlx::Type)]
-#[sqlx(type_name = "TEXT")]
-#[sqlx(rename_all = "lowercase")]
-pub enum CredentialType {
-    OAuth2,
-    APIKey,
-    BearerToken,
-    JWT,
-    VerifiableCredential,
-    Interactive2FA,
-}
 
-impl fmt::Display for CredentialType {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            CredentialType::OAuth2 => write!(f, "oauth2"),
-            CredentialType::APIKey => write!(f, "apikey"),
-            CredentialType::BearerToken => write!(f, "bearer"),
-            CredentialType::JWT => write!(f, "jwt"),
-            CredentialType::VerifiableCredential => write!(f, "vc"),
-            CredentialType::Interactive2FA => write!(f, "interactive2fa"),
-        }
-    }
-}
-
-impl FromStr for CredentialType {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.to_lowercase().as_str() {
-            "oauth2" => Ok(CredentialType::OAuth2),
-            "apikey" => Ok(CredentialType::APIKey),
-            "bearer" => Ok(CredentialType::BearerToken),
-            "jwt" => Ok(CredentialType::JWT),
-            "vc" => Ok(CredentialType::VerifiableCredential),
-            "interactive2fa" | "i2fa" => Ok(CredentialType::Interactive2FA),
-            _ => Err(format!("Invalid credential type: {}", s))
-        }
-    }
-}
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct PlatformIdentity {
@@ -147,4 +84,41 @@ pub struct PlatformCredential {
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     pub is_bot: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct PlatformConfigData {
+    pub platform_config_id: uuid::Uuid,
+    pub platform: String,
+    pub client_id: Option<String>,
+    pub client_secret: Option<String>,
+}
+
+
+#[derive(Debug, Clone)]
+pub struct PlatformConfig {
+    pub platform_config_id: Uuid,
+    pub platform: String,
+    pub client_id: Option<String>,
+    pub client_secret: Option<String>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+impl PlatformConfig {
+    pub fn new(
+        platform: &str,
+        client_id: Option<&str>,
+        client_secret: Option<&str>
+    ) -> Self {
+        let now = Utc::now();
+        Self {
+            platform_config_id: Uuid::new_v4(),
+            platform: platform.to_string(),
+            client_id: client_id.map(|s| s.to_string()),
+            client_secret: client_secret.map(|s| s.to_string()),
+            created_at: now,
+            updated_at: now,
+        }
+    }
 }

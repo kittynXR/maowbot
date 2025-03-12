@@ -4,6 +4,8 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
+maowbot-common = { path = "../maowbot-common" }
+
 tokio = { workspace = true }
 tokio-stream = { workspace = true}
 tracing = { workspace = true }

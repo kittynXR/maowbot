@@ -1,12 +1,11 @@
 use std::sync::Arc;
 use chrono::{Utc};
 use uuid::Uuid;
-use tracing::{info, error, warn, debug};
+use tracing::{info, warn, debug};
+use maowbot_common::models::platform::Platform;
+use maowbot_common::models::{Redeem, RedeemUsage};
+use maowbot_common::traits::repository_traits::{RedeemRepository, RedeemUsageRepository};
 use crate::Error;
-pub(crate) use crate::models::{Redeem, RedeemUsage};
-use crate::repositories::{
-    RedeemRepository, RedeemUsageRepository,
-};
 use crate::services::user_service::UserService;
 use crate::platforms::manager::PlatformManager;
 use crate::platforms::twitch::requests::channel_points::{Redemption};
@@ -143,7 +142,7 @@ impl RedeemService {
 
         // Reconstruct from the credential:
         if let Ok(Some(cred)) = self.platform_manager.credentials_repo
-            .get_credentials(&crate::models::Platform::Twitch, user.user_id)
+            .get_credentials(&Platform::Twitch, user.user_id)
             .await
         {
             if let Some(additional) = &cred.additional_data {

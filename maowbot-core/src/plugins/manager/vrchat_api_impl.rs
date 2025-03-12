@@ -4,16 +4,15 @@
 //! Implements VrchatApi for PluginManager (get_current_world, etc.).
 
 use crate::Error;
-use crate::models::Platform;
+use maowbot_common::models::platform::Platform;
 use crate::repositories::postgres::user::UserRepo;
 use crate::platforms::vrchat::client::VRChatClient;
-use crate::plugins::bot_api::vrchat_api::{
+use maowbot_common::traits::api::{
     VrchatApi, VRChatWorldBasic, VRChatAvatarBasic, VRChatInstanceBasic
 };
 use crate::plugins::manager::core::PluginManager;
 use async_trait::async_trait;
-use crate::plugins::bot_api::credentials_api::CredentialsApi;
-use serde_json::Value as JsonValue;
+use maowbot_common::traits::api::CredentialsApi;
 use std::path::PathBuf;
 
 #[async_trait]

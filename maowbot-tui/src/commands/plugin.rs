@@ -1,7 +1,6 @@
 // File: maowbot-tui/src/commands/plugin.rs
-
 use std::sync::Arc;
-use maowbot_core::plugins::bot_api::BotApi;
+use maowbot_common::traits::api::BotApi;
 
 /// Asynchronously handle "plug <enable|disable|remove> <pluginName>"
 pub async fn handle_plugin_command(args: &[&str], bot_api: &Arc<dyn BotApi>) -> String {

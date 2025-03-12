@@ -1,18 +1,8 @@
-use crate::models::User;
 use crate::Error;
 use sqlx::{Pool, Postgres, Row};
-use chrono::{DateTime, Utc};
 use uuid::Uuid;
-
-#[async_trait::async_trait]
-pub trait UserRepo {
-    async fn create(&self, user: &User) -> Result<(), Error>;
-    async fn get(&self, id: Uuid) -> Result<Option<User>, Error>;
-    async fn get_by_global_username(&self, name: &str) -> Result<Option<User>, Error>;
-    async fn update(&self, user: &User) -> Result<(), Error>;
-    async fn delete(&self, id: Uuid) -> Result<(), Error>;
-    async fn list_all(&self) -> Result<Vec<User>, Error>;
-}
+use maowbot_common::models::user::User;
+pub(crate) use maowbot_common::traits::repository_traits::UserRepo;
 
 pub struct UserRepository {
     pub pool: Pool<Postgres>,

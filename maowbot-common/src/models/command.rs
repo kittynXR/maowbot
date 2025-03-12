@@ -6,9 +6,9 @@ use uuid::Uuid;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Command {
     pub command_id: Uuid,
-    pub platform: String,       // e.g. "twitch-irc", "discord", ...
-    pub command_name: String,   // e.g. "!lurk"
-    pub min_role: String,       // e.g. "mod", "vip", or "everyone"
+    pub platform: String,
+    pub command_name: String,
+    pub min_role: String,
     pub is_active: bool,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,

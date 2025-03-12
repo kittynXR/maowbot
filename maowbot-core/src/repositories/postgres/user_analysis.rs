@@ -1,15 +1,11 @@
 use sqlx::{Pool, Postgres, Row};
 use async_trait::async_trait;
-use chrono::{DateTime, Utc};
+use chrono::{Utc};
 use uuid::Uuid;
-use crate::{Error, models::UserAnalysis};
+use maowbot_common::models::UserAnalysis;
+pub use maowbot_common::traits::repository_traits::UserAnalysisRepository;
+use crate::{Error};
 
-#[async_trait]
-pub trait UserAnalysisRepository: Send + Sync {
-    async fn create_analysis(&self, analysis: &UserAnalysis) -> Result<(), Error>;
-    async fn get_analysis(&self, user_id: Uuid) -> Result<Option<UserAnalysis>, Error>;
-    async fn update_analysis(&self, analysis: &UserAnalysis) -> Result<(), Error>;
-}
 
 #[derive(Clone)]
 pub struct PostgresUserAnalysisRepository {
@@ -21,6 +17,7 @@ impl PostgresUserAnalysisRepository {
         Self { pool }
     }
 }
+
 
 #[async_trait]
 impl UserAnalysisRepository for PostgresUserAnalysisRepository {

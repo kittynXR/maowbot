@@ -8,7 +8,7 @@ use tokio::task::JoinHandle;
 
 use tokio_native_tls::native_tls;
 use tokio_native_tls::TlsConnector;
-use tracing::{info, warn, error, debug, trace};
+use tracing::{info, error, debug, trace};
 
 /// Minimal representation of a parsed IRC message from Twitch.
 #[derive(Debug, Clone)]

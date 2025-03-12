@@ -36,7 +36,7 @@ impl ChatboxMessage {
 /// - s: string text
 /// - b: bool (true => send immediately)
 /// - n: bool (true => play sound)
-pub fn send_chatbox_message(osc_manager: &MaowOscManager, msg: &ChatboxMessage) -> Result<()> {
+pub fn send_chatbox_message(_osc_manager: &MaowOscManager, msg: &ChatboxMessage) -> Result<()> {
     // Build the packet
     let osc_msg = OscMessage {
         addr: "/chatbox/input".to_string(),
@@ -53,7 +53,7 @@ pub fn send_chatbox_message(osc_manager: &MaowOscManager, msg: &ChatboxMessage) 
 }
 
 /// Toggle the chatbox "typing" indicator on or off. Address => /chatbox/typing b
-pub fn set_chatbox_typing(osc_manager: &MaowOscManager, typing_on: bool) -> Result<()> {
+pub fn set_chatbox_typing(_osc_manager: &MaowOscManager, typing_on: bool) -> Result<()> {
     let osc_msg = OscMessage {
         addr: "/chatbox/typing".to_string(),
         args: vec![OscType::Bool(typing_on)],

@@ -1,52 +1,10 @@
 use sqlx::{Pool, Postgres, Row};
 use async_trait::async_trait;
 use uuid::Uuid;
-use chrono::{DateTime, Utc};
+use chrono::{Utc};
+use maowbot_common::models::platform::PlatformConfig;
+pub(crate) use maowbot_common::traits::repository_traits::PlatformConfigRepository;
 use crate::Error;
-
-#[derive(Debug, Clone)]
-pub struct PlatformConfig {
-    pub platform_config_id: Uuid,
-    pub platform: String,
-    pub client_id: Option<String>,
-    pub client_secret: Option<String>,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
-}
-
-impl PlatformConfig {
-    pub fn new(
-        platform: &str,
-        client_id: Option<&str>,
-        client_secret: Option<&str>
-    ) -> Self {
-        let now = Utc::now();
-        Self {
-            platform_config_id: Uuid::new_v4(),
-            platform: platform.to_string(),
-            client_id: client_id.map(|s| s.to_string()),
-            client_secret: client_secret.map(|s| s.to_string()),
-            created_at: now,
-            updated_at: now,
-        }
-    }
-}
-
-#[async_trait]
-pub trait PlatformConfigRepository: Send + Sync {
-    async fn upsert_platform_config(
-        &self,
-        platform: &str,
-        client_id: Option<String>,
-        client_secret: Option<String>,
-    ) -> Result<(), Error>;
-
-    async fn get_platform_config(&self, platform_config_id: Uuid) -> Result<Option<PlatformConfig>, Error>;
-    async fn list_platform_configs(&self, maybe_platform: Option<&str>) -> Result<Vec<PlatformConfig>, Error>;
-    async fn delete_platform_config(&self, platform_config_id: Uuid) -> Result<(), Error>;
-    async fn get_by_platform(&self, platform: &str) -> Result<Option<PlatformConfig>, Error>;
-    async fn count_for_platform(&self, platform: &str) -> Result<i64, Error>;
-}
 
 #[derive(Clone)]
 pub struct PostgresPlatformConfigRepository {

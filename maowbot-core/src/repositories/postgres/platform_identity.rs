@@ -1,33 +1,10 @@
-use crate::models::{PlatformIdentity, Platform};
 use crate::Error;
 use async_trait::async_trait;
-use chrono::{DateTime, Utc};
 use serde_json::Value;
 use sqlx::{Pool, Postgres, Row};
 use uuid::Uuid;
-
-#[async_trait]
-pub trait PlatformIdentityRepo {
-    async fn create(&self, identity: &PlatformIdentity) -> Result<(), Error>;
-    async fn get(&self, id: Uuid) -> Result<Option<PlatformIdentity>, Error>;
-    async fn update(&self, identity: &PlatformIdentity) -> Result<(), Error>;
-    async fn delete(&self, id: Uuid) -> Result<(), Error>;
-
-    async fn get_by_platform(
-        &self,
-        platform: Platform,
-        platform_user_id: &str
-    ) -> Result<Option<PlatformIdentity>, Error>;
-
-    async fn get_all_for_user(&self, user_id: Uuid)
-                              -> Result<Vec<PlatformIdentity>, Error>;
-
-    async fn get_by_user_and_platform(
-        &self,
-        user_id: Uuid,
-        platform: &Platform,
-    ) -> Result<Option<PlatformIdentity>, Error>;
-}
+use maowbot_common::models::platform::{Platform, PlatformIdentity};
+pub(crate) use maowbot_common::traits::repository_traits::PlatformIdentityRepo;
 
 pub struct PlatformIdentityRepository {
     pool: Pool<Postgres>,

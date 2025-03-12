@@ -1,5 +1,5 @@
 use std::sync::Arc;
-use maowbot_core::plugins::bot_api::BotApi;
+use maowbot_common::traits::api::BotApi;
 use crate::tui_module::TuiModule;
 
 /// Helper to require that the active_account is `Some(...)`.
@@ -143,7 +143,7 @@ async fn do_part_channel(
     let chname = strip_channel_prefix(channel);
 
     let (pos_opt, maybe_acct) = {
-        let mut st = tui_module.ttv_state.lock().unwrap();
+        let st = tui_module.ttv_state.lock().unwrap();
         let pos = st.joined_channels.iter().position(|c| c.eq_ignore_ascii_case(&chname));
         (pos, st.active_account.clone())
     };

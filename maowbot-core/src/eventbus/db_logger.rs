@@ -1,11 +1,10 @@
 // File: maowbot-core/src/eventbus/db_logger.rs
 use std::time::Duration;
-use tokio::sync::{mpsc, watch};
+use tokio::sync::{mpsc};
 use tokio::time::{sleep, Instant};
 use tokio::task::JoinHandle;
 use tracing::{info, error, debug};
 
-use chrono::Utc;
 use crate::Error;
 use crate::eventbus::{EventBus, BotEvent};
 use crate::repositories::postgres::analytics::{AnalyticsRepo, ChatMessage};

@@ -1,5 +1,3 @@
-use std::sync::Mutex;
-use sqlx::{Pool, Postgres};
 use uuid::Uuid;
 
 /// A minimal struct for storing an avatar row in memory.
@@ -32,4 +30,25 @@ pub struct DripFit {
 pub struct DripProp {
     pub drip_prop_id: Uuid,
     pub prop_name: String,
+}
+
+#[derive(Debug)]
+pub struct DripAvatarSummary {
+    pub local_name: Option<String>,
+    pub vrchat_avatar_id: String,
+    pub vrchat_avatar_name: String,
+}
+
+/// Information about a single outfit.
+#[derive(Debug)]
+pub struct DripFitSummary {
+    pub fit_name: String,
+    pub param_count: usize,
+}
+
+/// Data about a prop (basic name, etc.). We might expand as needed.
+#[derive(Debug)]
+pub struct DripPropSummary {
+    pub prop_name: String,
+    pub param_count: usize,
 }

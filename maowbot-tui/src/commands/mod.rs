@@ -1,7 +1,7 @@
 // File: maowbot-tui/src/commands/mod.rs
 
 use std::sync::Arc;
-use maowbot_core::plugins::bot_api::BotApi;
+use maowbot_common::traits::api::BotApi;
 use crate::commands::vrchat::handle_vrchat_command;
 use crate::help;
 use crate::tui_module::TuiModule;

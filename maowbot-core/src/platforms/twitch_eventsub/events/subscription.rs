@@ -1,7 +1,6 @@
 // File: maowbot-core/src/platforms/twitch_eventsub/events/subscription.rs
 
 use serde::Deserialize;
-use chrono::{DateTime, Utc};
 
 /// "channel.subscribe" event
 #[derive(Debug, Clone, Deserialize)]

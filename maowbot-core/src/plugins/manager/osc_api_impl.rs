@@ -1,9 +1,6 @@
-use maowbot_osc::MaowOscManager;
-use maowbot_osc::oscquery::OscQueryServer; // for is_running()
-use maowbot_osc::OscError;
-
 use crate::Error;
-use crate::plugins::bot_api::osc_api::{OscApi, OscStatus};
+use maowbot_common::traits::api::{OscApi};
+use maowbot_common::models::osc::{OscStatus};
 use crate::plugins::manager::core::PluginManager;
 use async_trait::async_trait;
 

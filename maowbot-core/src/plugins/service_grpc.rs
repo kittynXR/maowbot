@@ -4,15 +4,13 @@ use std::sync::Arc;
 
 use futures_core::Stream;
 use futures_util::StreamExt;
-use tokio::sync::mpsc::UnboundedSender;
 use tonic::{Request, Response, Status};
 
 use maowbot_proto::plugs::{
-    plugin_service_server::{PluginService, PluginServiceServer},
+    plugin_service_server::{PluginService},
     PluginStreamRequest, PluginStreamResponse,
 };
 
-use crate::Error;
 use crate::plugins::manager::PluginManager;
 
 /// A Tonic gRPC service that wraps the `PluginManager`.

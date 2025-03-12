@@ -4,9 +4,9 @@
 // This is just a demonstration skeleton; real logic is to be expanded.
 
 use async_trait::async_trait;
-use crate::plugins::bot_api::drip_api::{
-    DripApi, DripAvatarSummary, DripFitSummary, DripPropSummary
-};
+use maowbot_common::models::drip::{DripAvatarSummary};
+use maowbot_common::traits::api::DripApi;
+
 use crate::Error;
 use crate::plugins::manager::core::PluginManager;
 

@@ -3,7 +3,7 @@
 //! Implements TwitchApi for PluginManager (IRC join, part, send).
 
 use crate::Error;
-use crate::plugins::bot_api::twitch_api::TwitchApi;
+use maowbot_common::traits::api::TwitchApi;
 use crate::plugins::manager::core::PluginManager;
 use async_trait::async_trait;
 

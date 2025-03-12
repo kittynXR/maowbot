@@ -1,10 +1,9 @@
 use chrono::{Duration};
 use tracing::{info, error};
-use crate::repositories::postgres::PostgresCredentialsRepository;
-use crate::auth::AuthManager;
+use crate::auth::manager::AuthManager;
 use crate::Error;
-use crate::repositories::postgres::credentials::CredentialsRepository;
-use crate::models::PlatformCredential;
+use crate::repositories::postgres::credentials::{CredentialsRepository, PostgresCredentialsRepository};
+
 
 /// Checks for credentials that will expire within `within_minutes` from now.
 /// For each such credential, calls `AuthManager::refresh_platform_credentials`.

@@ -17,13 +17,3 @@ pub mod drip_api_impl;
 
 // re-export the manager
 pub use core::PluginManager;
-
-use std::sync::Arc;
-use crate::Error;
-use crate::services::{
-    CommandService, RedeemService,
-};
-use crate::repositories::{
-    PostgresCommandRepository, PostgresCommandUsageRepository,
-    PostgresRedeemRepository, PostgresRedeemUsageRepository,
-};

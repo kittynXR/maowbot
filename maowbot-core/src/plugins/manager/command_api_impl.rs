@@ -2,12 +2,9 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use uuid::Uuid;
 use crate::Error;
-use crate::models::{Command, CommandUsage};
-use crate::plugins::bot_api::command_api::CommandApi;
+use maowbot_common::models::command::{Command, CommandUsage};
+use maowbot_common::traits::api::CommandApi;
 use crate::plugins::manager::core::PluginManager;
-use crate::repositories::{
-    CommandUsageRepository,
-};
 
 #[async_trait]
 impl CommandApi for PluginManager {

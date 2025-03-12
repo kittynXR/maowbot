@@ -1,6 +1,6 @@
 // File: maowbot-core/src/test_utils/helpers.rs
 
-use sqlx::{Pool, Postgres, Executor, PgConnection, Connection};
+use sqlx::{Pool, Postgres, PgConnection, Connection};
 use sqlx::postgres::PgPoolOptions;
 use crate::Error;
 use crate::db::Database;

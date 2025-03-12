@@ -1,8 +1,9 @@
 use std::sync::Arc;
+use maowbot_common::models::platform::{Platform, PlatformIdentity};
+use maowbot_common::models::user::User;
 use crate::Error;
 
 use crate::auth::user_manager::{UserManager, DefaultUserManager};
-use crate::models::{User, Platform};
 use crate::repositories::postgres::user::UserRepo;
 use crate::repositories::postgres::platform_identity::PlatformIdentityRepo;
 
@@ -48,7 +49,7 @@ impl UserService {
             }
         } else {
             // create a brand new identity row with these roles
-            let new_pi = crate::models::PlatformIdentity {
+            let new_pi = PlatformIdentity {
                 platform_identity_id: uuid::Uuid::new_v4(),
                 user_id,
                 platform: platform.clone(),

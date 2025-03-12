@@ -1,6 +1,4 @@
 // File: maowbot-core/src/platforms/twitch_eventsub/events/bits.rs
-
-use chrono::Utc;
 use serde::Deserialize;
 
 /// "channel.bits.use" event

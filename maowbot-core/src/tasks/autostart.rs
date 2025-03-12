@@ -3,10 +3,9 @@
 use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 use tracing::{info, error, warn};
-
+use maowbot_common::traits::api::BotApi;
 use crate::Error;
 use crate::repositories::postgres::bot_config::BotConfigRepository;
-use crate::plugins::bot_api::BotApi;
 
 /// This struct now matches the TUI’s shape:
 /// { "accounts": [ ["discord","cutecat_chat"], ["twitch-irc","myIrcAccount"] ] }

@@ -1,4 +1,4 @@
-use crate::{Result, OscError};
+use crate::{Result};
 use crate::oscquery::discovery::OscQueryDiscovery;
 use warp::Filter;
 use std::net::{SocketAddr, Ipv4Addr};

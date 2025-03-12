@@ -51,7 +51,7 @@ pub struct MaowOscManager {
     pub oscquery_server: Arc<Mutex<OscQueryServer>>,
 }
 
-struct OscManagerInner {
+pub struct OscManagerInner {
     pub listening_port: Option<u16>,
     pub is_running: bool,
     // placeholders for your future expansions
@@ -96,7 +96,7 @@ impl MaowOscManager {
     /// Then optionally performs a quick discovery.
     pub async fn start_all(&self) -> Result<()> {
         // 1) Start the OSC server on a free UDP port:
-        let chosen_port = self.start_server().await?;
+        let _chosen_port = self.start_server().await?;
 
         // 2) Start the OSCQuery server:
         {
@@ -125,7 +125,7 @@ impl MaowOscManager {
 
     /// A quick method to discover local peers (optional).
     pub async fn discover_local_peers(&self) ->  Result<Vec<String>> {
-        let mut oscq = self.oscquery_server.lock().await;
+        let oscq = self.oscquery_server.lock().await;
         if let Some(discovery) = &oscq.discovery {
             // discover_peers() presumably returns a Vec<String>
             let discovered = discovery.discover_peers().await?;

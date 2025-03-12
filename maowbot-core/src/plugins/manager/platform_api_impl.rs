@@ -3,8 +3,8 @@
 //! Implements PlatformApi for PluginManager.
 
 use crate::Error;
-use crate::models::Platform;
-use crate::plugins::bot_api::platform_api::{PlatformApi, PlatformConfigData};
+use maowbot_common::models::platform::{Platform, PlatformConfigData};
+use maowbot_common::traits::api::{PlatformApi};
 use crate::plugins::manager::core::PluginManager;
 use async_trait::async_trait;
 
@@ -17,7 +17,7 @@ impl PlatformApi for PluginManager {
         client_secret: Option<String>
     ) -> Result<(), Error> {
         if let Some(am) = &self.auth_manager {
-            let mut lock = am.lock().await;
+            let lock = am.lock().await;
             let platform_str = format!("{}", platform);
             lock.create_platform_config(&platform_str, client_id, client_secret).await
         } else {
@@ -87,7 +87,7 @@ impl PlatformApi for PluginManager {
         let auth_mgr_arc = self.auth_manager
             .as_ref()
             .ok_or_else(|| Error::Auth("No auth manager set in plugin manager".into()))?;
-        let mut auth_manager_locked = auth_mgr_arc.lock().await;
+        let auth_manager_locked = auth_mgr_arc.lock().await;
         auth_manager_locked.bot_config_repo.get_value(key).await
     }
 
@@ -95,7 +95,7 @@ impl PlatformApi for PluginManager {
         let auth_mgr_arc = self.auth_manager
             .as_ref()
             .ok_or_else(|| Error::Auth("No auth manager set in plugin manager".into()))?;
-        let mut auth_manager_locked = auth_mgr_arc.lock().await;
+        let auth_manager_locked = auth_mgr_arc.lock().await;
         auth_manager_locked.bot_config_repo.set_value(key, value).await
     }
 }

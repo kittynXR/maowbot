@@ -11,8 +11,10 @@ use twitch_oauth2::{
 };
 
 use crate::Error;
-use crate::auth::{AuthenticationPrompt, AuthenticationResponse, PlatformAuthenticator};
-use crate::models::{CredentialType, Platform, PlatformCredential};
+use maowbot_common::models::auth::{AuthenticationPrompt, AuthenticationResponse};
+use maowbot_common::traits::auth_traits::PlatformAuthenticator;
+use maowbot_common::models::credential::{CredentialType};
+use maowbot_common::models::platform::{Platform, PlatformCredential};
 
 #[derive(Deserialize)]
 struct TwitchTokenResponse {

@@ -2,16 +2,11 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use chrono::{Utc, DateTime};
 use uuid::Uuid;
-use tracing::{debug, info, warn, error};
+use tracing::{debug, warn, error};
+use maowbot_common::models::{Command, CommandUsage};
+use maowbot_common::models::user::User;
+use maowbot_common::traits::repository_traits::{BotConfigRepository, CommandRepository, CommandUsageRepository, CredentialsRepository, UserRepo};
 use crate::Error;
-use crate::models::{Command, CommandUsage, User};
-use crate::repositories::{
-    CommandRepository,
-    CommandUsageRepository,
-    CredentialsRepository,
-    BotConfigRepository,
-};
-use crate::repositories::postgres::user::UserRepo;
 use crate::services::twitch::builtin_commands::handle_builtin_command;
 use crate::services::user_service::UserService;
 

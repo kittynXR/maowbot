@@ -4,8 +4,11 @@ use serde_json::json;
 use uuid::Uuid;
 
 use crate::Error;
-use crate::auth::{AuthenticationPrompt, AuthenticationResponse, PlatformAuthenticator};
-use crate::models::{Platform, PlatformCredential, CredentialType};
+use maowbot_common::models::auth::{AuthenticationPrompt, AuthenticationResponse};
+use maowbot_common::models::platform::{Platform, PlatformCredential};
+use maowbot_common::models::credential::{CredentialType};
+
+use maowbot_common::traits::auth_traits::PlatformAuthenticator;
 
 pub struct DiscordAuthenticator {
     // Provided/fetched by AuthManager from DB

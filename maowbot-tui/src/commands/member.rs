@@ -1,9 +1,8 @@
-use std::io::{stdin, stdout, Write};
+use std::io::{stdin};
 use std::sync::Arc;
 use uuid::Uuid;
-
-use maowbot_core::plugins::bot_api::BotApi;
-use maowbot_core::models::User;
+use maowbot_common::models::user::User;
+use maowbot_common::traits::api::BotApi;
 use maowbot_core::Error;
 
 /// This handles all `member` subcommands:

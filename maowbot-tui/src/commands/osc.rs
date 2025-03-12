@@ -11,7 +11,7 @@
 //!
 
 use std::sync::Arc;
-use maowbot_core::plugins::bot_api::BotApi;
+use maowbot_common::traits::api::BotApi;
 use crate::tui_module::TuiModule;
 
 /// Dispatches the "osc" subcommands.

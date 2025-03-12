@@ -7,9 +7,9 @@ use std::str::FromStr;
 use open;
 use uuid::Uuid;
 use chrono::Utc;
-
-use maowbot_core::models::{Platform, PlatformCredential};
-use maowbot_core::plugins::bot_api::BotApi;
+use maowbot_common::models::auth::Platform;
+use maowbot_common::models::user::User;
+use maowbot_common::traits::api::BotApi;
 use maowbot_core::Error;
 
 /// Handle "account <add|remove|list|show|refresh>" commands asynchronously.
@@ -722,7 +722,7 @@ async fn account_refresh(
 async fn find_or_create_user_by_name(
     bot_api: &Arc<dyn BotApi>,
     final_username: &str
-) -> Result<maowbot_core::models::User, Error> {
+) -> Result<User, Error> {
     let all = bot_api.search_users(final_username).await?;
     if let Some(u) = all.into_iter().find(|usr| {
         usr.global_username

@@ -1,49 +1,9 @@
 use crate::Error;
 use async_trait::async_trait;
-use chrono::{DateTime, Utc};
 use sqlx::{Pool, Postgres, Row};
 use uuid::Uuid;
-
-#[derive(Debug, Clone)]
-pub struct UserAuditLogEntry {
-    pub audit_id: Uuid,
-    pub user_id: Uuid,
-    pub event_type: String,
-    pub old_value: Option<String>,
-    pub new_value: Option<String>,
-    pub changed_by: Option<String>,
-    pub timestamp: DateTime<Utc>,
-    pub metadata: Option<String>,
-}
-
-impl UserAuditLogEntry {
-    pub fn new(
-        user_id: Uuid,
-        event_type: &str,
-        old_value: Option<&str>,
-        new_value: Option<&str>,
-        changed_by: Option<&str>,
-        metadata: Option<&str>,
-    ) -> Self {
-        Self {
-            audit_id: Uuid::new_v4(),
-            user_id,
-            event_type: event_type.to_string(),
-            old_value: old_value.map(String::from),
-            new_value: new_value.map(String::from),
-            changed_by: changed_by.map(String::from),
-            timestamp: Utc::now(),
-            metadata: metadata.map(String::from),
-        }
-    }
-}
-
-#[async_trait]
-pub trait UserAuditLogRepository {
-    async fn insert_entry(&self, entry: &UserAuditLogEntry) -> Result<(), Error>;
-    async fn get_entry(&self, audit_id: Uuid) -> Result<Option<UserAuditLogEntry>, Error>;
-    async fn get_entries_for_user(&self, user_id: Uuid, limit: i64) -> Result<Vec<UserAuditLogEntry>, Error>;
-}
+use maowbot_common::models::user::UserAuditLogEntry;
+pub(crate) use maowbot_common::traits::repository_traits::UserAuditLogRepository;
 
 #[derive(Clone)]
 pub struct PostgresUserAuditLogRepository {

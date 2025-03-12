@@ -3,9 +3,7 @@
 use std::sync::Arc;
 use std::io::{stdin, stdout, Write};
 use uuid::Uuid;
-
-use maowbot_core::plugins::bot_api::BotApi;
-use maowbot_core::Error;
+use maowbot_common::traits::api::BotApi;
 
 pub async fn handle_user_command(args: &[&str], bot_api: &Arc<dyn BotApi>) -> String {
     if args.is_empty() {

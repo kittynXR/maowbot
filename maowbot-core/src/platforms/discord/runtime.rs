@@ -30,7 +30,7 @@ use twilight_model::{
 
 use crate::Error;
 use crate::eventbus::EventBus;
-use crate::platforms::{ConnectionStatus, PlatformAuth, PlatformIntegration};
+use maowbot_common::traits::platform_traits::{ConnectionStatus, PlatformAuth, PlatformIntegration};
 
 /// A simple struct holding minimal data from Discord messages.
 /// (We keep this for demonstration, but now we also directly publish to `EventBus`.)
@@ -138,14 +138,14 @@ pub async fn shard_runner(
                     });
 
                     // Also publish a ChatMessage to the event bus:
-                    if let Some(bus) = &event_bus {
+                    if let Some(_bus) = &event_bus {
                         // We'll embed roles the same way TwitchIRC does: "user_id|roles=r1,r2"
                         let joined_roles = if !user_roles.is_empty() {
                             format!("|roles={}", user_roles.join(","))
                         } else {
                             "".to_string()
                         };
-                        let combined_user_str = format!("{}{}", user_id, joined_roles);
+                        let _combined_user_str = format!("{}{}", user_id, joined_roles);
 
                         // bus.publish_chat("discord", &channel_name, &combined_user_str, &text).await;
                     }

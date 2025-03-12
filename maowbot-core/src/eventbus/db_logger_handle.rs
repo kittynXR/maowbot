@@ -1,8 +1,6 @@
 // File: maowbot-core/src/eventbus/db_logger_handle.rs
 //
 // A small control handle for forcing flushes in the db_logger task.
-
-use std::sync::Arc;
 use tokio::sync::{mpsc, oneshot};
 use tracing::trace;
 use crate::Error;

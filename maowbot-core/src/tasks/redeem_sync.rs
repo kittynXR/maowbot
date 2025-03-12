@@ -8,10 +8,11 @@ use crate::platforms::twitch::requests::channel_points::{
     CustomRewardBody,
     CustomReward,
 };
-use crate::models::Redeem;
 use crate::repositories::postgres::bot_config::BotConfigRepository;
 use chrono::Utc;
 use uuid::Uuid;
+use maowbot_common::models::platform::Platform;
+use maowbot_common::models::Redeem;
 
 /// Finds a Helix reward in `list` whose title matches `wanted_title` (case-insensitive).
 fn find_reward_id_by_title_ignorecase(list: &[CustomReward], wanted_title: &str) -> Option<String> {
@@ -87,7 +88,7 @@ pub async fn get_helix_client_for_account(
 
     let maybe_cred = platform_manager
         .credentials_repo
-        .get_credentials(&crate::models::Platform::Twitch, user.user_id)
+        .get_credentials(&Platform::Twitch, user.user_id)
         .await?;
 
     let cred = match maybe_cred {

@@ -9,8 +9,8 @@ use twitch_api::{HelixClient, HttpClient};
 use reqwest::Client as ReqwestClient;
 
 use crate::Error;
-use crate::models::PlatformCredential;
-use crate::platforms::{ConnectionStatus, PlatformAuth, PlatformIntegration};
+use maowbot_common::models::platform::PlatformCredential;
+use maowbot_common::traits::platform_traits::{ConnectionStatus, PlatformAuth, PlatformIntegration};
 use twitch_api::client::Bytes as TwitchBytes;
 
 #[derive(Debug)]

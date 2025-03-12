@@ -7,9 +7,9 @@ pub mod ping_command;
 pub mod followage_command;
 pub mod vrchat_commands;
 
-use uuid::Uuid;
+use maowbot_common::models::Command;
+use maowbot_common::models::user::User;
 use crate::Error;
-use crate::models::{Command, User};
 use crate::services::twitch::builtin_commands::{
     ping_command::handle_ping,
     followage_command::handle_followage,

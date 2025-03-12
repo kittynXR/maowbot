@@ -1,9 +1,8 @@
 use std::sync::Arc;
-use tokio::sync::mpsc;
 use tracing::{debug, error, info};
+use maowbot_common::traits::repository_traits::BotConfigRepository;
 use crate::eventbus::{EventBus, BotEvent, TwitchEventSubData};
 use crate::platforms::manager::PlatformManager;
-use crate::repositories::BotConfigRepository;
 use crate::services::RedeemService;
 use crate::services::user_service::UserService;
 use super::event_actions::{

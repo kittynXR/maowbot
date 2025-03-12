@@ -1,8 +1,13 @@
+// ================================================================
+// File: maowbot-common/src/error.rs
+// ================================================================
+
 use thiserror::Error;
+use rcgen;
 
 #[derive(Debug, Error)]
 pub enum Error {
-    #[error("Not foudn error: {0}")]
+    #[error("Not found error: {0}")]
     NotFound(String),
 
     // Existing variants:
@@ -53,9 +58,6 @@ pub enum Error {
     #[error("MPSC send error: {0}")]
     MpscSend(#[from] tokio::sync::mpsc::error::SendError<maowbot_proto::plugs::PluginStreamRequest>),
 
-    #[error("Rcgen error: {0}")]
-    Rcgen(#[from] rcgen::Error),
-
     #[error("gRPC status error: {0}")]
     GrpcStatus(#[from] tonic::Status),
 
@@ -76,9 +78,11 @@ pub enum Error {
 
     #[error("Event bus error: {0}")]
     EventBus(String),
+
+    // <-- ADD THIS NEW VARIANT FOR `rcgen::Error` -->
+    #[error("Certificate generation error: {0}")]
+    Certificate(#[from] rcgen::Error),
 }
-
-
 
 impl From<String> for Error {
     fn from(s: String) -> Self {

@@ -6,8 +6,8 @@ use std::collections::HashMap;
 use async_trait::async_trait;
 use uuid::Uuid;
 use crate::Error;
-use crate::models::{Platform, PlatformCredential};
-use crate::plugins::bot_api::credentials_api::CredentialsApi;
+use maowbot_common::models::platform::{Platform, PlatformCredential};
+use maowbot_common::traits::api::CredentialsApi;
 use crate::plugins::manager::core::PluginManager;
 
 #[async_trait]

@@ -1,18 +1,12 @@
 use async_trait::async_trait;
 use sqlx::{Pool, Postgres, Row};
 use uuid::Uuid;
-use chrono::Utc;
+use maowbot_common::models::RedeemUsage;
+pub(crate) use maowbot_common::traits::repository_traits::RedeemUsageRepository;
 use crate::Error;
-use crate::models::RedeemUsage;
+
 
 /// Repository for redeem usage logs
-#[async_trait]
-pub trait RedeemUsageRepository: Send + Sync {
-    async fn insert_usage(&self, usage: &RedeemUsage) -> Result<(), Error>;
-    async fn list_usage_for_redeem(&self, redeem_id: Uuid, limit: i64) -> Result<Vec<RedeemUsage>, Error>;
-    async fn list_usage_for_user(&self, user_id: Uuid, limit: i64) -> Result<Vec<RedeemUsage>, Error>;
-}
-
 #[derive(Clone)]
 pub struct PostgresRedeemUsageRepository {
     pool: Pool<Postgres>,

@@ -6,16 +6,15 @@ use tokio::task::JoinHandle;
 use tracing::{info, error, warn};
 use tokio::sync::Mutex as AsyncMutex;
 use std::sync::Mutex;
-
+use maowbot_common::models::platform::{Platform, PlatformCredential};
+use maowbot_common::traits::platform_traits::{ChatPlatform, ConnectionStatus, PlatformIntegration};
 use crate::eventbus::EventBus;
 use crate::services::message_service::MessageService;
 use crate::services::user_service::UserService;
 use crate::Error;
-use crate::models::{PlatformCredential, Platform};
 use crate::repositories::postgres::credentials::CredentialsRepository;
 
 use crate::platforms::discord::runtime::DiscordPlatform;
-use crate::platforms::{ChatPlatform, PlatformIntegration};
 use crate::platforms::twitch::runtime::TwitchPlatform;
 use crate::platforms::vrchat_pipeline::runtime::VRChatPlatform;
 use crate::platforms::twitch_irc::runtime::TwitchIrcPlatform;
@@ -205,7 +204,7 @@ impl PlatformManager {
         let join_handle = tokio::spawn(async move {
             let mut twitch = TwitchPlatform {
                 credentials: Some(credential.clone()),
-                connection_status: crate::platforms::ConnectionStatus::Disconnected,
+                connection_status: ConnectionStatus::Disconnected,
                 client: None,
             };
             if let Err(err) = twitch.connect().await {
@@ -409,7 +408,7 @@ impl PlatformManager {
         let handle_opt = guard.get(&key);
         if let Some(handle) = handle_opt {
             if let Some(irc_arc) = &handle.twitch_irc_instance {
-                let mut irc_lock = irc_arc.lock().await;
+                let irc_lock = irc_arc.lock().await;
                 irc_lock.join_channel(channel).await?;
                 Ok(())
             } else {
@@ -432,7 +431,7 @@ impl PlatformManager {
         let handle_opt = guard.get(&key);
         if let Some(handle) = handle_opt {
             if let Some(irc_arc) = &handle.twitch_irc_instance {
-                let mut irc_lock = irc_arc.lock().await;
+                let irc_lock = irc_arc.lock().await;
                 irc_lock.leave_channel(channel).await?;
                 Ok(())
             } else {
@@ -455,7 +454,7 @@ impl PlatformManager {
         let handle_opt = guard.get(&key);
         if let Some(handle) = handle_opt {
             if let Some(irc_arc) = &handle.twitch_irc_instance {
-                let mut irc_lock = irc_arc.lock().await;
+                let irc_lock = irc_arc.lock().await;
                 irc_lock.send_message(channel, text).await?;
                 Ok(())
             } else {

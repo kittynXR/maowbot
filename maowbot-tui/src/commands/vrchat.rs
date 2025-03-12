@@ -1,10 +1,8 @@
 use std::sync::Arc;
+use maowbot_common::models::auth::Platform;
+use maowbot_common::models::vrchat::{VRChatAvatarBasic, VRChatInstanceBasic, VRChatWorldBasic};
+use maowbot_common::traits::api::BotApi;
 use maowbot_core::Error;
-use maowbot_core::models::Platform;
-use maowbot_core::plugins::bot_api::{BotApi};
-use maowbot_core::plugins::bot_api::vrchat_api::{
-    VRChatAvatarBasic, VRChatWorldBasic, VRChatInstanceBasic,
-};
 
 pub async fn handle_vrchat_command(args: &[&str], bot_api: &Arc<dyn BotApi>) -> String {
     if args.is_empty() {

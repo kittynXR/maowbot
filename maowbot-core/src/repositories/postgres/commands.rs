@@ -1,20 +1,13 @@
 use async_trait::async_trait;
 use sqlx::{Pool, Postgres, Row};
 use uuid::Uuid;
-use chrono::Utc;
+use maowbot_common::models::Command;
+pub(crate) use maowbot_common::traits::repository_traits::CommandRepository;
 use crate::Error;
-use crate::models::Command;
+
 
 /// Repository trait for Commands
-#[async_trait]
-pub trait CommandRepository: Send + Sync {
-    async fn create_command(&self, cmd: &Command) -> Result<(), Error>;
-    async fn get_command_by_id(&self, command_id: Uuid) -> Result<Option<Command>, Error>;
-    async fn get_command_by_name(&self, platform: &str, command_name: &str) -> Result<Option<Command>, Error>;
-    async fn list_commands(&self, platform: &str) -> Result<Vec<Command>, Error>;
-    async fn update_command(&self, cmd: &Command) -> Result<(), Error>;
-    async fn delete_command(&self, command_id: Uuid) -> Result<(), Error>;
-}
+
 
 #[derive(Clone)]
 pub struct PostgresCommandRepository {

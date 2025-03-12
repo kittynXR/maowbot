@@ -4,8 +4,7 @@
 // Delegates to DripApi methods on BotApi.
 
 use std::sync::Arc;
-use maowbot_core::plugins::bot_api::BotApi;
-use maowbot_core::plugins::bot_api::drip_api::DripApi;
+use maowbot_common::traits::api::BotApi;
 use crate::tui_module::TuiModule;
 
 pub async fn handle_drip_command(

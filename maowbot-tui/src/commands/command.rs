@@ -9,12 +9,11 @@
 //!   "command disable <commandName> [platform]"
 
 use std::sync::Arc;
-use std::collections::HashMap;
 use uuid::Uuid;
 use chrono::Utc;
+use maowbot_common::models::Command;
+use maowbot_common::traits::api::BotApi;
 use maowbot_core::Error;
-use maowbot_core::models::Command;
-use maowbot_core::plugins::bot_api::BotApi;
 
 /// Entry point from TUI: "command <subcmd> <args...>"
 pub async fn handle_command_command(args: &[&str], bot_api: &Arc<dyn BotApi>) -> String {
@@ -253,7 +252,7 @@ async fn set_respond_with(
     // Now find that user’s credentials for the platform that the command uses.
     let cmd_platform = &cmd.platform; // e.g. "twitch-irc"
     let user_creds = bot_api.list_credentials(None).await?;
-    let mut matches = user_creds
+    let matches = user_creds
         .into_iter()
         .filter(|c| {
             c.user_id == user.user_id

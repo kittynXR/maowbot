@@ -13,7 +13,7 @@ use notify::{
     event::{EventKind, RemoveKind, ModifyKind, CreateKind},
     Config, Event, RecommendedWatcher, RecursiveMode, Watcher,
 };
-use rosc::{OscPacket, OscMessage, OscType};
+use rosc::{OscPacket, OscType};
 use rosc::decoder::decode_udp;
 use crate::{OscError, Result};
 use crate::vrchat::{parse_vrchat_avatar_config, VrchatAvatarConfig};
@@ -280,7 +280,7 @@ fn handle_osc_packet(packet: OscPacket, known_map_ptr: Arc<Mutex<HashMap<String,
                         tokio::spawn(async move {
                             let map_lock = known_map_ptr.lock().await;
                             if let Some(kav) = map_lock.get(&avatar_id) {
-                                let mut menu = AvatarToggleMenu::new(&kav.config);
+                                let menu = AvatarToggleMenu::new(&kav.config);
                                 menu.print_menu();
                             } else {
                                 eprintln!("No local config for avatar_id={}", avatar_id);

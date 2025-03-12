@@ -3,7 +3,6 @@
 use std::sync::Arc;
 use reqwest::Client as ReqwestClient;
 use serde::Deserialize;
-use tracing::{warn};
 use crate::Error;
 
 /// A small wrapper client for calling various Helix endpoints.

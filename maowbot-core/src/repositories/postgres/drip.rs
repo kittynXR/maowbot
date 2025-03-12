@@ -5,17 +5,16 @@
 
 use std::sync::Mutex;
 use uuid::Uuid;
-use chrono::{Utc, DateTime};
 use sqlx::{Pool, Postgres, Row};
 use crate::Error;
-use crate::models::{DripAvatar, DripFitParam, DripProp, DripFit};
+use maowbot_common::models::{DripAvatar, DripFitParam};
 
 /// Drip repository with a reference to the Postgres pool, plus an optional
 /// in-memory "current avatar" concept to illustrate how you might track
 /// whichever avatar is actively worn.
 pub struct DripRepository {
     pool: Pool<Postgres>,
-    current_avatar: Mutex<Option<crate::models::drip::DripAvatar>>,
+    current_avatar: Mutex<Option<DripAvatar>>,
 }
 
 impl DripRepository {

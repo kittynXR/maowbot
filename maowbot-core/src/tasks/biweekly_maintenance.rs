@@ -4,15 +4,13 @@ use std::sync::Arc;
 use chrono::{DateTime, Utc, NaiveDate, Datelike};
 use sqlx::{Pool, Postgres, Row};
 use tracing::{info, error};
-use tokio::time::sleep;
 use std::time::Duration;
 use sqlx::error::BoxDynError;
 use uuid::Uuid;
-
+use maowbot_common::models::UserAnalysis;
 use crate::db::Database;
 use crate::repositories::postgres::user_analysis::{PostgresUserAnalysisRepository, UserAnalysisRepository};
 use crate::repositories::postgres::analytics::ChatMessage;
-use crate::models::UserAnalysis;
 use crate::Error;
 use crate::eventbus::EventBus;
 

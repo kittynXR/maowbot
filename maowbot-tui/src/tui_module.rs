@@ -5,13 +5,11 @@ use std::sync::{
 };
 use std::io::{stdout, Write};
 
-use tokio::{sync::mpsc::Receiver, io::BufReader};
+use tokio::{io::BufReader};
 use tokio::io::AsyncBufReadExt;
-
-use maowbot_core::eventbus::{BotEvent, EventBus};
-use maowbot_core::plugins::bot_api::BotApi;
-use maowbot_core::models::Platform;
-use maowbot_core::Error;
+use maowbot_common::models::platform::Platform;
+use maowbot_common::traits::api::BotApi;
+use maowbot_core::eventbus::{EventBus};
 
 use crate::commands::dispatch_async;
 
@@ -253,7 +251,7 @@ impl TuiModule {
     }
 
     fn prompt_string(&self) -> String {
-        // TTV chat mode has precedence in this example, but you can handle it differently.
+        // TTV chat mode has precedence in this example.
         let st_ttv = self.ttv_state.lock().unwrap();
         if st_ttv.is_in_chat_mode {
             if st_ttv.joined_channels.is_empty() {
@@ -275,44 +273,50 @@ impl TuiModule {
     }
 
     async fn run_chat_display_loop(&self) {
+        // This yields `maowbot_common::models::analytics::BotEvent`,
+        // which is just a struct with `event_type`, `event_timestamp`, and `data`.
         let mut rx = self.bot_api.subscribe_chat_events(Some(10000)).await;
 
         while let Some(event) = rx.recv().await {
-            if let BotEvent::ChatMessage {
-                platform,
-                channel,
-                user,
-                text,
-                timestamp
-            } = event
-            {
+            // event is now a `maowbot_common::models::analytics::BotEvent`
+            // We check if `event.event_type == "chat_message"`
+            if event.event_type == "chat_message" {
                 let st = self.chat_state.lock().unwrap();
                 if !st.enabled {
                     continue;
                 }
-                if let Some(ref pf) = st.platform_filter {
-                    if !platform.eq_ignore_ascii_case(pf) {
-                        continue;
-                    }
-                }
-                if let Some(ref af) = st.account_filter {
-                    if !channel.eq_ignore_ascii_case(af) {
-                        continue;
-                    }
-                }
 
-                // If it's twitch-irc, ensure we've joined that channel so we don't flood the console
-                if platform.eq_ignore_ascii_case("twitch-irc") {
-                    let ttv_guard = self.ttv_state.lock().unwrap();
-                    let joined = ttv_guard.joined_channels.iter()
-                        .any(|c| c.eq_ignore_ascii_case(&channel));
-                    if !joined {
-                        continue;
-                    }
-                }
+                if let Some(data) = &event.data {
+                    let platform = data["platform"].as_str().unwrap_or("unknown");
+                    let channel  = data["channel"].as_str().unwrap_or("unknown");
+                    let user     = data["user"].as_str().unwrap_or("unknown");
+                    let text     = data["text"].as_str().unwrap_or("");
 
-                let time_str = timestamp.format("%H:%M:%S").to_string();
-                println!("{}:{}:{} {}: {}", time_str, platform, channel, user, text);
+                    // If we have a platform/account filter, apply it
+                    if let Some(ref pf) = st.platform_filter {
+                        if !platform.eq_ignore_ascii_case(pf) {
+                            continue;
+                        }
+                    }
+                    if let Some(ref af) = st.account_filter {
+                        if !channel.eq_ignore_ascii_case(af) {
+                            continue;
+                        }
+                    }
+
+                    // If it's twitch-irc, ensure we've joined that channel so we don't flood console
+                    if platform.eq_ignore_ascii_case("twitch-irc") {
+                        let ttv_guard = self.ttv_state.lock().unwrap();
+                        let joined = ttv_guard.joined_channels.iter()
+                            .any(|c| c.eq_ignore_ascii_case(channel));
+                        if !joined {
+                            continue;
+                        }
+                    }
+
+                    let time_str = event.event_timestamp.format("%H:%M:%S").to_string();
+                    println!("{}:{}:{} {}: {}", time_str, platform, channel, user, text);
+                }
             }
         }
     }

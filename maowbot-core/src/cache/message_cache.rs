@@ -3,48 +3,16 @@ use dashmap::DashMap;
 use tokio::sync::RwLock;
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use crate::models::user_analysis::UserAnalysis;
 use crate::repositories::postgres::user_analysis::UserAnalysisRepository;
-
-/// Single cached chat message
-#[derive(Debug, Clone)]
-pub struct CachedMessage {
-    pub platform: String,
-    pub channel: String,
-    /// Now renamed to reflect actual chatter username (not DB UUID).
-    pub user_name: String,
-    pub text: String,
-    pub timestamp: DateTime<Utc>,
-    pub token_count: usize,
-
-    /// **NEW**: We store the user's roles (e.g. Twitch "mod", "broadcaster", "subscriber", etc.).
-    /// For non-Twitch platforms, this may be empty.
-    pub user_roles: Vec<String>,
-}
-
-/// Rules for trimming or filtering
-#[derive(Debug, Clone)]
-pub struct TrimPolicy {
-    pub max_age_seconds: Option<i64>,
-    pub spam_score_cutoff: Option<f32>,
-    pub max_total_messages: Option<usize>,
-    pub max_messages_per_user: Option<usize>,
-    pub min_quality_score: Option<f32>,
-}
-
-/// Config that the ChatCache will use
-#[derive(Debug, Clone)]
-pub struct CacheConfig {
-    pub trim_policy: TrimPolicy,
-}
+pub(crate) use maowbot_common::models::cache::{CacheConfig, CachedMessage};
 
 /// Fixed-size ring buffer for chronological messages.
 struct GlobalRingBuffer {
     capacity: usize,
     messages: Vec<Option<CachedMessage>>,
-    start_idx: usize, // oldest message slot
-    end_idx: usize,   // next insertion slot
-    total_count: usize, // how many are stored
+    start_idx: usize,
+    end_idx: usize,
+    total_count: usize,
 }
 
 impl GlobalRingBuffer {

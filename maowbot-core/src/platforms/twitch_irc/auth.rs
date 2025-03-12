@@ -6,8 +6,9 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use tracing::{error, debug};
 use uuid::Uuid;
 
-use crate::auth::{AuthenticationPrompt, AuthenticationResponse, PlatformAuthenticator};
-use crate::models::{Platform, PlatformCredential, CredentialType};
+use maowbot_common::traits::auth_traits::{AuthenticationPrompt, AuthenticationResponse, PlatformAuthenticator};
+use maowbot_common::models::platform::{Platform, PlatformCredential};
+use maowbot_common::models::credential::CredentialType;
 use crate::Error;
 
 #[derive(Deserialize)]

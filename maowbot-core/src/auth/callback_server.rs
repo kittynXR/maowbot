@@ -10,34 +10,12 @@ use axum::{
 use axum_server::{Server, Handle};
 use tower::ServiceBuilder;
 use tower_http::trace::TraceLayer;
-use serde::Deserialize;
 use tracing::{info, error};
 
 use crate::Error;
 use crate::repositories::postgres::bot_config::BotConfigRepository;
+use maowbot_common::models::auth::{AuthQuery, CallbackResult, CallbackServerState};
 
-/// Structure to hold the final result from the OAuth callback.
-#[derive(Debug, Clone)]
-pub struct CallbackResult {
-    pub code: String,
-    pub state: Option<String>,
-}
-
-/// Query string we expect from e.g. Twitch: ?code=xxx&state=...
-#[derive(Debug, Deserialize)]
-pub struct AuthQuery {
-    code: Option<String>,
-    state: Option<String>,
-    error: Option<String>,
-    error_description: Option<String>,
-}
-
-/// Shared state for the Axum callback route.
-#[derive(Clone)]
-pub struct CallbackServerState {
-    /// Once we receive a code, we send it through `done_tx`.
-    pub done_tx: Arc<Mutex<Option<oneshot::Sender<CallbackResult>>>>,
-}
 
 pub async fn start_callback_server(
     port: u16

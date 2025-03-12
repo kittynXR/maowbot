@@ -1,7 +1,9 @@
 use chrono::{Utc};
 use tracing::info;
+use maowbot_common::models::Command;
+use maowbot_common::models::platform::Platform;
+use maowbot_common::models::user::User;
 use crate::Error;
-use crate::models::{Command, User, Platform};
 use crate::platforms::twitch::client::TwitchHelixClient;
 use crate::services::twitch::command_service::CommandContext;
 

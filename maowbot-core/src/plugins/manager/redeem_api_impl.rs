@@ -2,12 +2,9 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use uuid::Uuid;
 use crate::Error;
-use crate::models::{Redeem, RedeemUsage};
-use crate::plugins::bot_api::redeem_api::RedeemApi;
+use maowbot_common::models::redeem::{Redeem, RedeemUsage};
+use maowbot_common::traits::api::RedeemApi;
 use crate::plugins::manager::core::PluginManager;
-use crate::repositories::{
-    RedeemUsageRepository,
-};
 use crate::tasks::redeem_sync;
 
 #[async_trait]

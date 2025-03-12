@@ -8,7 +8,6 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
-use async_trait::async_trait;
 use futures_util::StreamExt;
 use libloading::{Library, Symbol};
 use tokio::sync::{mpsc::UnboundedSender, Mutex as AsyncMutex};
@@ -25,24 +24,21 @@ use crate::plugins::types::{
     PluginRecord,
     PluginStatesFile
 };
-use crate::repositories::postgres::user::{UserRepo, UserRepository};
-use crate::auth::AuthManager;
+use crate::repositories::postgres::user::{UserRepository};
 use crate::eventbus::db_logger_handle::DbLoggerControl;
-use crate::models::User;
+use maowbot_common::traits::repository_traits::{CommandUsageRepository, RedeemUsageRepository};
 use crate::platforms::manager::PlatformManager;
-use crate::services::message_service::MessageService;
 use crate::plugins::manager::plugin_api_impl::build_status_response;
-use crate::repositories::{CommandUsageRepository, RedeemUsageRepository};
 // or you can keep the function local
 use crate::repositories::postgres::drip::DripRepository;
-use crate::repositories::postgres::bot_config::BotConfigRepository;
-use crate::repositories::postgres::credentials::CredentialsRepository;
-use crate::repositories::postgres::platform_config::PlatformConfigRepository;
-use crate::repositories::postgres::{PlatformIdentityRepository, PostgresAnalyticsRepository, PostgresUserAnalysisRepository};
 use crate::services::{CommandService, RedeemService};
 use crate::services::user_service::UserService;
 
 use maowbot_osc::MaowOscManager;
+use crate::auth::manager::AuthManager;
+use crate::repositories::postgres::analytics::PostgresAnalyticsRepository;
+use crate::repositories::postgres::platform_identity::PlatformIdentityRepository;
+use crate::repositories::postgres::user_analysis::PostgresUserAnalysisRepository;
 
 /// The main manager that loads/stores plugins, spawns connections,
 /// listens to inbound plugin messages, etc.
@@ -359,8 +355,8 @@ impl PluginManager {
         use maowbot_proto::plugs::{
             plugin_stream_request::Payload as ReqPayload,
             plugin_stream_response::Payload as RespPayload,
-            Hello, AuthError, CapabilityResponse, ForceDisconnect,
-            LogMessage, RequestCaps, Shutdown, SwitchScene, SendChat, Tick, RequestStatus
+            Hello, AuthError, CapabilityResponse,
+            LogMessage, RequestCaps, SwitchScene, SendChat
         };
 
         match payload {

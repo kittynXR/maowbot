@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
 use tokio::time::{timeout, Duration};
-use tracing::{error, info, warn};
+use tracing::{error, info};
 
 /// Manages local mDNS advertisement and scanning for `_oscjson._tcp.local.`
 pub struct OscQueryDiscovery {

@@ -1,13 +1,12 @@
 use async_trait::async_trait;
 use std::sync::Arc;
-use tokio::sync::mpsc::Sender;
 use tokio::task::JoinHandle;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info};
 
 use crate::Error;
 use crate::eventbus::EventBus;
-use crate::models::PlatformCredential;
-use crate::platforms::{ChatPlatform, ConnectionStatus, PlatformAuth, PlatformIntegration};
+use maowbot_common::models::platform::PlatformCredential;
+use maowbot_common::traits::platform_traits::{ChatPlatform, ConnectionStatus, PlatformAuth, PlatformIntegration};
 
 use super::client::{TwitchIrcClient, IrcIncomingEvent};
 
@@ -170,7 +169,7 @@ impl PlatformIntegration for TwitchIrcPlatform {
                         let _ = tx_for_task.send(msg_evt.clone()).await;
 
                         // Optionally publish to EventBus...
-                        if let Some(bus) = &event_bus_for_task {
+                        if let Some(_bus) = &event_bus_for_task {
                             // Example usage if you want to publish:
                             // bus.publish_chat("twitch-irc", &channel, &format!("{}|roles={}", user_id, ...), &text).await;
                         }

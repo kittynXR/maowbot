@@ -3,10 +3,12 @@ use chrono::{DateTime, Utc};
 use uuid::Uuid;
 use async_trait::async_trait;
 use dashmap::DashMap;
-
 use crate::Error;
-use crate::models::{User, Platform, PlatformIdentity};
-use crate::models::user_analysis::UserAnalysis;
+use maowbot_common::models::user::{User};
+use maowbot_common::models::platform::{ Platform, PlatformIdentity};
+use maowbot_common::models::user_analysis::UserAnalysis;
+pub(crate) use maowbot_common::traits::auth_traits::UserManager;
+
 use crate::repositories::postgres::{
     user::UserRepository,
     platform_identity::PlatformIdentityRepository,
@@ -15,25 +17,8 @@ use crate::repositories::postgres::{
 use crate::repositories::postgres::platform_identity::PlatformIdentityRepo;
 use crate::repositories::postgres::user::UserRepo;
 
-#[async_trait]
-pub trait UserManager: Send + Sync {
-    /// Looks up or creates a user record for (platform, platform_user_id).
-    async fn get_or_create_user(
-        &self,
-        platform: Platform,
-        platform_user_id: &str,
-        platform_username: Option<&str>,
-    ) -> Result<User, Error>;
-
-    /// Now takes a Uuid instead of &str:
-    async fn get_or_create_user_analysis(&self, user_id: Uuid) -> Result<UserAnalysis, Error>;
-
-    async fn update_user_activity(&self, user_id: &str, new_username: Option<&str>)
-                                  -> Result<(), Error>;
-}
-
 #[derive(Debug, Clone)]
-struct CachedUser {
+pub struct CachedUser {
     user: User,
     last_access: DateTime<Utc>,
 }

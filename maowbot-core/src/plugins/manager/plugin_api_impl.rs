@@ -1,18 +1,12 @@
-//! plugins/manager/plugin_api_impl.rs
-//!
-//! Implements PluginApi for PluginManager.
-
-use std::sync::Arc;
 use tokio::sync::mpsc;
 
 use crate::Error;
-use crate::eventbus::{BotEvent, EventBus};
-use crate::plugins::bot_api::plugin_api::{PluginApi, StatusData, AccountStatus};
+use crate::eventbus::{BotEvent};
+use maowbot_common::models::analytics as common_analytics;
+use maowbot_common::traits::api::{PluginApi, CredentialsApi};
+use maowbot_common::models::plugin::{StatusData, AccountStatus};
 use crate::plugins::manager::core::PluginManager;
-use crate::models::PlatformCredential;
-use crate::plugins::bot_api::credentials_api::CredentialsApi;
 use crate::repositories::postgres::user::UserRepo;
-use crate::plugins::plugin_connection::PluginConnection;
 
 /// Helper function to build a `StatusData`.
 pub async fn build_status_response(manager: &PluginManager) -> maowbot_proto::plugs::PluginStreamResponse {
@@ -33,6 +27,58 @@ pub async fn build_status_response(manager: &PluginManager) -> maowbot_proto::pl
     response
 }
 
+/// Convert our local `eventbus::BotEvent` to the new `maowbot_common::models::analytics::BotEvent`.
+fn convert_event(evt: crate::eventbus::BotEvent) -> common_analytics::BotEvent {
+    match evt {
+        BotEvent::ChatMessage {
+            platform,
+            channel,
+            user,
+            text,
+            timestamp,
+        } => {
+            common_analytics::BotEvent {
+                event_id: uuid::Uuid::new_v4(),
+                event_type: "chat_message".to_string(),
+                event_timestamp: timestamp,
+                data: Some(serde_json::json!({
+                    "platform": platform,
+                    "channel": channel,
+                    "user": user,
+                    "text": text,
+                })),
+            }
+        }
+        BotEvent::Tick => {
+            common_analytics::BotEvent {
+                event_id: uuid::Uuid::new_v4(),
+                event_type: "tick".to_string(),
+                event_timestamp: chrono::Utc::now(),
+                data: None,
+            }
+        }
+        BotEvent::SystemMessage(msg) => {
+            common_analytics::BotEvent {
+                event_id: uuid::Uuid::new_v4(),
+                event_type: "system_message".to_string(),
+                event_timestamp: chrono::Utc::now(),
+                data: Some(serde_json::json!({ "message": msg })),
+            }
+        }
+        BotEvent::TwitchEventSub(sub) => {
+            // If desired, store more structured data from `sub`:
+            common_analytics::BotEvent {
+                event_id: uuid::Uuid::new_v4(),
+                event_type: "twitch_eventsub".to_string(),
+                event_timestamp: chrono::Utc::now(),
+                data: Some(serde_json::json!({
+                    "details": format!("{:?}", sub)
+                })),
+            }
+        }
+    }
+}
+
 #[async_trait::async_trait]
 impl PluginApi for PluginManager {
     async fn list_plugins(&self) -> Vec<String> {
@@ -46,7 +92,7 @@ impl PluginApi for PluginManager {
             .collect()
     }
 
-    async fn status(&self) -> crate::plugins::bot_api::plugin_api::StatusData {
+    async fn status(&self) -> StatusData {
         // Gather connected plugin names:
         let connected = self.list_connected_plugins().await;
         let connected_names: Vec<_> = connected
@@ -81,7 +127,7 @@ impl PluginApi for PluginManager {
             }
         }
 
-        crate::plugins::bot_api::plugin_api::StatusData {
+        StatusData {
             connected_plugins: connected_names,
             uptime_seconds: self.start_time.elapsed().as_secs(),
             account_statuses,
@@ -95,8 +141,6 @@ impl PluginApi for PluginManager {
     }
 
     async fn toggle_plugin(&self, plugin_name: &str, enable: bool) -> Result<(), Error> {
-        // This was originally `toggle_plugin_async` in your old code.
-        // We can inline that logic here, or call a separate helper method.
         let maybe_rec = {
             let lock = self.plugin_records.lock().unwrap();
             lock.iter().find(|r| r.name == plugin_name).cloned()
@@ -134,7 +178,7 @@ impl PluginApi for PluginManager {
             crate::plugins::types::PluginType::DynamicLib { .. } => {
                 if enable {
                     // If not loaded yet, actually load it:
-                    let mut lock = self.plugins.lock().await;
+                    let lock = self.plugins.lock().await;
                     let already_loaded = lock.iter().any(|p| {
                         let pi = futures_lite::future::block_on(p.info());
                         pi.name == updated.name
@@ -147,7 +191,7 @@ impl PluginApi for PluginManager {
                         }
                     } else {
                         // If it’s already in memory, just enable it:
-                        let mut lock = self.plugins.lock().await;
+                        let lock = self.plugins.lock().await;
                         for p in lock.iter() {
                             let pi = p.info().await;
                             if pi.name == updated.name {
@@ -210,13 +254,33 @@ impl PluginApi for PluginManager {
         Ok(())
     }
 
+    // ------------------------------------------------------------
+    // The method that caused the E0053 type mismatch. We now convert
+    // from `crate::eventbus::BotEvent` to `maowbot_common::models::analytics::BotEvent`.
+    // ------------------------------------------------------------
     async fn subscribe_chat_events(
         &self,
         buffer_size: Option<usize>
-    ) -> mpsc::Receiver<BotEvent> {
+    ) -> mpsc::Receiver<common_analytics::BotEvent> {
         if let Some(bus) = &self.event_bus {
-            bus.subscribe(buffer_size).await
+            // We subscribe to the local eventbus (which yields `crate::eventbus::BotEvent`).
+            let raw_rx = bus.subscribe(buffer_size).await;
+            let (tx, rx) = mpsc::channel(buffer_size.unwrap_or(128));
+
+            // Spawn a small forwarder task to convert & forward each event.
+            tokio::spawn(async move {
+                let mut raw_rx = raw_rx;
+                while let Some(evt) = raw_rx.recv().await {
+                    let converted = convert_event(evt);
+                    if tx.send(converted).await.is_err() {
+                        break;
+                    }
+                }
+            });
+
+            rx
         } else {
+            // If there's no event bus at all, return a dummy channel that never yields data.
             let (_tx, rx) = mpsc::channel(1);
             rx
         }

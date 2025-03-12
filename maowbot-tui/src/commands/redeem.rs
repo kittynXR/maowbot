@@ -1,11 +1,9 @@
 use std::sync::Arc;
 use chrono::Utc;
 use uuid::Uuid;
-use maowbot_core::Error;
-use maowbot_core::models::Redeem;
-use maowbot_core::plugins::bot_api::BotApi;
-use maowbot_core::plugins::bot_api::redeem_api::RedeemApi;
 use serde::Deserialize;
+use maowbot_common::models::Redeem;
+use maowbot_common::traits::api::BotApi;
 
 /// Matches your 'autostart' config structure, if used for listing associated accounts.
 #[derive(Debug, Deserialize)]

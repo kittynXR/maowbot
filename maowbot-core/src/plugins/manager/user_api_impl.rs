@@ -1,13 +1,13 @@
 //! plugins/manager/user_api_impl.rs
 //!
 //! Implements UserApi for PluginManager (create_user, remove_user, merge_users, etc.).
-
-use std::sync::Arc;
 use uuid::Uuid;
 use async_trait::async_trait;
 use crate::Error;
-use crate::models::{User, PlatformIdentity, UserAnalysis, Platform};
-use crate::plugins::bot_api::user_api::UserApi;
+use maowbot_common::models::user::{User};
+use maowbot_common::models::platform::{PlatformIdentity, Platform};
+use maowbot_common::models::user_analysis::UserAnalysis;
+use maowbot_common::traits::api::UserApi;
 use crate::plugins::manager::core::PluginManager;
 use crate::repositories::postgres::user::UserRepo;
 use crate::repositories::postgres::platform_identity::PlatformIdentityRepo;
@@ -18,7 +18,7 @@ use crate::repositories::postgres::user_analysis::UserAnalysisRepository;
 impl UserApi for PluginManager {
     async fn create_user(&self, new_user_id: Uuid, display_name: &str) -> Result<(), Error> {
         let user_repo = self.user_repo.clone();
-        let user = crate::models::User {
+        let user = User {
             user_id: new_user_id,
             global_username: Some(display_name.to_string()),
             created_at: chrono::Utc::now(),
@@ -119,7 +119,7 @@ impl UserApi for PluginManager {
             analysis_repo.update_analysis(&existing).await?;
         } else {
             // create a new user_analysis row
-            let mut new_ua = crate::models::UserAnalysis::new(user_id);
+            let mut new_ua = UserAnalysis::new(user_id);
             new_ua.moderator_notes = Some(note_text.to_string());
             analysis_repo.create_analysis(&new_ua).await?;
         }
@@ -163,7 +163,7 @@ impl UserApi for PluginManager {
         }
 
         // [3] Reassign chat_messages from user2 -> user1 in the database
-        let updated_count = self.analytics_repo.reassign_user_messages(user2_id, user1_id).await?;
+        let _updated_count = self.analytics_repo.reassign_user_messages(user2_id, user1_id).await?;
         // (debug logging if desired)
         // eprintln!("Reassigned {} messages from user2 => user1", updated_count);
 

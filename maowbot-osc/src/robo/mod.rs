@@ -4,7 +4,7 @@
 //! pilot a VRChat humanoid avatar.
 //! This might feed tracked head/wrist/foot data via /tracking addresses, etc.
 
-use crate::{Result, OscError};
+use crate::{Result};
 
 pub struct RoboControlSystem {
     // placeholders:

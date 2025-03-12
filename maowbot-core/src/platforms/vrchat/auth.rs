@@ -6,8 +6,9 @@ use serde_json::json;
 use uuid::Uuid;
 
 use crate::Error;
-use crate::auth::{AuthenticationPrompt, AuthenticationResponse, PlatformAuthenticator};
-use crate::models::{CredentialType, Platform, PlatformCredential};
+use maowbot_common::traits::auth_traits::{AuthenticationPrompt, AuthenticationResponse, PlatformAuthenticator};
+use maowbot_common::models::credential::{CredentialType};
+use maowbot_common::models::platform::{Platform, PlatformCredential};
 
 const VRCHAT_UA: &str = "MaowBot/1.0 cat@kittyn.cat";
 

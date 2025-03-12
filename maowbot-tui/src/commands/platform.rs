@@ -1,9 +1,8 @@
 use std::sync::Arc;
 use std::io::{Write, stdin, stdout};
 use std::str::FromStr;
-use maowbot_core::models::Platform;
-use maowbot_core::plugins::bot_api::BotApi;
-use maowbot_core::plugins::bot_api::platform_api::PlatformConfigData;
+use maowbot_common::models::platform::{Platform, PlatformConfigData};
+use maowbot_common::traits::api::BotApi;
 
 pub async fn handle_platform_command(args: &[&str], bot_api: &Arc<dyn BotApi>) -> String {
     if args.is_empty() {

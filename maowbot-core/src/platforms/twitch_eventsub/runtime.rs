@@ -11,8 +11,8 @@ use reqwest::Client as ReqwestClient;
 use serde_json::json;
 
 use crate::Error;
-use crate::models::PlatformCredential;
-use crate::platforms::{ConnectionStatus, PlatformAuth, PlatformIntegration};
+use maowbot_common::models::platform::PlatformCredential;
+use maowbot_common::traits::platform_traits::{ConnectionStatus, PlatformAuth, PlatformIntegration};
 use crate::eventbus::{EventBus, BotEvent};
 use super::events::{
     parse_twitch_notification,

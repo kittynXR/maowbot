@@ -1,9 +1,8 @@
 use std::sync::Arc;
 use std::io::{stdin, stdout, Write};
 use std::str::FromStr;
-
-use maowbot_core::models::Platform;
-use maowbot_core::plugins::bot_api::BotApi;
+use maowbot_common::models::platform::Platform;
+use maowbot_common::traits::api::BotApi;
 use maowbot_core::tasks::autostart::AutostartConfig;
 
 use crate::tui_module::TuiModule;

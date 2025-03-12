@@ -2,13 +2,11 @@
 //
 // This file was moved from the old src/platforms/vrchat/runtime.rs,
 // which handles the WebSocket/pipeline logic.
-
-use std::time::Duration;
 use async_trait::async_trait;
 use futures_util::StreamExt;
-use tokio::{select, time::sleep};
+use tokio::{select};
 use tokio::sync::mpsc::{UnboundedSender, UnboundedReceiver};
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::{mpsc};
 use tokio::task::JoinHandle;
 use tokio_tungstenite::tungstenite::{
     protocol::Message as WsMessage,
@@ -18,9 +16,8 @@ use tokio_tungstenite::tungstenite::{
 use tokio_tungstenite::{connect_async_tls_with_config, Connector};
 use tracing::{info, trace, warn};
 use crate::Error;
-use crate::models::PlatformCredential;
-use crate::platforms::{ConnectionStatus, PlatformAuth, PlatformIntegration};
-use crate::platforms::vrchat::auth::parse_auth_cookie_from_headers;
+use maowbot_common::models::platform::PlatformCredential;
+use maowbot_common::traits::platform_traits::{ConnectionStatus, PlatformAuth, PlatformIntegration};
 
 /// This is a simplified VRChat event for demonstration,
 /// capturing (user_id, display_name, text).
@@ -114,7 +111,7 @@ impl VRChatPlatform {
             .await
             .map_err(|e| Error::Platform(format!("VRChat WebSocket connect failed: {e}")))?;
 
-        let (mut write_half, mut read_half) = ws_stream.split();
+        let (_write_half, mut read_half) = ws_stream.split();
 
         // 5) Create local channel for VRChatMessageEvent
         let (tx_evt, rx_evt) = mpsc::unbounded_channel::<VRChatMessageEvent>();

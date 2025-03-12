@@ -4,6 +4,8 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
+maowbot-common = { path = "../maowbot-common" }
+maowbot-core = { path = "../maowbot-core" }
 tokio = { workspace = true }
 
 reqwest = { workspace = true }
@@ -16,8 +18,6 @@ sqlx = { workspace = true }
 lazy_static = { workspace = true }
 serde_json = { workspace = true }
 serde = { workspace = true }
-
-maowbot-core = { path = "../maowbot-core" }
 
 [lib]
 name = "maowbot_tui"

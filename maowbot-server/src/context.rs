@@ -6,15 +6,11 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use maowbot_core::db::Database;
 use maowbot_core::eventbus::EventBus;
-use maowbot_core::auth::{AuthManager, DefaultUserManager};
 use maowbot_core::crypto::Encryptor;
 use maowbot_core::services::{message_service::MessageService, user_service::UserService, EventSubService};
 use maowbot_core::services::twitch::{
     command_service::CommandService,
     redeem_service::RedeemService,
-};
-use maowbot_core::cache::{
-    ChatCache, CacheConfig, TrimPolicy,
 };
 use maowbot_core::platforms::manager::PlatformManager;
 use maowbot_core::plugins::manager::PluginManager;
@@ -23,28 +19,26 @@ use maowbot_core::Error;
 use crate::Args;
 use crate::portable_postgres::*;
 use tracing::{info, error};
-use std::io::Write;
 use rand::{thread_rng, Rng};
 use keyring::Entry;
 use base64;
-use std::fs;
-use std::path::Path;
-use maowbot_core::repositories::BotConfigRepository;
-use maowbot_core::repositories::postgres::{
-    PostgresCredentialsRepository,
-    PostgresPlatformConfigRepository,
-    PostgresBotConfigRepository,
-    PostgresUserAnalysisRepository,
-    analytics::PostgresAnalyticsRepository,
-    platform_identity::PlatformIdentityRepository,
-    user::UserRepository,
-    credentials::CredentialsRepository,
-    commands::PostgresCommandRepository,
-    command_usage::PostgresCommandUsageRepository,
-    redeems::PostgresRedeemRepository,
-    redeem_usage::PostgresRedeemUsageRepository,
-};
+use maowbot_common::models::cache::{CacheConfig, TrimPolicy};
+use maowbot_common::traits::repository_traits::BotConfigRepository;
+use maowbot_core::auth::manager::AuthManager;
+use maowbot_core::auth::user_manager::DefaultUserManager;
+use maowbot_core::cache::message_cache::ChatCache;
+use maowbot_core::repositories::postgres::analytics::PostgresAnalyticsRepository;
+use maowbot_core::repositories::postgres::bot_config::PostgresBotConfigRepository;
+use maowbot_core::repositories::postgres::command_usage::PostgresCommandUsageRepository;
+use maowbot_core::repositories::postgres::commands::PostgresCommandRepository;
+use maowbot_core::repositories::postgres::credentials::PostgresCredentialsRepository;
 use maowbot_core::repositories::postgres::drip::DripRepository;
+use maowbot_core::repositories::postgres::platform_config::PostgresPlatformConfigRepository;
+use maowbot_core::repositories::postgres::platform_identity::PlatformIdentityRepository;
+use maowbot_core::repositories::postgres::redeem_usage::PostgresRedeemUsageRepository;
+use maowbot_core::repositories::postgres::redeems::PostgresRedeemRepository;
+use maowbot_core::repositories::postgres::user::UserRepository;
+use maowbot_core::repositories::postgres::user_analysis::PostgresUserAnalysisRepository;
 use maowbot_osc::MaowOscManager;
 use maowbot_osc::oscquery::OscQueryServer;
 use maowbot_osc::robo::RoboControlSystem;

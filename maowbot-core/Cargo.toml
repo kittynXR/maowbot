@@ -6,8 +6,10 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
+maowbot-common = { path = "../maowbot-common" }
 maowbot-proto = { path = "../maowbot-proto" }
 maowbot_osc = { path = "../maowbot-osc" }
+
 
 twitch_api = {  workspace = true }
 vrchatapi = { version = "^1.19" }
@@ -21,8 +23,6 @@ tokio-native-tls = { workspace = true }
 native-tls = { workspace = true }
 
 dashmap = { workspace = true }
-
-rcgen = { workspace = true }
 
 chrono = { workspace = true }
 

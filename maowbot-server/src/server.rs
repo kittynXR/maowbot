@@ -7,7 +7,7 @@ use std::net::SocketAddr;
 use std::time::Duration;
 use tokio::time;
 use tracing::{info, error};
-use tonic::transport::{Server, Identity, Certificate, ServerTlsConfig};
+use tonic::transport::{Server, Identity, ServerTlsConfig};
 use std::fs;
 use std::path::Path;
 use std::io::Write;
@@ -42,7 +42,7 @@ pub async fn run_server(args: Args) -> Result<(), Error> {
     }
 
     // 1) Spawn DB logger
-    let (db_logger_handle, db_logger_control) = start_db_logger(&ctx);
+    let (db_logger_handle, _db_logger_control) = start_db_logger(&ctx);
     // 2) Spawn maintenance
     let _maintenance_task = spawn_biweekly_maintenance_task(
         ctx.db.clone(),

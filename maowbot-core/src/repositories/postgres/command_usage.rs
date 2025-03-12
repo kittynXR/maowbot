@@ -1,17 +1,13 @@
 use async_trait::async_trait;
 use sqlx::{Pool, Postgres, Row};
 use uuid::Uuid;
-use chrono::Utc;
+use maowbot_common::models::CommandUsage;
+pub(crate) use maowbot_common::traits::repository_traits::CommandUsageRepository;
 use crate::Error;
-use crate::models::CommandUsage;
+
 
 /// Repository for storing command usage logs
-#[async_trait]
-pub trait CommandUsageRepository: Send + Sync {
-    async fn insert_usage(&self, usage: &CommandUsage) -> Result<(), Error>;
-    async fn list_usage_for_command(&self, command_id: Uuid, limit: i64) -> Result<Vec<CommandUsage>, Error>;
-    async fn list_usage_for_user(&self, user_id: Uuid, limit: i64) -> Result<Vec<CommandUsage>, Error>;
-}
+
 
 #[derive(Clone)]
 pub struct PostgresCommandUsageRepository {

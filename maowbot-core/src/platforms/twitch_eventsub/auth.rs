@@ -5,10 +5,9 @@ use chrono::Utc;
 use reqwest::Client as ReqwestClient;
 use serde::Deserialize;
 use tracing::{debug, error};
-use uuid::Uuid;
 
-use crate::auth::{AuthenticationPrompt, AuthenticationResponse, PlatformAuthenticator};
-use crate::models::{CredentialType, Platform, PlatformCredential};
+use maowbot_common::traits::auth_traits::{AuthenticationPrompt, AuthenticationResponse, PlatformAuthenticator};
+use maowbot_common::models::platform::{PlatformCredential};
 use crate::Error;
 
 // We'll reuse the same Twitch token exchange JSON structure:

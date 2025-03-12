@@ -1,23 +1,7 @@
 use sqlx::{Pool, Postgres, Row};
 use async_trait::async_trait;
+pub(crate) use maowbot_common::traits::repository_traits::BotConfigRepository;
 use crate::Error;
-
-#[async_trait]
-pub trait BotConfigRepository: Send + Sync {
-    async fn get_callback_port(&self) -> Result<Option<u16>, Error>;
-    async fn set_callback_port(&self, port: u16) -> Result<(), Error>;
-    async fn set_value(&self, config_key: &str, config_value: &str) -> Result<(), Error>;
-    async fn get_value(&self, config_key: &str) -> Result<Option<String>, Error>;
-
-    // NEW:
-    async fn get_autostart(&self) -> Result<Option<String>, Error> {
-        self.get_value("autostart").await
-    }
-    async fn set_autostart(&self, json_str: &str) -> Result<(), Error> {
-        self.set_value("autostart", json_str).await
-    }
-    async fn list_all(&self) -> Result<Vec<(String, String)>, Error>;
-}
 
 #[derive(Clone)]
 pub struct PostgresBotConfigRepository {
