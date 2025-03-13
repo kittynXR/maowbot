@@ -290,7 +290,7 @@ async fn maybe_create_owner_user(db: &Database) -> Result<(), Error> {
             r#"
             INSERT INTO bot_config (config_key, config_value)
             VALUES ('owner_user_id', $1)
-            ON CONFLICT (config_key) DO UPDATE
+            ON CONFLICT (config_key, config_value) DO UPDATE
                 SET config_value = EXCLUDED.config_value
             "#
         )

@@ -92,10 +92,12 @@ CREATE TABLE platform_config (
 ---------------------------------------------------------------------------
 DROP TABLE IF EXISTS bot_config CASCADE;
 CREATE TABLE bot_config (
-    config_key   TEXT PRIMARY KEY,
+    config_key   TEXT,
     config_value TEXT,
-    config_meta  JSONB
+    config_meta  JSONB,
+    PRIMARY KEY (config_key, config_value)
 );
+
 
 ---------------------------------------------------------------------------
 -- link_requests

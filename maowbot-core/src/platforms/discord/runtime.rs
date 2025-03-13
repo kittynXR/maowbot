@@ -231,6 +231,19 @@ impl DiscordPlatform {
             None
         }
     }
+
+    pub async fn send_message_with_server(
+        &self,
+        server_id: &str,
+        channel_id: &str,
+        text: &str
+    ) -> Result<(), Error> {
+        debug!(
+            "(DiscordPlatform) send_message_with_server => server={}, channel={}, text='{}'",
+            server_id, channel_id, text
+        );
+        self.send_message(channel_id, text).await
+    }
 }
 
 #[async_trait]
