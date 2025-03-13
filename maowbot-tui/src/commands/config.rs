@@ -55,7 +55,7 @@ pub async fn handle_config_command(args: &[&str], bot_api: &Arc<dyn BotApi>) -> 
                 return "Usage: config delete <key>".to_string();
             }
             let key = args[1];
-            match bot_api.delete_bot_config_value(key).await {
+            match bot_api.delete_bot_config_key(key).await {
                 Ok(_) => format!("Deleted config row for key='{}'.", key),
                 Err(e) => format!("Error deleting config => {:?}", e),
             }

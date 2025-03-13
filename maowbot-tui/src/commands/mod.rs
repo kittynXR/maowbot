@@ -1,11 +1,8 @@
-// File: maowbot-tui/src/commands/mod.rs
-
 use std::sync::Arc;
 use maowbot_common::traits::api::BotApi;
 use crate::tui_module::TuiModule;
 use crate::help;
 
-// Submodules for actual command logic:
 mod account;
 mod connectivity;
 mod platform;
@@ -19,6 +16,7 @@ mod redeem;
 mod osc;
 mod drip;
 mod config;
+mod discord;
 
 pub async fn dispatch_async(
     line: &str,
@@ -164,7 +162,12 @@ pub async fn dispatch_async(
             (false, Some(msg))
         }
 
-        // NEW: "config" subcommand
+        // NEW:
+        "discord" => {
+            let msg = discord::handle_discord_command(args, bot_api, tui_module).await;
+            (false, Some(msg))
+        }
+
         "config" => {
             let msg = config::handle_config_command(args, bot_api).await;
             (false, Some(msg))

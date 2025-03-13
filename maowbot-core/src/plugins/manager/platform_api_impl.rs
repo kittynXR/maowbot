@@ -1,10 +1,8 @@
-//! plugins/manager/platform_api_impl.rs
-//!
-//! Implements PlatformApi for PluginManager.
+// File: maowbot-core/src/plugins/manager/platform_api_impl.rs
 
 use crate::Error;
 use maowbot_common::models::platform::{Platform, PlatformConfigData};
-use maowbot_common::traits::api::{PlatformApi};
+use maowbot_common::traits::api::PlatformApi;
 use crate::plugins::manager::core::PluginManager;
 use async_trait::async_trait;
 
@@ -82,28 +80,5 @@ impl PlatformApi for PluginManager {
     async fn stop_platform_runtime(&self, platform: &str, account_name: &str) -> Result<(), Error> {
         self.platform_manager.stop_platform_runtime(platform, account_name).await
     }
-
-    async fn get_bot_config_value(&self, key: &str) -> Result<Option<String>, Error> {
-        let auth_mgr_arc = self.auth_manager
-            .as_ref()
-            .ok_or_else(|| Error::Auth("No auth manager set in plugin manager".into()))?;
-        let auth_manager_locked = auth_mgr_arc.lock().await;
-        auth_manager_locked.bot_config_repo.get_value(key).await
-    }
-
-    async fn set_bot_config_value(&self, key: &str, value: &str) -> Result<(), Error> {
-        let auth_mgr_arc = self.auth_manager
-            .as_ref()
-            .ok_or_else(|| Error::Auth("No auth manager set in plugin manager".into()))?;
-        let auth_manager_locked = auth_mgr_arc.lock().await;
-        auth_manager_locked.bot_config_repo.set_value(key, value).await
-    }
-
-    async fn delete_bot_config_value(&self, key: &str) -> Result<(), Error> {
-        let auth_mgr_arc = self.auth_manager
-            .as_ref()
-            .ok_or_else(|| Error::Auth("No auth manager set in plugin manager".into()))?;
-        let auth_manager_locked = auth_mgr_arc.lock().await;
-        auth_manager_locked.bot_config_repo.delete_value(key).await
-    }
 }
+

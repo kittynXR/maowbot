@@ -1,5 +1,7 @@
 use async_trait::async_trait;
 use chrono::{DateTime, Duration, Utc};
+use serde_json::Value;
+use sqlx::types::JsonValue;
 use uuid::Uuid;
 use crate::error::Error;
 use crate::models::{Command, CommandUsage, Redeem, RedeemUsage, UserAnalysis};
@@ -96,6 +98,18 @@ pub trait BotConfigRepository: Send + Sync {
     async fn list_all(&self) -> Result<Vec<(String, String)>, Error>;
     /// NEW: Delete a row by config_key
     async fn delete_value(&self, config_key: &str) -> Result<(), Error>;
+    async fn delete_value_kv(&self, config_key: &str, config_value: &str) -> Result<(), Error>;
+    async fn get_value_kv_meta(
+        &self,
+        config_key: &str,
+        config_value: &str
+    ) -> Result<Option<(String, Option<JsonValue>)>, Error>;
+    async fn set_value_kv_meta(
+        &self,
+        config_key: &str,
+        config_value: &str,
+        config_meta: Option<JsonValue>
+    ) -> Result<(), Error>;
 }
 
 #[async_trait]

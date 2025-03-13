@@ -1,5 +1,5 @@
 use std::sync::Arc;
-use maowbot_common::traits::api::BotApi;
+use maowbot_common::traits::api::{BotApi, BotConfigApi, TwitchApi};
 use crate::tui_module::TuiModule;
 
 /// Helper to require that the active_account is `Some(...)`.
@@ -33,7 +33,7 @@ pub async fn handle_ttv_command(
             if args.len() < 2 {
                 return "Usage: ttv active <accountName>".to_string();
             }
-            set_active_account(args[1], tui_module)
+            set_active_account(args[1], bot_api, tui_module).await
         }
 
         "join" => {
@@ -92,9 +92,15 @@ pub async fn handle_ttv_command(
     }
 }
 
-fn set_active_account(account: &str, tui_module: &Arc<TuiModule>) -> String {
-    let mut st = tui_module.ttv_state.lock().unwrap();
-    st.active_account = Some(account.to_string());
+async fn set_active_account(account: &str, bot_api: &Arc<dyn BotApi>, tui_module: &Arc<TuiModule>) -> String {
+    {
+        let mut st = tui_module.ttv_state.lock().unwrap();
+        st.active_account = Some(account.to_string());
+    }
+    // Store in bot_config old-style:
+    if let Err(e) = bot_api.set_bot_config_value("ttv_active_account", account).await {
+        return format!("Error storing ttv_active_account => {:?}", e);
+    }
     format!("Active Twitch account set to '{}'", account)
 }
 
@@ -103,7 +109,6 @@ async fn do_join_channel(
     bot_api: &Arc<dyn BotApi>,
     tui_module: &Arc<TuiModule>,
 ) -> String {
-    // We now store the channelName WITHOUT '#'.
     let chname = strip_channel_prefix(channel);
 
     let (already_joined, maybe_acct) = {
@@ -125,7 +130,7 @@ async fn do_join_channel(
         Err(e) => return e,
     };
 
-    // Ensure the runtime is started, then join
+    // Ensure runtime is started
     if let Err(e) = bot_api.start_platform_runtime("twitch-irc", active_account).await {
         return format!("Error starting twitch-irc => {:?}", e);
     }
@@ -201,11 +206,8 @@ async fn set_named_broadcaster(
 ) -> String {
     let chname = strip_channel_prefix(channel);
 
-    // Store in DB WITHOUT '#'
-    let store_res = bot_api
-        .set_bot_config_value("ttv_broadcaster_channel", &chname)
-        .await;
-    if let Err(e) = store_res {
+    // Store old-style: "ttv_broadcaster_channel"
+    if let Err(e) = bot_api.set_bot_config_value("ttv_broadcaster_account", &chname).await {
         return format!("Error storing ttv_broadcaster_channel => {:?}", e);
     }
 
@@ -222,11 +224,8 @@ async fn set_secondary_account(
     bot_api: &Arc<dyn BotApi>,
     tui_module: &Arc<TuiModule>,
 ) -> String {
-    // store as-is
-    let store_res = bot_api
-        .set_bot_config_value("ttv_secondary_account", account)
-        .await;
-    if let Err(e) = store_res {
+    // Store old-style: "ttv_secondary_account"
+    if let Err(e) = bot_api.set_bot_config_value("ttv_secondary_account", account).await {
         return format!("Error storing ttv_secondary_account => {:?}", e);
     }
 
@@ -235,12 +234,9 @@ async fn set_secondary_account(
         st.secondary_account = Some(account.to_string());
     }
 
-    format!("Secondary Twitch-IRC account set to '{}'. This will be used to respond to commands by default.", account)
+    format!("Secondary Twitch-IRC account set to '{}'. This will be used to respond by default.", account)
 }
 
-/// Removes a leading '#' if present, so we never store or track
-/// channel names with the '#' prefix in the database.
 fn strip_channel_prefix(raw: &str) -> String {
-    let trimmed = raw.trim();
-    trimmed.trim_start_matches('#').to_string()
+    raw.trim().trim_start_matches('#').to_string()
 }

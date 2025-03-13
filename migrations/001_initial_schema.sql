@@ -93,7 +93,8 @@ CREATE TABLE platform_config (
 DROP TABLE IF EXISTS bot_config CASCADE;
 CREATE TABLE bot_config (
     config_key   TEXT PRIMARY KEY,
-    config_value TEXT
+    config_value TEXT,
+    config_meta  JSONB
 );
 
 ---------------------------------------------------------------------------
