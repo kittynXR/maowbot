@@ -2,9 +2,8 @@
 
 use std::sync::Arc;
 use maowbot_common::traits::api::BotApi;
-use crate::commands::vrchat::handle_vrchat_command;
-use crate::help;
 use crate::tui_module::TuiModule;
+use crate::help;
 
 // Submodules for actual command logic:
 mod account;
@@ -19,8 +18,8 @@ mod command;
 mod redeem;
 mod osc;
 mod drip;
+mod config;
 
-/// Asynchronous command dispatcher. Returns (quit_requested, optional_output_message).
 pub async fn dispatch_async(
     line: &str,
     bot_api: &Arc<dyn BotApi>,
@@ -41,12 +40,11 @@ pub async fn dispatch_async(
         }
 
         "vrchat" => {
-            let msg = handle_vrchat_command(args, bot_api).await;
+            let msg = vrchat::handle_vrchat_command(args, bot_api).await;
             (false, Some(msg))
         }
 
         "list" => {
-            // Example usage: "list" (just a placeholder demonstration)
             let result = bot_api.list_plugins().await;
             let mut output = String::new();
             output.push_str("All known plugins:\n");
@@ -117,49 +115,41 @@ pub async fn dispatch_async(
             (false, Some(output))
         }
 
-        // Plugin management
         "plug" => {
             let message = plugin::handle_plugin_command(args, bot_api).await;
             (false, Some(message))
         }
 
-        // Platform config
         "platform" => {
             let message = platform::handle_platform_command(args, bot_api).await;
             (false, Some(message))
         }
 
-        // Account
         "account" => {
             let message = account::handle_account_command(args, bot_api).await;
             (false, Some(message))
         }
 
-        // User
         "user" => {
             let message = user::handle_user_command(args, bot_api).await;
             (false, Some(message))
         }
 
-        // "member" command
         "member" => {
             let msg = member::handle_member_command(args, bot_api).await;
             (false, Some(msg))
         }
 
-        // "command" subcommand
         "command" => {
             let msg = command::handle_command_command(args, bot_api).await;
             (false, Some(msg))
         }
 
-        // "redeem" subcommand (NEW)
         "redeem" => {
             let msg = redeem::handle_redeem_command(args, bot_api).await;
             (false, Some(msg))
         }
 
-        // Connectivity: autostart, start, stop, chat
         "autostart" | "start" | "stop" | "chat" => {
             let message = connectivity::handle_connectivity_command(
                 &[cmd.as_str()].iter().chain(args.iter()).map(|s| *s).collect::<Vec<_>>(),
@@ -171,6 +161,12 @@ pub async fn dispatch_async(
 
         "ttv" => {
             let msg = ttv::handle_ttv_command(args, bot_api, tui_module).await;
+            (false, Some(msg))
+        }
+
+        // NEW: "config" subcommand
+        "config" => {
+            let msg = config::handle_config_command(args, bot_api).await;
             (false, Some(msg))
         }
 

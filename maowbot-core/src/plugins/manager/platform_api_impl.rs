@@ -98,4 +98,12 @@ impl PlatformApi for PluginManager {
         let auth_manager_locked = auth_mgr_arc.lock().await;
         auth_manager_locked.bot_config_repo.set_value(key, value).await
     }
+
+    async fn delete_bot_config_value(&self, key: &str) -> Result<(), Error> {
+        let auth_mgr_arc = self.auth_manager
+            .as_ref()
+            .ok_or_else(|| Error::Auth("No auth manager set in plugin manager".into()))?;
+        let auth_manager_locked = auth_mgr_arc.lock().await;
+        auth_manager_locked.bot_config_repo.delete_value(key).await
+    }
 }

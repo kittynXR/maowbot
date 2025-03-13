@@ -93,4 +93,19 @@ impl BotConfigRepository for PostgresBotConfigRepository {
         }
         Ok(out)
     }
+
+    /// NEW: Delete a row by config_key
+    async fn delete_value(&self, config_key: &str) -> Result<(), Error> {
+        sqlx::query(
+            r#"
+            DELETE FROM bot_config
+            WHERE config_key = $1
+            "#,
+        )
+            .bind(config_key)
+            .execute(&self.pool)
+            .await?;
+
+        Ok(())
+    }
 }

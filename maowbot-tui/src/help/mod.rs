@@ -12,6 +12,10 @@ pub mod help_vrchat;
 pub mod help_command;
 pub mod help_redeem;
 
+// NEW:
+pub mod help_config;
+pub mod help_drip;
+
 fn show_general_help() -> String {
     let text = r#"MaowBot TUI - Available Commands:
 
@@ -43,6 +47,12 @@ fn show_general_help() -> String {
   command <list|setcooldown|setwarnonce|setrespond|enable|disable>
     Manage built-in or custom commands, including cooldowns and response credentials.
 
+  redeem <list|create|delete|cost|enable|disable|...>
+    Manage channel point redeems.
+
+  config <list|set|delete>
+    Manage key-value pairs in the bot_config table.
+
   autostart <on/off> <platform> <account>
     Toggle a (platform,account) autostart on boot.
 
@@ -60,6 +70,9 @@ fn show_general_help() -> String {
 
   vrchat <world|avatar|instance> ...
     VRChat integration commands.
+
+  drip <set|list|fit|props> ...
+    Manage VRChat avatar parameters (props, fits, etc.) in the Drip system.
 
   quit
     Shut down the TUI (and the entire bot).
@@ -80,11 +93,14 @@ pub fn show_command_help(command: &str) -> String {
         "member" => help_member::MEMBER_HELP_TEXT.to_owned(),
         "ttv" => help_ttv::TTV_HELP_TEXT.to_owned(),
         "vrchat" => help_vrchat::VRCHAT_HELP_TEXT.to_owned(),
-
-        // NEW: "command" => show help_command
         "command" => help_command::COMMAND_HELP_TEXT.to_owned(),
+        "redeem" => help_redeem::REDEEM_HELP_TEXT.to_owned(),
 
-        // "list" built-in help snippet:
+        // NEW:
+        "config" => help_config::CONFIG_HELP_TEXT.to_owned(),
+        "drip" => help_drip::DRIP_HELP_TEXT.to_owned(),
+
+        // Built-in help snippet for "list"
         "list" => {
             r#"List Command:
   Usage: list
@@ -92,7 +108,8 @@ pub fn show_command_help(command: &str) -> String {
 "#
                 .to_owned()
         },
-        // "status" built-in help snippet:
+
+        // Built-in help snippet for "status"
         "status" => {
             r#"Status Command:
   Usage: status [config]
@@ -101,6 +118,8 @@ pub fn show_command_help(command: &str) -> String {
 "#
                 .to_owned()
         },
+
+        // Built-in help snippet for "quit"
         "quit" => {
             r#"Quit Command:
   Usage: quit
@@ -109,7 +128,7 @@ pub fn show_command_help(command: &str) -> String {
                 .to_owned()
         },
 
-        // fallback if not recognized
+        // fallback
         other => format!("No detailed help found for '{}'. Type 'help' for an overview.", other),
     }
 }

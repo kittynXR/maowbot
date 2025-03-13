@@ -167,7 +167,6 @@ pub trait DripApi: Send + Sync {
 pub trait OscApi: Send + Sync {
     /// Starts the OSC system (UDP server, OSCQuery HTTP, etc.).
     async fn osc_start(&self) -> Result<(), Error>;
-
     /// Stops the OSC system.
     async fn osc_stop(&self) -> Result<(), Error>;
 
@@ -228,6 +227,7 @@ pub trait PlatformApi: Send + Sync {
 
     /// Sets a value in the “bot_config” table.
     async fn set_bot_config_value(&self, key: &str, value: &str) -> Result<(), Error>;
+    async fn delete_bot_config_value(&self, key: &str) -> Result<(), Error>;
 }
 
 #[async_trait]

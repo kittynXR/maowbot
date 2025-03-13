@@ -94,6 +94,8 @@ pub trait BotConfigRepository: Send + Sync {
         self.set_value("autostart", json_str).await
     }
     async fn list_all(&self) -> Result<Vec<(String, String)>, Error>;
+    /// NEW: Delete a row by config_key
+    async fn delete_value(&self, config_key: &str) -> Result<(), Error>;
 }
 
 #[async_trait]
