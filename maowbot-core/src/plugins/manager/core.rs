@@ -26,7 +26,7 @@ use crate::plugins::types::{
 };
 use crate::repositories::postgres::user::{UserRepository};
 use crate::eventbus::db_logger_handle::DbLoggerControl;
-use maowbot_common::traits::repository_traits::{CommandUsageRepository, RedeemUsageRepository};
+use maowbot_common::traits::repository_traits::{CommandUsageRepository, DiscordRepository, RedeemUsageRepository};
 use crate::platforms::manager::PlatformManager;
 use crate::plugins::manager::plugin_api_impl::build_status_response;
 // or you can keep the function local
@@ -37,6 +37,7 @@ use crate::services::user_service::UserService;
 use maowbot_osc::MaowOscManager;
 use crate::auth::manager::AuthManager;
 use crate::repositories::postgres::analytics::PostgresAnalyticsRepository;
+use crate::repositories::postgres::discord::PostgresDiscordRepository;
 use crate::repositories::postgres::platform_identity::PlatformIdentityRepository;
 use crate::repositories::postgres::user_analysis::PostgresUserAnalysisRepository;
 
@@ -70,6 +71,7 @@ pub struct PluginManager {
     /// A user repository so we can create/remove user rows, etc.
     pub user_repo: Arc<UserRepository>,
     pub drip_repo: Arc<DripRepository>,
+    pub discord_repo: Arc<PostgresDiscordRepository>,
     /// The manager for platform logic (starting/stopping runtimes, etc.).
     pub platform_manager: Arc<PlatformManager>,
 
@@ -95,6 +97,7 @@ impl PluginManager {
         passphrase: Option<String>,
         user_repo: Arc<UserRepository>,
         drip_repo: Arc<DripRepository>,
+        discord_repo: Arc<PostgresDiscordRepository>,
         analytics_repo: Arc<PostgresAnalyticsRepository>,
         user_analysis_repo: Arc<PostgresUserAnalysisRepository>,
         platform_identity_repo: Arc<PlatformIdentityRepository>,
@@ -116,6 +119,7 @@ impl PluginManager {
             auth_manager: None,
             user_repo,
             drip_repo,
+            discord_repo,
             platform_manager,
 
             analytics_repo,

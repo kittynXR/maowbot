@@ -23,7 +23,7 @@ use rand::{thread_rng, Rng};
 use keyring::Entry;
 use base64;
 use maowbot_common::models::cache::{CacheConfig, TrimPolicy};
-use maowbot_common::traits::repository_traits::BotConfigRepository;
+use maowbot_common::traits::repository_traits::*;
 use maowbot_core::auth::manager::AuthManager;
 use maowbot_core::auth::user_manager::DefaultUserManager;
 use maowbot_core::cache::message_cache::ChatCache;
@@ -33,6 +33,7 @@ use maowbot_core::repositories::postgres::command_usage::PostgresCommandUsageRep
 use maowbot_core::repositories::postgres::commands::PostgresCommandRepository;
 use maowbot_core::repositories::postgres::credentials::PostgresCredentialsRepository;
 use maowbot_core::repositories::postgres::drip::DripRepository;
+use maowbot_core::repositories::postgres::discord::PostgresDiscordRepository;
 use maowbot_core::repositories::postgres::platform_config::PostgresPlatformConfigRepository;
 use maowbot_core::repositories::postgres::platform_identity::PlatformIdentityRepository;
 use maowbot_core::repositories::postgres::redeem_usage::PostgresRedeemUsageRepository;
@@ -100,6 +101,7 @@ impl ServerContext {
         let user_analysis_repo = Arc::new(PostgresUserAnalysisRepository::new(db.pool().clone()));
         let user_repo_arc = Arc::new(UserRepository::new(db.pool().clone()));
         let drip_repo = Arc::new(DripRepository::new(db.pool().clone()));
+        let discord_repo = Arc::new(PostgresDiscordRepository::new(db.pool().clone()));
         let platform_identity_repo = Arc::new(PlatformIdentityRepository::new(db.pool().clone()));
         let cmd_repo = Arc::new(PostgresCommandRepository::new(db.pool().clone()));
         let cmd_usage_repo = Arc::new(PostgresCommandUsageRepository::new(db.pool().clone()));
@@ -191,6 +193,7 @@ impl ServerContext {
             args.plugin_passphrase.clone(),
             user_repo_arc,
             drip_repo,
+            discord_repo,
             analytics_repo,
             user_analysis_repo,
             platform_identity_repo,

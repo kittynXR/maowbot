@@ -527,7 +527,7 @@ impl PlatformManager {
         if let Some(handle) = guard.get(&key) {
             if let Some(discord_arc) = &handle.discord_instance {
                 let discord_lock = discord_arc.lock().await;
-                discord_lock.send_message_with_server(server_id, channel_id, text).await
+                discord_lock.send_message(channel_id, text).await
             } else {
                 Err(Error::Platform(format!(
                     "No DiscordPlatform instance found for account='{account_name}'"

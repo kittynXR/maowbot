@@ -7,6 +7,12 @@ edition = "2024"
 [dependencies]
 maowbot-proto = { path = "../maowbot-proto" }
 
+twilight = {  workspace = true }
+twilight-gateway = {  workspace = true }
+twilight-model = {  workspace = true }
+twilight-http = {  workspace = true }
+twilight-cache-inmemory = {  workspace = true }
+
 async-trait = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

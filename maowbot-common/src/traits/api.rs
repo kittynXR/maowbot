@@ -6,6 +6,7 @@ use crate::error::Error;
 use crate::models::{Command, CommandUsage, Redeem, RedeemUsage, UserAnalysis};
 use crate::models::analytics::{BotEvent, ChatMessage};
 use crate::models::auth::Platform;
+use crate::models::discord::{DiscordChannelRecord, DiscordGuildRecord};
 use crate::models::drip::DripAvatarSummary;
 use crate::models::platform::{PlatformConfigData, PlatformCredential, PlatformIdentity};
 use crate::models::plugin::StatusData;
@@ -23,7 +24,8 @@ PluginApi
 + RedeemApi
 + OscApi
 + DripApi
-+ BotConfigApi  // <-- NEW: add BotConfigApi here
++ BotConfigApi
++ DiscordApi
 {
 }
 
@@ -39,7 +41,8 @@ where
     + RedeemApi
     + OscApi
     + DripApi
-    + BotConfigApi,
+    + BotConfigApi
+    + DiscordApi,
 {
     // marker
 }
@@ -281,4 +284,31 @@ pub trait BotConfigApi: Send + Sync {
 
     /// Delete a row by `(config_key, config_value)`.
     async fn delete_config_kv(&self, config_key: &str, config_value: &str) -> Result<(), Error>;
+}
+
+#[async_trait]
+pub trait DiscordApi {
+    /// Lists the guilds for the specified Discord bot account name (the one
+    /// stored in platform_credentials.user_name). We keep them in our DB table.
+    async fn list_discord_guilds(&self, account_name: &str) -> Result<Vec<DiscordGuildRecord>, Error>;
+
+    /// Lists channels for a specified guild. This simply pulls from our DB table.
+    async fn list_discord_channels(
+        &self,
+        account_name: &str,
+        guild_id: &str
+    ) -> Result<Vec<DiscordChannelRecord>, Error>;
+
+    /// Sets the “active server” for a given Discord bot account. Typically,
+    /// you might store this in your existing “config_kv_meta” or in the
+    /// “bot_config” table. The repository is free to choose how to store it.
+    async fn set_discord_active_server(
+        &self,
+        account_name: &str,
+        guild_id: &str
+    ) -> Result<(), Error>;
+
+    /// Returns the guild ID of the “active server” for this Discord bot account,
+    /// or None if not set.
+    async fn get_discord_active_server(&self, account_name: &str) -> Result<Option<String>, Error>;
 }

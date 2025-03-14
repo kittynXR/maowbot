@@ -13,6 +13,7 @@ pub mod plugin;
 pub mod vrchat;
 pub mod analytics;
 pub mod link_request;
+pub mod discord;
 
 pub use user_analysis::UserAnalysis;
 pub use command::{Command, CommandUsage};

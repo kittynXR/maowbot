@@ -8,6 +8,7 @@ use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tokio::task::JoinHandle;
 use tracing::{debug, error, info, trace, warn};
 
+use twilight_cache_inmemory::{InMemoryCache, ResourceType};
 use twilight_gateway::{
     self as gateway,
     CloseFrame,
@@ -16,157 +17,199 @@ use twilight_gateway::{
     Intents,
     Shard,
     MessageSender,
-    StreamExt
+    StreamExt,
 };
-use twilight_http::{Client as HttpClient};
 use twilight_http::client::ClientBuilder;
+use twilight_http::Client as HttpClient;
 use twilight_model::channel::{Channel as DiscordChannel, ChannelType};
-use twilight_model::{
-    gateway::event::Event,
-    gateway::payload::incoming::MessageCreate,
-    guild::Member,
-    id::Id,
+use twilight_model::gateway::event::Event;
+use twilight_model::gateway::payload::incoming::{
+    ChannelCreate, GuildCreate, MessageCreate,
 };
+use twilight_model::guild::{Member};
+use twilight_model::id::Id;
 
 use crate::Error;
 use crate::eventbus::EventBus;
 use maowbot_common::traits::platform_traits::{ConnectionStatus, PlatformAuth, PlatformIntegration};
+use maowbot_common::traits::repository_traits::DiscordRepository;
 
-/// A simple struct holding minimal data from Discord messages.
-/// (We keep this for demonstration, but now we also directly publish to `EventBus`.)
+/// Minimal struct carrying data from Discord messages for local usage.
 #[derive(Debug, Clone)]
 pub struct DiscordMessageEvent {
     pub channel: String,
     pub user_id: String,
     pub username: String,
     pub text: String,
-    /// Optionally store "roles" from the guild member if present.
-    /// In Discord, these are role IDs, but we store them as strings.
     pub user_roles: Vec<String>,
 }
 
-/// Runs a shard’s event loop, sending user messages to `tx` and also publishing
-/// them to the event bus for our message service to store in the DB.
+/// Main shard task: processes Discord gateway events, updates the in-memory cache,
+/// sends minimal messages to `tx`, and optionally updates the DB via `DiscordRepository`.
 pub async fn shard_runner(
     mut shard: Shard,
     tx: UnboundedSender<DiscordMessageEvent>,
     http: Arc<HttpClient>,
     event_bus: Option<Arc<EventBus>>,
+    cache: Arc<InMemoryCache>,
+    discord_repo: Option<Arc<dyn DiscordRepository + Send + Sync>>,
+    account_name: String, // which Discord bot account we're using
 ) {
     let shard_id = shard.id().number();
     info!("(ShardRunner) Shard {} started. Listening for events.", shard_id);
 
     while let Some(event_res) = shard.next_event(EventTypeFlags::all()).await {
         match event_res {
-            Ok(event) => match event {
-                // Example: "Ready" event
-                Event::Ready(ready) => {
-                    info!(
-                        "(ShardRunner) Shard {} => READY as {}#{}",
-                        shard_id, ready.user.name, ready.user.discriminator
-                    );
-                }
+            Ok(event) => {
+                // Always update the in-memory cache:
+                cache.update(&event);
 
-                // MessageCreate events
-                Event::MessageCreate(msg) => {
-                    let msg: MessageCreate = *msg; // unbox
-                    if msg.author.bot {
-                        debug!(
-                            "(ShardRunner) ignoring message from bot {}",
-                            msg.author.name
+                match &event {
+                    Event::Ready(ready) => {
+                        info!(
+                            "(ShardRunner) Shard {} => READY as {}#{}",
+                            shard_id, ready.user.name, ready.user.discriminator
                         );
-                        continue;
                     }
 
-                    // Attempt to retrieve the channel name/kind:
-                    let channel_name = match http.channel(msg.channel_id).await {
-                        Ok(response) => {
-                            match response.model().await {
-                                Ok(channel_obj) => match channel_obj.kind {
-                                    ChannelType::GuildText
-                                    | ChannelType::GuildVoice
-                                    | ChannelType::GuildForum
-                                    | ChannelType::GuildStageVoice => {
-                                        channel_obj
+                    Event::MessageCreate(msg_create) => {
+                        let msg: &MessageCreate = msg_create;
+                        if msg.author.bot {
+                            debug!("(ShardRunner) ignoring bot message from {}", msg.author.name);
+                            continue;
+                        }
+
+                        // Attempt to fetch the channel name from the HTTP client:
+                        let channel_name = match http.channel(msg.channel_id).await {
+                            Ok(response) => {
+                                match response.model().await {
+                                    Ok(channel_obj) => match channel_obj.kind {
+                                        ChannelType::GuildText
+                                        | ChannelType::GuildVoice
+                                        | ChannelType::GuildForum
+                                        | ChannelType::GuildStageVoice => {
+                                            channel_obj
+                                                .name
+                                                .unwrap_or_else(|| msg.channel_id.to_string())
+                                        }
+                                        ChannelType::Private => {
+                                            format!("(DM {})", msg.channel_id)
+                                        }
+                                        ChannelType::Group => "(Group DM)".to_string(),
+                                        _ => msg.channel_id.to_string(),
+                                    },
+                                    Err(e) => {
+                                        error!("Error parsing channel => {:?}", e);
+                                        msg.channel_id.to_string()
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                error!("Error fetching channel => {:?}", e);
+                                msg.channel_id.to_string()
+                            }
+                        };
+
+                        let user_id = msg.author.id.to_string();
+                        let username = msg.author.name.clone();
+                        let text = msg.content.clone();
+                        let user_roles: Vec<String> = match &msg.member {
+                            Some(mem) => mem.roles.iter().map(|rid| rid.to_string()).collect(),
+                            None => vec![],
+                        };
+
+                        debug!(
+                            "(ShardRunner) Shard {} => msg '{}' from {} in '{}'; roles={:?}",
+                            shard_id, text, username, channel_name, user_roles
+                        );
+
+                        // Send a local copy to the unbounded channel:
+                        let _ = tx.send(DiscordMessageEvent {
+                            channel: channel_name.clone(),
+                            user_id: user_id.clone(),
+                            username: username.clone(),
+                            text: text.clone(),
+                            user_roles: user_roles.clone(),
+                        });
+
+                        // Optionally publish a chat event to the event bus:
+                        if let Some(bus) = &event_bus {
+                            // bus.publish_chat("discord", &channel_name, &user_id, &text).await;
+                        }
+                    }
+
+                    Event::GuildCreate(guild_create_event) => {
+                        // We have two variants: Available(...) or Unavailable(...).
+                        // We'll store them in the DB as needed.
+                        if let Some(repo) = &discord_repo {
+                            match &**guild_create_event {
+                                GuildCreate::Available(g) => {
+                                    let guild_str_id = g.id.to_string();
+                                    let guild_name = &g.name;
+                                    let _ = repo.upsert_guild(&account_name, &guild_str_id, guild_name).await;
+
+                                    // Also store channels we already know from the event:
+                                    for ch in &g.channels {
+                                        let ch_id = ch.id.to_string();
+                                        let ch_name = ch
                                             .name
-                                            .unwrap_or_else(|| msg.channel_id.to_string())
+                                            .clone()
+                                            .unwrap_or_else(|| ch_id.clone());
+                                        let _ = repo
+                                            .upsert_channel(
+                                                &account_name,
+                                                &guild_str_id,
+                                                &ch_id,
+                                                &ch_name,
+                                            )
+                                            .await;
                                     }
-                                    ChannelType::Private => {
-                                        // DM channel
-                                        format!("(DM {})", msg.channel_id)
-                                    }
-                                    ChannelType::Group => {
-                                        // Group DM
-                                        "(Group DM)".to_string()
-                                    }
-                                    _ => msg.channel_id.to_string(),
-                                },
-                                Err(e) => {
-                                    error!("Error parsing channel model => {:?}", e);
-                                    msg.channel_id.to_string()
+                                }
+                                GuildCreate::Unavailable(u) => {
+                                    let guild_str_id = u.id.to_string();
+                                    // We only know the ID, so store a placeholder name:
+                                    let _ = repo
+                                        .upsert_guild(&account_name, &guild_str_id, "[Unavailable]")
+                                        .await;
                                 }
                             }
                         }
-                        Err(e) => {
-                            error!("Error fetching channel => {:?}", e);
-                            msg.channel_id.to_string()
+                    }
+
+                    Event::ChannelCreate(ch_create_event) => {
+                        // "ChannelCreate" is a tuple struct with .0 public, so ch_create_event.0 is valid:
+                        let ChannelCreate(ch) = &**ch_create_event;
+                        if let Some(repo) = &discord_repo {
+                            // If it's a guild channel, store it
+                            if let Some(guild_id_val) = ch.guild_id {
+                                let guild_str_id = guild_id_val.to_string();
+                                let channel_str_id = ch.id.to_string();
+                                let channel_name = ch
+                                    .name
+                                    .clone()
+                                    .unwrap_or_else(|| channel_str_id.clone());
+                                let _ = repo
+                                    .upsert_channel(
+                                        &account_name,
+                                        &guild_str_id,
+                                        &channel_str_id,
+                                        &channel_name,
+                                    )
+                                    .await;
+                            }
                         }
-                    };
+                    }
 
-                    let user_id = msg.author.id.to_string();
-                    let username = msg.author.name.clone();
-                    let text = msg.content.clone();
-
-                    // Attempt to read roles from the "member" object if present:
-                    let user_roles: Vec<String> = match &msg.member {
-                        Some(mem) => mem.roles.iter().map(|rid| rid.to_string()).collect(),
-                        None => vec![],
-                    };
-
-                    debug!(
-                        "(ShardRunner) Shard {} => msg '{}' from {} in '{}'; roles={:?}",
-                        shard_id, text, username, channel_name, user_roles
-                    );
-
-                    // Send to our local unbounded channel (if some other part wants it).
-                    let _ = tx.send(DiscordMessageEvent {
-                        channel: channel_name.clone(),
-                        user_id: user_id.clone(),
-                        username: username.clone(),
-                        text: text.clone(),
-                        user_roles: user_roles.clone(),
-                    });
-
-                    // Also publish a ChatMessage to the event bus:
-                    if let Some(_bus) = &event_bus {
-                        // We'll embed roles the same way TwitchIRC does: "user_id|roles=r1,r2"
-                        let joined_roles = if !user_roles.is_empty() {
-                            format!("|roles={}", user_roles.join(","))
-                        } else {
-                            "".to_string()
-                        };
-                        let _combined_user_str = format!("{}{}", user_id, joined_roles);
-
-                        // bus.publish_chat("discord", &channel_name, &combined_user_str, &text).await;
+                    _ => {
+                        trace!("(ShardRunner) Shard {} => unhandled event: {:?}", shard_id, event);
                     }
                 }
-
-                // Example: joined a guild
-                Event::GuildCreate(gc) => {
-                    let g = *gc; // unbox
-                    info!(
-                        "(ShardRunner) Shard {} => joined guild id={}",
-                        shard_id, g.id()
-                    );
-                }
-
-                // Fallback
-                other => {
-                    trace!("(ShardRunner) Shard {} => Unhandled event: {:?}", shard_id, other);
-                }
-            },
+            }
             Err(err) => {
-                error!("(ShardRunner) Shard {} => error receiving event: {:?}", shard_id, err);
+                error!(
+                    "(ShardRunner) Shard {} => error receiving event: {:?}",
+                    shard_id, err
+                );
             }
         }
     }
@@ -174,38 +217,41 @@ pub async fn shard_runner(
     warn!("(ShardRunner) Shard {} event loop ended.", shard_id);
 }
 
-/// Holds the Discord connection (shards, tasks, etc.).
+/// Holds the Discord connection info, shards, tasks, etc.
 pub struct DiscordPlatform {
     token: String,
     connection_status: ConnectionStatus,
 
-    /// Our unbounded receiver for newly-arrived Discord messages (if you want to read them).
+    /// If you want to receive messages from Discord as `DiscordMessageEvent` in your application,
+    /// you can poll `rx` from somewhere else. If unused, you can remove it.
     rx: Option<UnboundedReceiver<DiscordMessageEvent>>,
 
-    /// The list of shard tasks (one task per shard).
+    /// Each shard runs in its own task; we keep their JoinHandles to manage them.
     shard_tasks: Vec<JoinHandle<()>>,
 
-    /// Keep track of each shard’s "sender" so we can close them on shutdown.
+    /// Each shard has a `MessageSender` for graceful shutdown.
     shard_senders: Vec<MessageSender>,
 
-    /// An HTTP client for sending messages and fetching channel names.
+    /// HTTP client for sending messages/fetching channel data.
     pub(crate) http: Option<Arc<HttpClient>>,
 
-    /// An Arc to the EventBus so we can publish messages for DB, etc.
+    /// Optional event bus reference.
     pub event_bus: Option<Arc<EventBus>>,
+
+    /// In-memory cache from Twilight, updated by the shard runner.
+    pub cache: Option<Arc<InMemoryCache>>,
+
+    /// Our repository for persisting discovered guilds/channels, if configured.
+    pub discord_repo: Option<Arc<dyn DiscordRepository + Send + Sync>>,
+
+    /// Which account_name (from platform_credentials.user_name) we’re using.
+    pub account_name: Option<String>,
 }
 
 impl DiscordPlatform {
-    /// Creates a new DiscordPlatform. The token should be the raw bot token.
+    /// Creates a new DiscordPlatform struct. Nothing is connected until you call `connect()`.
     pub fn new(token: String) -> Self {
-        let masked = if token.len() >= 6 {
-            let last6 = &token[token.len().saturating_sub(6)..];
-            format!("(startsWith=****, endsWith={})", last6)
-        } else {
-            "(tooShortToMask)".to_string()
-        };
-
-        info!("DiscordPlatform::new called with token={}", masked);
+        info!("DiscordPlatform::new token=(masked)");
         Self {
             token,
             connection_status: ConnectionStatus::Disconnected,
@@ -214,35 +260,34 @@ impl DiscordPlatform {
             shard_senders: Vec::new(),
             http: None,
             event_bus: None,
+            cache: None,
+            discord_repo: None,
+            account_name: None,
         }
     }
 
-    /// If you want to store a reference to the EventBus, call this before connect().
+    /// Optional setter if you want to store an `EventBus` reference for publishing events.
     pub fn set_event_bus(&mut self, bus: Arc<EventBus>) {
         self.event_bus = Some(bus);
     }
 
-    /// Returns the next DiscordMessageEvent from the internal channel.
-    /// Not strictly needed if we're just using EventBus to handle messages.
+    /// Assigns the repository + account name for storing discovered guilds/channels in DB.
+    pub fn set_discord_repository(
+        &mut self,
+        repo: Arc<dyn DiscordRepository + Send + Sync>,
+        account_name: String
+    ) {
+        self.discord_repo = Some(repo);
+        self.account_name = Some(account_name);
+    }
+
+    /// If you want to handle messages (DiscordMessageEvent) yourself, you can poll from `rx`.
     pub async fn next_message_event(&mut self) -> Option<DiscordMessageEvent> {
         if let Some(rx) = &mut self.rx {
             rx.recv().await
         } else {
             None
         }
-    }
-
-    pub async fn send_message_with_server(
-        &self,
-        server_id: &str,
-        channel_id: &str,
-        text: &str
-    ) -> Result<(), Error> {
-        debug!(
-            "(DiscordPlatform) send_message_with_server => server={}, channel={}, text='{}'",
-            server_id, channel_id, text
-        );
-        self.send_message(channel_id, text).await
     }
 }
 
@@ -252,7 +297,7 @@ impl PlatformAuth for DiscordPlatform {
         if self.token.is_empty() {
             return Err(Error::Auth("Empty Discord token".into()));
         }
-        debug!("(DiscordPlatform) authenticate => Token is non-empty.");
+        debug!("(DiscordPlatform) authenticate => token is non-empty.");
         Ok(())
     }
 
@@ -273,68 +318,68 @@ impl PlatformAuth for DiscordPlatform {
 impl PlatformIntegration for DiscordPlatform {
     async fn connect(&mut self) -> Result<(), Error> {
         if matches!(self.connection_status, ConnectionStatus::Connected) {
-            info!("(DiscordPlatform) connect => Already connected; skipping.");
+            info!("(DiscordPlatform) connect => already connected; skipping.");
             return Ok(());
         }
 
         info!("(DiscordPlatform) connect => starting Discord shards...");
-
-        // Create an unbounded channel for our custom message events:
         let (tx, rx) = unbounded_channel::<DiscordMessageEvent>();
         self.rx = Some(rx);
 
-        // Build a Twilight HTTP client with an increased timeout.
-        debug!("(DiscordPlatform) Creating HTTP client with 30s timeout...");
-        let http = Arc::new(
+        let http_client = Arc::new(
             ClientBuilder::new()
                 .token(self.token.clone())
                 .timeout(Duration::from_secs(30))
-                .build(),
+                .build()
         );
-        self.http = Some(http.clone());
+        self.http = Some(http_client.clone());
 
-        // Build a config for the shards.
+        let cache = InMemoryCache::builder()
+            .resource_types(ResourceType::GUILD | ResourceType::CHANNEL | ResourceType::MESSAGE)
+            .build();
+        let cache = Arc::new(cache);
+        self.cache = Some(cache.clone());
+
         let config = gateway::Config::new(
             self.token.clone(),
-            Intents::GUILDS | Intents::GUILD_MESSAGES | Intents::MESSAGE_CONTENT,
-        );
-        debug!(
-            "(DiscordPlatform) built config for shards => Intents: GUILDS | GUILD_MESSAGES | MESSAGE_CONTENT"
+            Intents::GUILDS | Intents::GUILD_MESSAGES | Intents::MESSAGE_CONTENT
         );
 
-        // Create recommended shards:
-        let shards = gateway::create_recommended(&http, config, |shard_id, builder| {
-            debug!("(DiscordPlatform) creating shard {}...", shard_id.number());
+        let shards = gateway::create_recommended(&http_client, config, |shard_id, builder| {
             builder.build()
         })
             .await
             .map_err(|e| Error::Platform(format!("Error creating recommended shards: {e:?}")))?;
 
         let shard_count = shards.len();
-        info!(
-            "(DiscordPlatform) create_recommended => {} shard(s).",
-            shard_count
-        );
-        if shard_count == 0 {
-            warn!("(DiscordPlatform) => no shards were created. The bot won't connect.");
-        }
+        info!("(DiscordPlatform) create_recommended => {} shard(s).", shard_count);
 
-        // Spawn each shard
         for shard in shards {
             let shard_id = shard.id().number();
-            debug!("(DiscordPlatform) spawning shard {}...", shard_id);
             self.shard_senders.push(shard.sender());
+
             let tx_for_shard = tx.clone();
-            let http_for_shard = http.clone();
+            let http_for_shard = http_client.clone();
             let bus_for_shard = self.event_bus.clone();
+            let cache_for_shard = cache.clone();
+            let repo_for_shard = self.discord_repo.clone();
+            let acct_name = self.account_name.clone().unwrap_or_else(|| "UnknownAccount".into());
+
             let handle = tokio::spawn(async move {
-                shard_runner(shard, tx_for_shard, http_for_shard, bus_for_shard).await;
+                shard_runner(
+                    shard,
+                    tx_for_shard,
+                    http_for_shard,
+                    bus_for_shard,
+                    cache_for_shard,
+                    repo_for_shard,
+                    acct_name
+                ).await;
             });
             self.shard_tasks.push(handle);
         }
 
         self.connection_status = ConnectionStatus::Connected;
-        info!("(DiscordPlatform) connect => all shards spawned.");
         Ok(())
     }
 
@@ -351,36 +396,26 @@ impl PlatformIntegration for DiscordPlatform {
         }
         self.shard_tasks.clear();
         self.shard_senders.clear();
-        info!("(DiscordPlatform) disconnect => all shards closed.");
+        info!("(DiscordPlatform) disconnected.");
         Ok(())
     }
 
     async fn send_message(&self, channel: &str, message: &str) -> Result<(), Error> {
         let channel_id_u64: u64 = channel.parse().map_err(|_| {
-            Error::Platform(format!("Invalid channel ID or name '{channel}' (parsing as u64)"))
+            Error::Platform(format!("Invalid channel ID '{channel}' (must be numeric)"))
         })?;
         let channel_id = Id::new(channel_id_u64);
 
         if let Some(http) = &self.http {
-            debug!(
-                "(DiscordPlatform) send_message => sending to channel {}: {}",
-                channel_id, message
-            );
-            let create = http.create_message(channel_id).content(message);
-            create
-                .await
-                .map_err(|err| Error::Platform(format!("Error sending message: {err:?}")))?;
+            let req = http.create_message(channel_id).content(message);
+            req.await.map_err(|err| Error::Platform(format!("Error sending message: {err:?}")))?;
         } else {
-            warn!("(DiscordPlatform) send_message => no HTTP client available!");
+            warn!("(DiscordPlatform) send_message => no HTTP client available?");
         }
         Ok(())
     }
 
     async fn get_connection_status(&self) -> Result<ConnectionStatus, Error> {
-        debug!(
-            "(DiscordPlatform) get_connection_status => {:?}",
-            self.connection_status
-        );
         Ok(self.connection_status.clone())
     }
 }

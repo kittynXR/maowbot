@@ -21,6 +21,15 @@ http = { version = "^1.2", features = ["default"] }
 
 twitch_api = {  version="^0.7", features = ["all", "reqwest"] }
 twitch_oauth2 = { version = "^0.15", features = ["all", "client", "reqwest", "default"]}
+
+
+twilight = { version = "^0.16" }
+twilight-gateway = { version = "^0.16", features = ["default"] }
+twilight-model = "^0.16"
+twilight-http = "^0.16"
+twilight-cache-inmemory = "^0.16"
+
+
 urlencoding = { version = "^2.1" }
 
 sqlx = { version = "^0.8", features = ["postgres", "runtime-tokio", "tls-native-tls", "chrono", "macros", "json", "uuid"] }
