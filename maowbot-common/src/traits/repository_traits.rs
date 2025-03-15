@@ -133,24 +133,16 @@ pub trait CommandRepository: Send + Sync {
 #[async_trait]
 pub trait CredentialsRepository: Send + Sync {
     async fn store_credentials(&self, creds: &PlatformCredential) -> Result<(), Error>;
-
-    /// Returns the single credential for a specific `(platform, user_id)`, or `None`.
     async fn get_credentials(&self, platform: &Platform, user_id: Uuid) -> Result<Option<PlatformCredential>, Error>;
-
-    /// Returns a single credential by credential_id, or `None`.
     async fn get_credential_by_id(&self, credential_id: Uuid) -> Result<Option<PlatformCredential>, Error>;
-
     async fn update_credentials(&self, creds: &PlatformCredential) -> Result<(), Error>;
     async fn delete_credentials(&self, platform: &Platform, user_id: Uuid) -> Result<(), Error>;
-
-    /// Lists credentials expiring within a certain duration from now.
     async fn get_expiring_credentials(&self, within: Duration) -> Result<Vec<PlatformCredential>, Error>;
-
-    /// Lists *all* credentials across all platforms.
     async fn get_all_credentials(&self) -> Result<Vec<PlatformCredential>, Error>;
-
-    /// **NEW**: Returns all credentials for the specified platform, decryption included.
     async fn list_credentials_for_platform(&self, platform: &Platform) -> Result<Vec<PlatformCredential>, Error>;
+    async fn get_broadcaster_credential(&self, platform: &Platform) -> Result<Option<PlatformCredential>, Error>;
+    async fn get_bot_credentials(&self, platform: &Platform) -> Result<Option<PlatformCredential>, Error>;
+    async fn get_teammate_credentials(&self, platform: &Platform) -> Result<Vec<PlatformCredential>, Error>;
 }
 
 #[async_trait]

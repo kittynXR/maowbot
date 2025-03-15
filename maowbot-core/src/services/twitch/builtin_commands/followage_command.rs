@@ -1,14 +1,16 @@
-use chrono::{Utc};
+use chrono::Utc;
 use tracing::info;
 use maowbot_common::models::Command;
-use maowbot_common::models::platform::Platform;
+use maowbot_common::models::platform::{Platform};
 use maowbot_common::models::user::User;
 use crate::Error;
 use crate::platforms::twitch::client::TwitchHelixClient;
 use crate::services::twitch::command_service::CommandContext;
 
 /// The `handle_followage` function implements the `!followage` command.
-/// It tries to determine how long the user has been following the configured broadcaster channel.
+/// It now locates the broadcaster’s Twitch Helix credential by querying
+/// `ctx.credentials_repo.get_broadcaster_credential(Platform::Twitch)`,
+/// rather than reading from `bot_config`.
 pub async fn handle_followage(
     _cmd: &Command,
     ctx: &CommandContext<'_>,
@@ -28,77 +30,45 @@ pub async fn handle_followage(
     );
 
     //
-    // 1) Fetch the broadcaster channel name from bot_config.
-    //    The TUI command `ttv broadcaster <channel>` stores it in `ttv_broadcaster_channel`.
+    // 1) Retrieve the broadcaster’s Twitch Helix credential from the repository.
     //
-    let broadcaster_chan_opt = ctx.bot_config_repo.get_value("ttv_broadcaster_channel").await?;
-    let broadcaster_chan = match broadcaster_chan_opt {
-        Some(val) if !val.trim().is_empty() => val,
-        _ => {
-            // If it's missing or empty, we cannot proceed:
+    let broadcaster_cred_opt = ctx.credentials_repo
+        .get_broadcaster_credential(&Platform::Twitch)
+        .await?;
+
+    let broadcaster_cred = match broadcaster_cred_opt {
+        Some(cred) => cred,
+        None => {
             return Ok(
-                "No broadcaster channel is set in bot_config (key='ttv_broadcaster_channel'). \
-Use `ttv broadcaster <channel>` in the TUI first."
+                "No broadcaster credential found for Twitch. \
+Please designate an is_broadcaster Twitch Helix account first."
                     .to_string()
             );
         }
     };
 
     //
-    // 2) Strip off any leading '#' from that stored channel name, so we get the raw user name.
+    // 2) Make sure the broadcaster credential has the external Twitch user ID in `platform_id`.
     //
-    let raw_broadcaster_name = broadcaster_chan.trim().trim_start_matches('#');
-
-    if raw_broadcaster_name.is_empty() {
-        return Ok(format!(
-            "Bot config says broadcaster channel is '{}', but that does not look valid.",
-            broadcaster_chan
-        ));
-    }
-
-    //
-    // 3) Look up a Twitch credential for `raw_broadcaster_name`:
-    //
-    let all_twitch_creds = ctx
-        .credentials_repo
-        .list_credentials_for_platform(&Platform::Twitch)
-        .await?;
-
-    let broadcaster_cred_opt = all_twitch_creds.into_iter().find(|c| {
-        c.user_name.eq_ignore_ascii_case(raw_broadcaster_name)
-    });
-
-    let broadcaster_cred = match broadcaster_cred_opt {
-        Some(c) => c,
-        None => {
+    let broadcaster_id = match broadcaster_cred.platform_id.clone() {
+        Some(pid) if !pid.trim().is_empty() => pid,
+        _ => {
             return Ok(format!(
-                "No Twitch credentials found for broadcaster account '{}'. \
-Please add a credential for that user (or ensure user_name matches '{}').",
-                raw_broadcaster_name, raw_broadcaster_name
+                "Broadcaster credential for user_name='{}' has no .platform_id. \
+Cannot fetch follow info.",
+                broadcaster_cred.user_name
             ));
         }
     };
 
-    let broadcaster_id = broadcaster_cred
-        .platform_id
-        .clone()
-        .unwrap_or_default();
-    if broadcaster_id.is_empty() {
-        return Ok(format!(
-            "The broadcaster credential for '{}' has no .platform_id set (external Twitch user ID). \
-Cannot fetch follow data.",
-            raw_broadcaster_name
-        ));
-    }
-
     //
-    // 4) Get the viewer’s Twitch user_id from platform_identity.
-    //    If user doesn't have a Twitch identity, we can't check their follow.
+    // 3) Look up the viewer’s Twitch identity (Helix ID). If the user doesn’t have a Twitch
+    //    platform identity linked, we cannot check follow status.
     //
     let viewer_identity_opt = ctx
         .user_service
         .platform_identity_repo
-        .get_by_user_and_platform(user.user_id, &Platform::Twitch)
+        .get_by_user_and_platform(user.user_id, &Platform::TwitchIRC)
         .await?;
 
     let viewer_id = match viewer_identity_opt {
@@ -112,7 +82,7 @@ Cannot fetch follow data.",
     };
 
     //
-    // 5) Build a Helix client from the broadcaster’s token and client_id
+    // 4) Build a Helix client from the broadcaster’s credential (token + client_id).
     //
     let bearer_token = &broadcaster_cred.primary_token;
     let client_id_str = match &broadcaster_cred.additional_data {
@@ -131,7 +101,7 @@ Cannot fetch follow data.",
     let helix_client = TwitchHelixClient::new(bearer_token, &client_id_str);
 
     //
-    // 6) Fetch the follow date
+    // 5) Fetch the follow date using Helix: (viewer_id, broadcaster_id).
     //
     let follow_date_opt = helix_client
         .fetch_follow_date(&viewer_id, &broadcaster_id)
@@ -141,14 +111,14 @@ Cannot fetch follow data.",
         Some(fd) => fd,
         None => {
             return Ok(format!(
-                "{} is not following channel '{}' (or the data is unavailable).",
-                user_name, broadcaster_chan
+                "{} is not following that channel (or data is unavailable).",
+                user_name
             ));
         }
     };
 
     //
-    // 7) Compute how long they've followed
+    // 6) Compute how long they’ve been following
     //
     let now = Utc::now();
     let diff = now.signed_duration_since(follow_date);
@@ -156,25 +126,24 @@ Cannot fetch follow data.",
     let months = total_days / 30; // approximate
     let leftover_days = total_days % 30;
 
+    // Shorter cases for <1 day or <1 month
     if total_days < 1 {
         let hours = diff.num_hours();
         return Ok(format!(
-            "{} has been following {} for {} hour(s).",
-            user_name, broadcaster_chan, hours
+            "{} has been following for about {} hour(s).",
+            user_name, hours
         ));
     }
-
     if months < 1 {
-        // less than 1 month
         return Ok(format!(
-            "{} has been following {} for {} day(s).",
-            user_name, broadcaster_chan, total_days
+            "{} has been following for {} day(s).",
+            user_name, total_days
         ));
     }
 
-    // If there's at least 1 month, show months + leftover days
+    // If >=1 month, show months + leftover days
     Ok(format!(
-        "{} has been following {} for {} month(s) and {} day(s).",
-        user_name, broadcaster_chan, months, leftover_days
+        "{} has been following for {} month(s) and {} day(s).",
+        user_name, months, leftover_days
     ))
 }

@@ -490,4 +490,28 @@ impl CredentialsRepository for PostgresCredentialsRepository {
         }
         Ok(results)
     }
+    async fn get_broadcaster_credential(
+        &self,
+        platform: &Platform
+    ) -> Result<Option<PlatformCredential>, Error> {
+        let all = self.list_credentials_for_platform(platform).await?;
+        Ok(all.into_iter().find(|c| c.is_broadcaster))
+    }
+
+    async fn get_bot_credentials(
+        &self,
+        platform: &Platform
+    ) -> Result<Option<PlatformCredential>, Error> {
+        let all = self.list_credentials_for_platform(platform).await?;
+        Ok(all.into_iter().find(|c| c.is_bot))
+    }
+
+    async fn get_teammate_credentials(
+        &self,
+        platform: &Platform
+    ) -> Result<Vec<PlatformCredential>, Error> {
+        let all = self.list_credentials_for_platform(platform).await?;
+        let mates = all.into_iter().filter(|c| c.is_teammate).collect();
+        Ok(mates)
+    }
 }
