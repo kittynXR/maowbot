@@ -68,7 +68,7 @@ pub async fn run_server(args: Args) -> Result<(), Error> {
 
     // 4) Autostart any configured accounts
     let bot_api = Arc::new(ctx.plugin_manager.clone());
-    if let Err(e) = run_autostart(ctx.bot_config_repo.as_ref(), bot_api.clone()).await {
+    if let Err(e) = run_autostart(bot_api.as_ref(), bot_api.clone()).await {
         error!("Autostart error => {:?}", e);
     }
 
