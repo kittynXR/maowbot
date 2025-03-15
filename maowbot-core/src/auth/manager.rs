@@ -1,3 +1,4 @@
+// maowbot-core/src/auth/manager.rs
 use std::collections::HashMap;
 use std::sync::Arc;
 use uuid::Uuid;
@@ -38,9 +39,6 @@ impl AuthManager {
 
     /// A simpler helper: always do the entire “build or retrieve from map” in one pass,
     /// then return. Notice we do *not* return `&mut Box<...>`.
-    /// Instead, we do the `initialize()` call inside this function if needed,
-    /// then store it in the HashMap. The caller can call `get_mut(...)` again
-    /// but only inside a short scope.
     async fn ensure_authenticator_exists(
         &mut self,
         platform: &Platform,
@@ -124,7 +122,8 @@ impl AuthManager {
             AuthenticationPrompt::Browser { url } => Ok(url),
             AuthenticationPrompt::Code { message } => Err(Error::Auth(message)),
             AuthenticationPrompt::ApiKey { message } => Ok(format!("(API key) {message}")),
-            AuthenticationPrompt::MultipleKeys { .. } => Ok("(Multiple keys) handle in TUI".into()),
+            // CHANGE HERE to match the TUI check for "MultipleKeys"
+            AuthenticationPrompt::MultipleKeys { .. } => Ok("(MultipleKeys) handle in TUI".into()),
             AuthenticationPrompt::TwoFactor { message } => Ok(format!("(2FA) {message}")),
             AuthenticationPrompt::None => Ok("(No prompt needed)".into()),
         }
@@ -136,7 +135,6 @@ impl AuthManager {
         code: String,
         user_id: &str,
     ) -> Result<PlatformCredential, Error> {
-        // must already have been inserted by begin_auth_flow
         let Some(auth) = self.authenticators.get_mut(&platform) else {
             return Err(Error::Platform(format!("No authenticator for {platform:?}")));
         };
@@ -155,7 +153,7 @@ impl AuthManager {
         &mut self,
         platform: Platform,
         user_id: &Uuid,
-        keys: std::collections::HashMap<String, String>,
+        keys: HashMap<String, String>,
     ) -> Result<PlatformCredential, Error> {
         let Some(auth) = self.authenticators.get_mut(&platform) else {
             return Err(Error::Platform(format!("No authenticator for {platform:?}")));
@@ -179,7 +177,6 @@ impl AuthManager {
             return Err(Error::Platform(format!("No authenticator for {platform:?}")));
         };
 
-        // We build a PlatformCredential by passing TwoFactor(...)
         let mut cred = auth
             .complete_authentication(AuthenticationResponse::TwoFactor(code))
             .await?;
@@ -217,7 +214,7 @@ impl AuthManager {
             let auth = self.authenticators.get_mut(platform).unwrap();
             auth.revoke(&cred).await?;
         }
-        // 3) now we can delete from DB (no conflict)
+        // 3) now we can delete from DB
         self.credentials_repo.delete_credentials(platform, user_uuid).await?;
         Ok(())
     }
@@ -232,10 +229,9 @@ impl AuthManager {
             return Err(Error::Auth("No credentials found".into()));
         };
 
-        // 1) ensure authenticator is loaded
+        // ensure authenticator is loaded
         self.ensure_authenticator_exists(platform).await?;
 
-        // 2) refresh in a short scope
         let new_cred = {
             let auth = self.authenticators.get_mut(platform).unwrap();
             auth.refresh(&old_cred).await?
@@ -256,7 +252,6 @@ impl AuthManager {
         &mut self,
         cred: &PlatformCredential
     ) -> Result<bool, Error> {
-        // load the authenticator (if needed)
         self.ensure_authenticator_exists(&cred.platform).await?;
         let auth = self.authenticators.get_mut(&cred.platform).unwrap();
         auth.validate(cred).await
