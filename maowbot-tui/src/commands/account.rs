@@ -121,9 +121,6 @@ async fn account_add_flow(platform: Platform, typed_name: &str, bot_api: &Arc<dy
         }
     }
 
-    // --------------------------------------------
-    // Ask if teammate (only if not broadcaster)
-    // --------------------------------------------
     let mut is_teammate = false;
     if !is_broadcaster {
         println!("Is this a teammate account [y/N]");
@@ -138,7 +135,7 @@ async fn account_add_flow(platform: Platform, typed_name: &str, bot_api: &Arc<dy
     }
 
     // -----------------------------------------------------
-    // Ask if bot
+    // Ask if bot - not teammate or broadcaster
     // -----------------------------------------------------
     let mut is_bot = false;
     if !is_broadcaster || !is_teammate {
