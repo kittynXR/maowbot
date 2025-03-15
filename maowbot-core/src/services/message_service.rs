@@ -4,6 +4,7 @@ use chrono::{DateTime, Utc};
 use tracing::{debug, info, error, warn};
 use maowbot_common::models::cache::CachedMessage;
 use maowbot_common::models::platform::Platform;
+use maowbot_common::traits::repository_traits::CredentialsRepository;
 use crate::eventbus::{EventBus, BotEvent};
 use crate::Error;
 use crate::repositories::postgres::user_analysis::PostgresUserAnalysisRepository;
@@ -13,7 +14,6 @@ use crate::cache::message_cache::ChatCache;
 use crate::services::user_service::UserService;
 use crate::services::{CommandService, CommandResponse};
 use crate::platforms::manager::PlatformManager;
-use crate::repositories::postgres::credentials::CredentialsRepository;
 
 /// The MessageService is responsible for ingesting new chat messages from any platform
 /// and for checking/processing commands (via CommandService).

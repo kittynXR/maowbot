@@ -34,6 +34,8 @@ struct TwitchValidateResponse {
 pub struct TwitchEventSubAuthenticator {
     pub client_id: String,
     pub client_secret: Option<String>,
+    pub is_broadcaster: bool,
+    pub is_teammate: bool,
     pub is_bot: bool,
 }
 
@@ -42,6 +44,8 @@ impl TwitchEventSubAuthenticator {
         Self {
             client_id,
             client_secret,
+            is_broadcaster: false,
+            is_teammate: false,
             is_bot: false,
         }
     }
@@ -164,6 +168,8 @@ impl PlatformAuthenticator for TwitchEventSubAuthenticator {
             expires_at,
             created_at: credential.created_at,
             updated_at: now,
+            is_broadcaster: credential.is_broadcaster,
+            is_teammate: credential.is_teammate,
             is_bot: credential.is_bot,
         };
 
@@ -219,6 +225,14 @@ impl PlatformAuthenticator for TwitchEventSubAuthenticator {
                 resp.status()
             )))
         }
+    }
+
+    fn set_is_broadcaster(&mut self, val: bool) {
+        self.is_bot = val;
+    }
+
+    fn set_is_teammate(&mut self, val: bool) {
+        self.is_teammate = val;
     }
 
     fn set_is_bot(&mut self, val: bool) {

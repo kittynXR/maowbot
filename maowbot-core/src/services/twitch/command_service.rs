@@ -180,7 +180,7 @@ impl CommandService {
             user_id,
             used_at: now,
             channel: channel.to_string(),
-            usage_text: Some(args.clone()),
+            usage_text: args.clone(),
             metadata: None,
         };
         if let Err(e) = self.usage_repo.insert_usage(&usage).await {
@@ -262,6 +262,7 @@ impl CommandService {
         let now = Utc::now();
         let cmd = Command {
             command_id: Uuid::new_v4(),
+            active_credential_id: None,
             platform: platform.to_string(),
             command_name: command_name.to_string(),
             min_role: min_role.to_string(),

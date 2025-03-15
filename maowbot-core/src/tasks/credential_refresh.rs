@@ -1,8 +1,9 @@
 use chrono::{Duration};
 use tracing::{info, error};
+use maowbot_common::traits::repository_traits::CredentialsRepository;
 use crate::auth::manager::AuthManager;
 use crate::Error;
-use crate::repositories::postgres::credentials::{CredentialsRepository, PostgresCredentialsRepository};
+use crate::repositories::postgres::credentials::{PostgresCredentialsRepository};
 
 
 /// Checks for credentials that will expire within `within_minutes` from now.

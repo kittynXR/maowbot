@@ -67,6 +67,8 @@ CREATE TABLE platform_credentials (
     expires_at      TIMESTAMPTZ,
     created_at      TIMESTAMPTZ NOT NULL,
     updated_at      TIMESTAMPTZ NOT NULL,
+    is_broadcaster  BOOLEAN NOT NULL DEFAULT false,
+    is_teammate     BOOLEAN NOT NULL DEFAULT false,
     is_bot          BOOLEAN NOT NULL
 );
 
@@ -197,6 +199,7 @@ CREATE TABLE user_analysis_history (
 DROP TABLE IF EXISTS commands CASCADE;
 CREATE TABLE commands (
     command_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    active_credential_id UUID REFERENCES platform_credentials(credential_id),
     platform TEXT NOT NULL,
     command_name TEXT NOT NULL,
     min_role TEXT NOT NULL DEFAULT 'everyone',
@@ -233,6 +236,7 @@ CREATE TABLE command_usage (
 DROP TABLE IF EXISTS redeems CASCADE;
 CREATE TABLE redeems (
      redeem_id  UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+     active_credential_id UUID REFERENCES platform_credentials(credential_id),
      platform   TEXT NOT NULL,
      reward_id  TEXT NOT NULL,
      reward_name TEXT NOT NULL,

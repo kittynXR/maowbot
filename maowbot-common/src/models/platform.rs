@@ -1,3 +1,5 @@
+// File: maowbot-common/src/models/platform.rs
+
 use std::fmt;
 use std::str::FromStr;
 use chrono::{DateTime, Utc};
@@ -7,7 +9,6 @@ use uuid::Uuid;
 use crate::models::credential::CredentialType;
 
 /// Add sqlx::Type so that SQLx knows how to decode this enum.
-/// Here we tell SQLx that the enum is stored as TEXT.
 #[derive(Debug, Serialize, Deserialize, Clone, Eq, PartialEq, Hash, sqlx::Type)]
 #[sqlx(type_name = "TEXT")]
 #[sqlx(rename_all = "lowercase")]
@@ -52,8 +53,6 @@ impl From<String> for Platform {
     }
 }
 
-
-
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct PlatformIdentity {
     pub platform_identity_id: Uuid,
@@ -83,7 +82,19 @@ pub struct PlatformCredential {
     pub expires_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+
+    /// If true, this is the “bot” or automated account. Usually we only keep
+    /// one “bot” credential per platform, but that’s not strictly enforced.
     pub is_bot: bool,
+
+    /// **NEW**: If true, this credential is used by a “teammate” (trusted user).
+    /// Possibly used for “team mode” where multiple operators can log in
+    /// with separate tokens.
+    pub is_teammate: bool,
+
+    /// **NEW**: If true, this credential belongs to the broadcaster / owner,
+    /// i.e. the main or “primary default” account.
+    pub is_broadcaster: bool,
 }
 
 #[derive(Debug, Clone)]

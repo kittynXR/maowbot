@@ -35,6 +35,8 @@ static IRC_STATE_COUNTER: AtomicUsize = AtomicUsize::new(0);
 pub struct TwitchIrcAuthenticator {
     pub client_id: String,
     pub client_secret: Option<String>,
+    pub is_broadcaster: bool,
+    pub is_teammate: bool,
     pub is_bot: bool,
     pending_state: Option<String>,
 }
@@ -44,6 +46,8 @@ impl TwitchIrcAuthenticator {
         Self {
             client_id,
             client_secret,
+            is_broadcaster: true,
+            is_teammate: true,
             is_bot: true,
             pending_state: None,
         }
@@ -152,6 +156,8 @@ impl PlatformAuthenticator for TwitchIrcAuthenticator {
             expires_at,
             created_at: now,
             updated_at: now,
+            is_broadcaster: self.is_broadcaster,
+            is_teammate: self.is_teammate,
             is_bot: self.is_bot,
         };
 
@@ -209,6 +215,8 @@ impl PlatformAuthenticator for TwitchIrcAuthenticator {
             expires_at,
             created_at: credential.created_at,
             updated_at: now,
+            is_broadcaster: credential.is_broadcaster,
+            is_teammate: credential.is_teammate,
             is_bot: credential.is_bot,
         };
         Ok(updated)
@@ -260,6 +268,12 @@ impl PlatformAuthenticator for TwitchIrcAuthenticator {
         }
     }
 
+    fn set_is_broadcaster(&mut self, val: bool) {
+        self.is_broadcaster = val;
+    }
+    fn set_is_teammate(&mut self, val: bool) {
+        self.is_teammate = val;
+    }
     fn set_is_bot(&mut self, val: bool) {
         self.is_bot = val;
     }

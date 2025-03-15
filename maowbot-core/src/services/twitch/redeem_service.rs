@@ -174,6 +174,7 @@ impl RedeemService {
         let now = Utc::now();
         let rd = Redeem {
             redeem_id: Uuid::new_v4(),
+            active_credential_id: None,
             platform: platform.to_string(),
             reward_id: reward_id.to_string(),
             reward_name: reward_name.to_string(),

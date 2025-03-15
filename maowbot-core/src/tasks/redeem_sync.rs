@@ -161,6 +161,7 @@ async fn run_sync_for_one_account(
             let now = Utc::now();
             let new_rd = Redeem {
                 redeem_id: Uuid::new_v4(),
+                active_credential_id: None,
                 platform: "twitch-eventsub".to_string(),
                 reward_id: hr.id.clone(),
                 reward_name: hr.title.clone(),

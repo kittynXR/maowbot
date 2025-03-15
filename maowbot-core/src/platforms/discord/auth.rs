@@ -11,13 +11,12 @@ use maowbot_common::models::credential::{CredentialType};
 use maowbot_common::traits::auth_traits::PlatformAuthenticator;
 
 pub struct DiscordAuthenticator {
-    // Provided/fetched by AuthManager from DB
     client_id: Option<String>,
     client_secret: Option<String>,
-
-    // We hold the bot token after the user enters it
     bot_token: Option<String>,
     is_bot: bool,
+    is_broadcaster: bool,
+    is_teammate: bool,
 }
 
 impl DiscordAuthenticator {
@@ -30,6 +29,8 @@ impl DiscordAuthenticator {
             client_id,
             client_secret,
             bot_token: None,
+            is_broadcaster: false,
+            is_teammate: false,
             is_bot: false,
         }
     }
@@ -146,9 +147,9 @@ impl PlatformAuthenticator for DiscordAuthenticator {
                     expires_at: None,
                     created_at: Utc::now(),
                     updated_at: Utc::now(),
+                    is_broadcaster: self.is_broadcaster,
+                    is_teammate: self.is_teammate,
                     is_bot: self.is_bot,
-
-                    // The new fields:
                     platform_id: Some(user_id),
                     user_name,
                 })
@@ -178,6 +179,12 @@ impl PlatformAuthenticator for DiscordAuthenticator {
         Ok(())
     }
 
+    fn set_is_broadcaster(&mut self, val: bool) {
+        self.is_broadcaster = val;
+    }
+    fn set_is_teammate(&mut self, val: bool) {
+        self.is_teammate = val;
+    }
     fn set_is_bot(&mut self, val: bool) {
         self.is_bot = val;
     }

@@ -7,12 +7,11 @@ use std::sync::Mutex;
 
 use maowbot_common::models::platform::{Platform, PlatformCredential};
 use maowbot_common::traits::platform_traits::{ChatPlatform, ConnectionStatus, PlatformIntegration};
-
+use maowbot_common::traits::repository_traits::CredentialsRepository;
 use crate::eventbus::EventBus;
 use crate::services::message_service::MessageService;
 use crate::services::user_service::UserService;
 use crate::Error;
-use crate::repositories::postgres::credentials::CredentialsRepository;
 
 use crate::platforms::discord::runtime::DiscordPlatform;
 use crate::platforms::twitch::runtime::TwitchPlatform;

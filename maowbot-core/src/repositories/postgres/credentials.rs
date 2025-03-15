@@ -1,3 +1,5 @@
+// File: maowbot-core/src/repositories/postgres/credentials.rs
+
 use crate::{Error, crypto::Encryptor};
 use async_trait::async_trait;
 use chrono::{Utc, Duration};
@@ -5,12 +7,12 @@ use sqlx::{Pool, Postgres, Row};
 use std::str::FromStr;
 use uuid::Uuid;
 use maowbot_common::models::platform::{Platform, PlatformCredential};
-pub(crate) use maowbot_common::traits::repository_traits::CredentialsRepository;
+use maowbot_common::traits::repository_traits::CredentialsRepository;
 
 #[derive(Clone)]
 pub struct PostgresCredentialsRepository {
-    pool: Pool<Postgres>,
-    encryptor: Encryptor,
+    pub pool: Pool<Postgres>,
+    pub encryptor: Encryptor,
 }
 
 impl PostgresCredentialsRepository {
@@ -51,20 +53,25 @@ impl CredentialsRepository for PostgresCredentialsRepository {
                 expires_at,
                 created_at,
                 updated_at,
-                is_bot
+                is_bot,
+                is_teammate,
+                is_broadcaster
             )
             VALUES ($1, $2, $3, $4, $5, $6,
-                    $7, $8, $9, $10, $11, $12, $13)
+                    $7, $8, $9, $10, $11, $12,
+                    $13, $14, $15)
             ON CONFLICT (platform, user_id) DO UPDATE
                SET
-                 platform_id     = EXCLUDED.platform_id,
-                 user_name       = EXCLUDED.user_name,
-                 primary_token   = EXCLUDED.primary_token,
-                 refresh_token   = EXCLUDED.refresh_token,
-                 additional_data = EXCLUDED.additional_data,
-                 expires_at      = EXCLUDED.expires_at,
-                 updated_at      = EXCLUDED.updated_at,
-                 is_bot          = EXCLUDED.is_bot
+                 platform_id       = EXCLUDED.platform_id,
+                 user_name         = EXCLUDED.user_name,
+                 primary_token     = EXCLUDED.primary_token,
+                 refresh_token     = EXCLUDED.refresh_token,
+                 additional_data   = EXCLUDED.additional_data,
+                 expires_at        = EXCLUDED.expires_at,
+                 updated_at        = EXCLUDED.updated_at,
+                 is_bot            = EXCLUDED.is_bot,
+                 is_teammate       = EXCLUDED.is_teammate,
+                 is_broadcaster    = EXCLUDED.is_broadcaster
             "#,
         )
             .bind(creds.credential_id)
@@ -80,6 +87,8 @@ impl CredentialsRepository for PostgresCredentialsRepository {
             .bind(creds.created_at)
             .bind(creds.updated_at)
             .bind(creds.is_bot)
+            .bind(creds.is_teammate)
+            .bind(creds.is_broadcaster)
             .execute(&self.pool)
             .await?;
 
@@ -102,7 +111,9 @@ impl CredentialsRepository for PostgresCredentialsRepository {
                 expires_at,
                 created_at,
                 updated_at,
-                is_bot
+                is_bot,
+                is_teammate,
+                is_broadcaster
             FROM platform_credentials
             WHERE LOWER(platform) = LOWER($1)
               AND user_id = $2
@@ -122,8 +133,8 @@ impl CredentialsRepository for PostgresCredentialsRepository {
                 None
             };
             let data_opt: Option<String> = r.try_get("additional_data")?;
-            let decrypted_data = if let Some(encrypted_data) = data_opt {
-                let json_str = self.encryptor.decrypt(&encrypted_data)?;
+            let decrypted_data = if let Some(enc) = data_opt {
+                let json_str = self.encryptor.decrypt(&enc)?;
                 Some(serde_json::from_str(&json_str)?)
             } else {
                 None
@@ -144,6 +155,8 @@ impl CredentialsRepository for PostgresCredentialsRepository {
                 created_at: r.try_get("created_at")?,
                 updated_at: r.try_get("updated_at")?,
                 is_bot: r.try_get("is_bot")?,
+                is_teammate: r.try_get("is_teammate")?,
+                is_broadcaster: r.try_get("is_broadcaster")?,
             };
             Ok(Some(pc))
         } else {
@@ -152,7 +165,6 @@ impl CredentialsRepository for PostgresCredentialsRepository {
     }
 
     async fn get_credential_by_id(&self, credential_id: Uuid) -> Result<Option<PlatformCredential>, Error> {
-        // For brevity, let's do a manual SELECT + decrypt like in the other methods:
         let row_opt = sqlx::query(
             r#"
             SELECT
@@ -168,7 +180,9 @@ impl CredentialsRepository for PostgresCredentialsRepository {
                 expires_at,
                 created_at,
                 updated_at,
-                is_bot
+                is_bot,
+                is_teammate,
+                is_broadcaster
             FROM platform_credentials
             WHERE credential_id = $1
             LIMIT 1
@@ -181,14 +195,14 @@ impl CredentialsRepository for PostgresCredentialsRepository {
         if let Some(r) = row_opt {
             let dec_token = self.encryptor.decrypt(r.try_get("primary_token")?)?;
             let rfr_opt: Option<String> = r.try_get("refresh_token")?;
-            let dec_refresh = if let Some(encrypted_r) = rfr_opt {
-                Some(self.encryptor.decrypt(&encrypted_r)?)
+            let dec_refresh = if let Some(s) = rfr_opt {
+                Some(self.encryptor.decrypt(&s)?)
             } else {
                 None
             };
             let data_opt: Option<String> = r.try_get("additional_data")?;
-            let dec_data = if let Some(d) = data_opt {
-                let js = self.encryptor.decrypt(&d)?;
+            let dec_data = if let Some(enc) = data_opt {
+                let js = self.encryptor.decrypt(&enc)?;
                 Some(serde_json::from_str(&js)?)
             } else {
                 None
@@ -209,6 +223,8 @@ impl CredentialsRepository for PostgresCredentialsRepository {
                 created_at: r.try_get("created_at")?,
                 updated_at: r.try_get("updated_at")?,
                 is_bot: r.try_get("is_bot")?,
+                is_teammate: r.try_get("is_teammate")?,
+                is_broadcaster: r.try_get("is_broadcaster")?,
             };
             Ok(Some(pc))
         } else {
@@ -240,9 +256,11 @@ impl CredentialsRepository for PostgresCredentialsRepository {
               additional_data = $5,
               expires_at      = $6,
               updated_at      = $7,
-              is_bot          = $8
-            WHERE LOWER(platform) = LOWER($9)
-              AND user_id = $10
+              is_bot          = $8,
+              is_teammate     = $9,
+              is_broadcaster  = $10
+            WHERE LOWER(platform) = LOWER($11)
+              AND user_id = $12
             "#,
         )
             .bind(&creds.platform_id)
@@ -253,6 +271,8 @@ impl CredentialsRepository for PostgresCredentialsRepository {
             .bind(creds.expires_at)
             .bind(creds.updated_at)
             .bind(creds.is_bot)
+            .bind(creds.is_teammate)
+            .bind(creds.is_broadcaster)
             .bind(platform_str)
             .bind(creds.user_id)
             .execute(&self.pool)
@@ -293,11 +313,13 @@ impl CredentialsRepository for PostgresCredentialsRepository {
                 expires_at,
                 created_at,
                 updated_at,
-                is_bot
+                is_bot,
+                is_teammate,
+                is_broadcaster
             FROM platform_credentials
             WHERE expires_at IS NOT NULL
               AND expires_at <= $1
-            "#
+            "#,
         )
             .bind(cutoff)
             .fetch_all(&self.pool)
@@ -307,15 +329,15 @@ impl CredentialsRepository for PostgresCredentialsRepository {
         for r in rows {
             let dec_token = self.encryptor.decrypt(r.try_get("primary_token")?)?;
             let rfr_opt: Option<String> = r.try_get("refresh_token")?;
-            let dec_refresh = if let Some(rx) = rfr_opt {
-                Some(self.encryptor.decrypt(&rx)?)
+            let dec_refresh = if let Some(enc) = rfr_opt {
+                Some(self.encryptor.decrypt(&enc)?)
             } else {
                 None
             };
             let data_opt: Option<String> = r.try_get("additional_data")?;
-            let dec_data = if let Some(d) = data_opt {
-                let js = self.encryptor.decrypt(&d)?;
-                Some(serde_json::from_str(&js)?)
+            let dec_data = if let Some(ed) = data_opt {
+                let json_str = self.encryptor.decrypt(&ed)?;
+                Some(serde_json::from_str(&json_str)?)
             } else {
                 None
             };
@@ -334,6 +356,8 @@ impl CredentialsRepository for PostgresCredentialsRepository {
                 created_at: r.try_get("created_at")?,
                 updated_at: r.try_get("updated_at")?,
                 is_bot: r.try_get("is_bot")?,
+                is_teammate: r.try_get("is_teammate")?,
+                is_broadcaster: r.try_get("is_broadcaster")?,
             });
         }
         Ok(results)
@@ -355,7 +379,9 @@ impl CredentialsRepository for PostgresCredentialsRepository {
                 expires_at,
                 created_at,
                 updated_at,
-                is_bot
+                is_bot,
+                is_teammate,
+                is_broadcaster
             FROM platform_credentials
             "#
         )
@@ -372,8 +398,8 @@ impl CredentialsRepository for PostgresCredentialsRepository {
                 None
             };
             let data_opt: Option<String> = r.try_get("additional_data")?;
-            let dec_data = if let Some(j) = data_opt {
-                let js = self.encryptor.decrypt(&j)?;
+            let dec_data = if let Some(d) = data_opt {
+                let js = self.encryptor.decrypt(&d)?;
                 Some(serde_json::from_str(&js)?)
             } else {
                 None
@@ -393,12 +419,13 @@ impl CredentialsRepository for PostgresCredentialsRepository {
                 created_at: r.try_get("created_at")?,
                 updated_at: r.try_get("updated_at")?,
                 is_bot: r.try_get("is_bot")?,
+                is_teammate: r.try_get("is_teammate")?,
+                is_broadcaster: r.try_get("is_broadcaster")?,
             });
         }
         Ok(creds)
     }
 
-    /// **NEW** method to list credentials for exactly one `platform`.
     async fn list_credentials_for_platform(&self, platform: &Platform) -> Result<Vec<PlatformCredential>, Error> {
         let rows = sqlx::query(
             r#"
@@ -415,7 +442,9 @@ impl CredentialsRepository for PostgresCredentialsRepository {
                 expires_at,
                 created_at,
                 updated_at,
-                is_bot
+                is_bot,
+                is_teammate,
+                is_broadcaster
             FROM platform_credentials
             WHERE LOWER(platform) = LOWER($1)
             "#,
@@ -434,8 +463,8 @@ impl CredentialsRepository for PostgresCredentialsRepository {
                 None
             };
             let data_opt: Option<String> = r.try_get("additional_data")?;
-            let dec_data = if let Some(x) = data_opt {
-                let js = self.encryptor.decrypt(&x)?;
+            let dec_data = if let Some(e) = data_opt {
+                let js = self.encryptor.decrypt(&e)?;
                 Some(serde_json::from_str(&js)?)
             } else {
                 None
@@ -455,6 +484,8 @@ impl CredentialsRepository for PostgresCredentialsRepository {
                 created_at: r.try_get("created_at")?,
                 updated_at: r.try_get("updated_at")?,
                 is_bot: r.try_get("is_bot")?,
+                is_teammate: r.try_get("is_teammate")?,
+                is_broadcaster: r.try_get("is_broadcaster")?,
             });
         }
         Ok(results)

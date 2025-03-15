@@ -24,6 +24,8 @@ pub trait PlatformAuthenticator: Send {
                      -> Result<PlatformCredential, Error>;
     async fn validate(&self, credential: &PlatformCredential) -> Result<bool, Error>;
     async fn revoke(&mut self, credential: &PlatformCredential) -> Result<(), Error>;
+    fn set_is_broadcaster(&mut self, val: bool);
+    fn set_is_teammate(&mut self, val: bool);
 
     fn set_is_bot(&mut self, _val: bool) {}
 }

@@ -39,6 +39,8 @@ static STATE_COUNTER: AtomicUsize = AtomicUsize::new(0);
 pub struct TwitchAuthenticator {
     pub client_id: String,
     pub client_secret: Option<String>,
+    pub is_broadcaster: bool,
+    pub is_teammate: bool,
     pub is_bot: bool,
     pending_state: Option<String>,
 }
@@ -48,6 +50,8 @@ impl TwitchAuthenticator {
         Self {
             client_id,
             client_secret,
+            is_broadcaster: false,
+            is_teammate: false,
             is_bot: false,
             pending_state: None,
         }
@@ -179,6 +183,8 @@ impl PlatformAuthenticator for TwitchAuthenticator {
             expires_at,
             created_at: now,
             updated_at: now,
+            is_broadcaster: self.is_broadcaster,
+            is_teammate: self.is_teammate,
             is_bot: self.is_bot,
 
             // external user/broadcaster
@@ -238,6 +244,8 @@ impl PlatformAuthenticator for TwitchAuthenticator {
             expires_at,
             created_at: credential.created_at,
             updated_at: now,
+            is_broadcaster: credential.is_broadcaster,
+            is_teammate: credential.is_teammate,
             is_bot: credential.is_bot,
             platform_id: Some(external_user_id),
             user_name: login,
@@ -268,6 +276,14 @@ impl PlatformAuthenticator for TwitchAuthenticator {
                 Err(Error::Auth(format!("Failed to revoke Twitch token: {e}")))
             }
         }
+    }
+
+    fn set_is_broadcaster(&mut self, val: bool) {
+        self.is_broadcaster = val;
+    }
+
+    fn set_is_teammate(&mut self, val: bool) {
+        self.is_teammate = val;
     }
 
     fn set_is_bot(&mut self, val: bool) {

@@ -28,6 +28,8 @@ pub struct VRChatAuthenticator {
     username: Option<String>,
     password: Option<String>,
     two_factor_code: Option<String>,
+    is_broadcaster: bool,
+    is_teammate: bool,
     is_bot: bool,
     two_factor_method: Option<String>,
     session_cookie: Option<String>,
@@ -39,6 +41,8 @@ impl VRChatAuthenticator {
             username: None,
             password: None,
             two_factor_code: None,
+            is_broadcaster: false,
+            is_teammate: false,
             is_bot: false,
             two_factor_method: None,
             session_cookie: None,
@@ -197,6 +201,8 @@ impl VRChatAuthenticator {
             expires_at,
             created_at: now,
             updated_at: now,
+            is_broadcaster: self.is_broadcaster,
+            is_teammate: self.is_teammate,
             is_bot: self.is_bot,
         })
     }
@@ -274,6 +280,12 @@ impl PlatformAuthenticator for VRChatAuthenticator {
         Ok(())
     }
 
+    fn set_is_broadcaster(&mut self, val: bool) {
+        self.is_broadcaster = val;
+    }
+    fn set_is_teammate(&mut self, val: bool) {
+        self.is_teammate = val;
+    }
     fn set_is_bot(&mut self, val: bool) {
         self.is_bot = val;
     }
