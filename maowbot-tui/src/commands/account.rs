@@ -9,6 +9,7 @@ use uuid::Uuid;
 
 use maowbot_common::models::auth::Platform;
 use maowbot_common::models::platform::PlatformCredential;
+use maowbot_common::models::redeem::Redeem;
 use maowbot_common::models::user::User;
 use maowbot_common::traits::api::BotApi;
 use maowbot_core::Error;
@@ -135,10 +136,10 @@ async fn account_add_flow(platform: Platform, typed_name: &str, bot_api: &Arc<dy
     }
 
     // -----------------------------------------------------
-    // Ask if bot - not teammate or broadcaster
+    // Only ask "Is this a bot?" if NOT a broadcaster/teammate
     // -----------------------------------------------------
     let mut is_bot = false;
-    if !is_broadcaster || !is_teammate {
+    if !is_broadcaster && !is_teammate {
         println!("Is this a bot account [Y/n]");
         print!("> ");
         let _ = stdout().flush();
@@ -153,7 +154,6 @@ async fn account_add_flow(platform: Platform, typed_name: &str, bot_api: &Arc<dy
     // Attempt to get a final "global_username" for this user:
     let final_username: String;
     if is_bot {
-        // Old logic: ask if typed_name is correct, or let user override
         println!("Use '{}' for the user’s global_username? (y/n):", typed_name);
         print!("> ");
         let _ = stdout().flush();
@@ -189,7 +189,7 @@ async fn account_add_flow(platform: Platform, typed_name: &str, bot_api: &Arc<dy
         user.global_username.as_deref().unwrap_or("(none)")
     );
 
-    // B) Now do the actual flows (VRChat, Discord, or standard OAuth)
+    // B) Do the actual flows (VRChat, Discord, or standard OAuth)
     let cred_result = if platform == Platform::VRChat {
         vrchat_add_flow(platform.clone(), user.user_id, bot_api).await
     } else if platform == Platform::Discord && is_bot {
@@ -209,8 +209,7 @@ async fn account_add_flow(platform: Platform, typed_name: &str, bot_api: &Arc<dy
     new_credential.is_teammate    = is_teammate;
     new_credential.is_bot         = is_bot;
 
-    // "complete_auth_flow" et al. may have stored the credential once,
-    // but we'll update it now with these new flags:
+    // The .store_credential call updates the row with these new flags
     if let Err(e) = bot_api.store_credential(new_credential.clone()).await {
         return format!("Error updating final credential flags => {e}");
     }
@@ -221,15 +220,17 @@ async fn account_add_flow(platform: Platform, typed_name: &str, bot_api: &Arc<dy
 
         // 1) Make twitch-irc
         let irc_res = do_oauth_like_flow_and_return_cred(Platform::TwitchIRC, user.user_id, false, bot_api).await;
+        let mut maybe_irc_cred: Option<PlatformCredential> = None;
         if let Ok(mut irc_cred) = irc_res {
             // replicate the same flags
             irc_cred.is_broadcaster = is_broadcaster;
             irc_cred.is_teammate    = is_teammate;
             irc_cred.is_bot         = false; // typically this user is not a bot
-            if let Err(e) = bot_api.store_credential(irc_cred).await {
+            if let Err(e) = bot_api.store_credential(irc_cred.clone()).await {
                 println!("(Warning) Could not store updated Twitch-IRC flags => {e}");
             } else {
                 println!("Created twitch-irc credentials.\n");
+                maybe_irc_cred = Some(irc_cred);
             }
         } else if let Err(e) = irc_res {
             println!("(Warning) Could not create twitch-irc => {e}");
@@ -254,9 +255,38 @@ async fn account_add_flow(platform: Platform, typed_name: &str, bot_api: &Arc<dy
                 println!("(Warning) Could not create twitch-eventsub => {e}");
             }
         }
+
+        // ---------------------------------------------------------------------
+        // FIX #2: If user is the broadcaster, point seeded redeems at the HELIX
+        // credential, not the IRC credential. We use `new_credential.credential_id`
+        // (the Helix one), because redeem_sync calls Helix to manage them.
+        // ---------------------------------------------------------------------
+        if is_broadcaster {
+            let helix_cred_id = new_credential.credential_id;
+            if let Err(e) = set_existing_redeems_active_cred(bot_api, helix_cred_id).await {
+                println!("(Warning) Could not set redeem.active_credential_id => {e}");
+            }
+        }
     }
 
     format!("Success! Created credential(s) for user_id={}", user.user_id)
+}
+
+/// Utility that updates all existing `twitch-eventsub` Redeems so that
+/// `.active_credential_id` is assigned to the given Helix credential,
+/// but only if it’s currently `None`.
+async fn set_existing_redeems_active_cred(
+    bot_api: &Arc<dyn BotApi>,
+    twitch_helix_credential_id: Uuid,
+) -> Result<(), Error> {
+    let redeems = bot_api.list_redeems("twitch-eventsub").await?;
+    for mut r in redeems {
+        if r.active_credential_id.is_none() {
+            r.active_credential_id = Some(twitch_helix_credential_id);
+            bot_api.update_redeem(&r).await?;
+        }
+    }
+    Ok(())
 }
 
 /// Specialized VRChat flow: prompt for user/pass and possibly 2FA, returning the final credential.

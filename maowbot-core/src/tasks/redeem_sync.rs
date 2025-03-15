@@ -32,9 +32,9 @@ fn is_in_list(list: &[CustomReward], reward_id: &str) -> bool {
 /// we skip. If `active_credential_id` is absent, we skip or use older fallback.
 pub async fn sync_channel_redeems(
     redeem_service: &RedeemService,
-    platform_manager: &PlatformManager,
-    user_service: &UserService,
-    bot_config_repo: &dyn BotConfigRepository,
+    _platform_manager: &PlatformManager,
+    _user_service: &UserService,
+    _bot_config_repo: &dyn BotConfigRepository,
     is_stream_online: bool,
 ) -> Result<(), Error> {
     info!("Redeem sync started => is_stream_online={}", is_stream_online);
@@ -46,12 +46,15 @@ pub async fn sync_channel_redeems(
         all_redeems.len()
     );
 
-    // 2) We now attempt per redeem, based on its .active_credential_id
+    // 2) For each redeem, see if it has an active_credential that is Helix
     for rd in &all_redeems {
         match rd.active_credential_id {
             Some(cid) => {
-                // find the credential
                 if let Ok(Some(cred)) = redeem_service.credentials_repo.get_credential_by_id(cid).await {
+                    //
+                    // FIX #1: Check for `Platform::Twitch`, not `TwitchEventSub`.
+                    // Because we need a Helix token to manage channel point rewards.
+                    //
                     if cred.platform == Platform::Twitch {
                         sync_one_redeem_via_helix(rd, &cred, redeem_service).await?;
                     } else {
@@ -62,15 +65,11 @@ pub async fn sync_channel_redeems(
                 }
             }
             None => {
-                // old fallback if you still want to unify or skip
+                // old fallback if we want some global logic
                 debug!("redeem '{}' has no active_credential_id => skipping Helix sync", rd.reward_name);
             }
         }
     }
-
-    // *Additionally*, if you still want older logic that updates
-    // them on a “global” broadcaster channel, you can keep that
-    // code here. For brevity, we skip it in the example.
 
     Ok(())
 }
@@ -109,14 +108,13 @@ async fn sync_one_redeem_via_helix(
     };
     let broadcaster_id = val.user_id;
 
-    // 3) get the existing list from Helix
+    // 3) get the existing list from Helix (both states: is_enabled true/false)
     let all_rewards = client.get_custom_rewards(&broadcaster_id, None, false).await.unwrap_or_default();
     let manage_rewards = client.get_custom_rewards(&broadcaster_id, None, true).await.unwrap_or_default();
 
     let is_already_managed = manage_rewards.iter().any(|mr| mr.id == rd.reward_id);
 
-    // If the user had it flagged as `is_managed = true` but it’s not in Helix, we create
-    // (or unify by name).
+    // If the user had it flagged as `is_managed` but it’s not in Helix, try to create or unify by name
     if rd.is_managed && !is_in_list(&manage_rewards, &rd.reward_id) {
         // Attempt unify by name if possible:
         if rd.reward_id.trim().is_empty() {
