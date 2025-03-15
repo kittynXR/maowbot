@@ -1,7 +1,3 @@
-//! maowbot-osc/src/lib.rs
-//!
-//! The main library file for the `maowbot-osc` crate.
-//! Re-exports major submodules.
 
 pub mod oscquery;
 pub mod vrchat;
@@ -40,7 +36,7 @@ pub type Result<T> = std::result::Result<T, OscError>;
 ///
 /// For instance, it can:
 /// - Spin up an OSC server
-/// - Run the OSCQuery discovery
+/// - Run the OSCQuery server
 /// - Parse VRChat's avatar JSON
 /// - Maintain a list of toggles
 /// - Send toggles & chatbox messages to VRChat
@@ -62,7 +58,6 @@ pub struct OscManagerStatus {
     pub is_running: bool,
     pub listening_port: Option<u16>,
 }
-
 
 impl MaowOscManager {
     pub fn new() -> Self {
@@ -93,7 +88,10 @@ impl MaowOscManager {
     }
 
     /// Starts the OSC server (UDP) and the OSCQuery server (HTTP).
-    /// Then optionally performs a quick discovery.
+    /// Initiates mDNS advertisement as well.
+    ///
+    /// **Important**: We now run the mDNS *search* (peer discovery) in a separate
+    /// background task, so the server startup doesn't block for its duration.
     pub async fn start_all(&self) -> Result<()> {
         // 1) Start the OSC server on a free UDP port:
         let _chosen_port = self.start_server().await?;
@@ -105,8 +103,25 @@ impl MaowOscManager {
         }
         tracing::info!("OSCQuery server started on port 8080.");
 
-        // 3) Optionally discover local OSCQuery peers:
-        self.discover_local_peers().await?;
+        // 3) Optionally discover local OSCQuery peers *in background*:
+        {
+            let oscq_arc = self.oscquery_server.clone();
+            tokio::spawn(async move {
+                let lock = oscq_arc.lock().await;
+                if let Some(discovery) = &lock.discovery {
+                    match discovery.discover_peers().await {
+                        Ok(found) => {
+                            for svc_name in found {
+                                tracing::info!("Found local OSCQuery service => {svc_name}");
+                            }
+                        }
+                        Err(e) => {
+                            tracing::error!("mDNS discovery error: {:?}", e);
+                        }
+                    }
+                }
+            });
+        }
 
         Ok(())
     }
@@ -123,11 +138,11 @@ impl MaowOscManager {
         Ok(())
     }
 
-    /// A quick method to discover local peers (optional).
-    pub async fn discover_local_peers(&self) ->  Result<Vec<String>> {
+    /// (Optional) Manually discover local peers. Usually we spawn this in background
+    /// so it won't block server startup.
+    pub async fn discover_local_peers(&self) -> Result<Vec<String>> {
         let oscq = self.oscquery_server.lock().await;
         if let Some(discovery) = &oscq.discovery {
-            // discover_peers() presumably returns a Vec<String>
             let discovered = discovery.discover_peers().await?;
             for svc_name in &discovered {
                 tracing::info!("Found local OSCQuery service => {svc_name}");
@@ -202,7 +217,6 @@ impl MaowOscManager {
 
     // ------------------------------------------------------------------------
     // Single-argument sending methods for avatar parameters (bool, int, float).
-    // You can also expand or unify them into one function if you prefer.
 
     /// Send a boolean value to an avatar parameter:
     /// address => `/avatar/parameters/<param_name>`, type => bool
@@ -244,4 +258,3 @@ impl MaowOscManager {
         self.send_osc_packet(packet)
     }
 }
-
