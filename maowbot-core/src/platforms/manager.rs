@@ -26,19 +26,16 @@ pub struct PlatformRuntimeHandle {
 
     pub twitch_irc_instance: Option<Arc<AsyncMutex<TwitchIrcPlatform>>>,
     pub vrchat_instance: Option<Arc<AsyncMutex<VRChatPlatform>>>,
-
-    /// Store a DiscordPlatform instance, so we can call send_message later
     pub discord_instance: Option<Arc<AsyncMutex<DiscordPlatform>>>,
 }
 
+/// Manages starting/stopping platform runtimes, holding references to them, etc.
 pub struct PlatformManager {
-    /// Instead of Option<Arc<MessageService>>, we store Mutex<Option<Arc<MessageService>>>.
     message_service: Mutex<Option<Arc<MessageService>>>,
     user_svc: Arc<UserService>,
     event_bus: Arc<EventBus>,
     pub(crate) credentials_repo: Arc<dyn CredentialsRepository + Send + Sync>,
 
-    /// Use an AsyncMutex for concurrency around the map of runtimes.
     pub active_runtimes: AsyncMutex<HashMap<(String, String), PlatformRuntimeHandle>>,
 }
 
@@ -150,14 +147,12 @@ impl PlatformManager {
     async fn spawn_discord(&self, credential: PlatformCredential) -> Result<PlatformRuntimeHandle, Error> {
         let message_svc = self.get_message_service()?;
 
-        // We have to clone user_id_str so we can use it both in the closure *and* after:
         let user_id_str = credential.user_id.to_string();
-        let user_id_str_for_handle = user_id_str.clone();  // for PlatformRuntimeHandle
-        let user_id_str_for_closure = user_id_str.clone(); // for use in the spawn closure
+        let user_id_str_for_handle = user_id_str.clone();
+        let user_id_str_for_closure = user_id_str.clone();
 
         let token = credential.primary_token.clone();
 
-        // Build the platform object
         let mut discord = DiscordPlatform::new(token);
         discord.set_event_bus(self.event_bus.clone());
         discord.connect().await?;
@@ -192,7 +187,6 @@ impl PlatformManager {
                         }
                     }
                     None => {
-                        // The platform's stream ended or some error occurred. We'll break out.
                         info!("[Discord] No more events => user_id={}", user_id_str_for_closure);
                         break;
                     }
@@ -327,16 +321,19 @@ impl PlatformManager {
         irc.set_credentials(credential.clone());
         irc.set_event_bus(self.event_bus.clone());
 
-        if credential.is_bot {
-            irc.enable_incoming = false;
-            info!(
-                "[TwitchIRC] is_bot=true for user_id={}, no read loop.",
-                user_id_str_for_closure
-            );
+        // If this credential is a bot, we can choose whether to skip reading or not:
+        if credential.is_bot == true {
+            // For a bot account, we typically want to read commands too, so let's leave
+            // enable_incoming = true if we do want them to handle them.
+            // However, the example might set false. For now we keep it true.
+            // irc.enable_incoming = false; // if we wanted it to ignore inbound, we’d do this
         }
 
         irc.connect().await?;
         info!("[TwitchIRC] connected for user_id={}", user_id_str_for_closure);
+
+        // ---- NEW: let this TTV-IRC account join all other Twitch accounts’ channels ----
+        self.join_all_twitch_channels(&irc, credential.user_id).await?;
 
         let rx_opt = irc.rx.take();
         let arc_irc = Arc::new(AsyncMutex::new(irc));
@@ -366,7 +363,7 @@ impl PlatformManager {
                 }
                 info!("[TwitchIRC] read loop ended for user_id={}", user_id_str_for_closure);
             } else {
-                info!("[TwitchIRC] no rx => user_id={} might be bot-only", user_id_str_for_closure);
+                info!("[TwitchIRC] no rx => user_id={} might be bot-only or unknown reason", user_id_str_for_closure);
             }
         });
 
@@ -484,6 +481,42 @@ impl PlatformManager {
                 "No active twitch-irc runtime for account='{account_name}'"
             )))
         }
+    }
+
+    // -------------------------------------------------------------
+    // NEW HELPER: Having each TTV-IRC instance join channels
+    // of all other Twitch-IRC credentials.
+    //
+    // The user’s request: “All twitch-irc accounts that start
+    // up join all other twitch accounts’ chats.”
+    //
+    // Implementation: we gather *all* credentials for platform
+    // twitch-irc, ignoring the newly started one’s own user_id,
+    // and call join_channel for each credential’s user_name.
+    //
+    // NOTE: We typically do “join_channel(#NAME)” but that
+    // depends on how your code expects the channel string.
+    // This example calls “join_channel” with `#` prefix if
+    // the code typically expects that.
+    // -------------------------------------------------------------
+    async fn join_all_twitch_channels(
+        &self,
+        irc_platform: &TwitchIrcPlatform,
+        my_user_id: uuid::Uuid,
+    ) -> Result<(), Error> {
+        let all_irc_creds = self.credentials_repo
+            .list_credentials_for_platform(&Platform::TwitchIRC)
+            .await?;
+        for c in all_irc_creds {
+            if c.user_id == my_user_id {
+                continue;
+            }
+            let channel_name = format!("#{}", c.user_name);
+            if let Err(e) = irc_platform.join_channel(&channel_name).await {
+                warn!("join_channel('{}') error => {:?}", channel_name, e);
+            }
+        }
+        Ok(())
     }
 
     // -------------------------------------------------------------

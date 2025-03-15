@@ -178,6 +178,7 @@ impl ServerContext {
             redeem_usage_repo.clone(),
             user_service.clone(),
             platform_manager.clone(),
+            creds_repo_arc.clone(),
         ));
 
         let eventsub_service = Arc::new(EventSubService::new(

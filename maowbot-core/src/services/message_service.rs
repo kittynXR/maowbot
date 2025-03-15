@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use chrono::{DateTime, Utc};
-use tracing::{debug, info, error, warn};
+use tracing::{debug, info, error};
 use maowbot_common::models::cache::CachedMessage;
 use maowbot_common::models::platform::Platform;
 use maowbot_common::traits::repository_traits::CredentialsRepository;
@@ -69,10 +69,10 @@ impl MessageService {
 
         // 1) Convert platform to enum
         let platform_enum = match platform {
-            // "twitch-irc" | "twitch" => Platform::TwitchIRC,
-            "twitch-irc" | "twitch" => Platform::Twitch,
-            "discord" => Platform::Discord,
-            "vrchat" => Platform::VRChat,
+            "twitch-irc" => Platform::TwitchIRC,
+            "twitch"     => Platform::Twitch,
+            "discord"    => Platform::Discord,
+            "vrchat"     => Platform::VRChat,
             "twitch-eventsub" => Platform::TwitchEventSub,
             other => {
                 error!("Unknown platform: {}", other);
@@ -122,7 +122,7 @@ impl MessageService {
         self.event_bus.publish(event).await;
 
         // 6) Check if it's a command
-        let is_stream_online = false; // (placeholder: integrate with actual stream status if needed)
+        let is_stream_online = false; // (placeholder or eventsub-based status if needed)
         match self.command_service
             .handle_chat_line(
                 platform,
@@ -140,33 +140,42 @@ impl MessageService {
                      platform: cmd_platform,
                      channel: cmd_channel,
                  }) => {
-                // figure out which account to send from, if it's Twitch-IRC
+                // ---------------------------------------------
+                // CHANGED: No longer calling get_ttv_secondary...
+                // Instead, CommandService decides which credential
+                // is used. We simply do the "send_twitch_irc_message"
+                // or "send_discord_message" if appropriate.
+                // ---------------------------------------------
                 if cmd_platform.eq_ignore_ascii_case("twitch-irc") {
-                    let account_name = if let Some(cid) = respond_credential_id {
-                        // If the command had a specific credential attached:
-                        if let Some(cred) = self.credentials_repo.get_credential_by_id(cid).await? {
-                            cred.user_name
+                    if let Some(cred_id) = respond_credential_id {
+                        // Look up the chosen credential
+                        let cred_opt = self.credentials_repo.get_credential_by_id(cred_id).await?;
+                        if let Some(cred) = cred_opt {
+                            for line in texts {
+                                if let Err(e) = self.platform_manager
+                                    .send_twitch_irc_message(&cred.user_name, &cmd_channel, &line)
+                                    .await
+                                {
+                                    error!("Failed to send IRC reply => {:?}", e);
+                                }
+                            }
                         } else {
-                            warn!("Respond credential_id not found in DB. Using secondary account if set.");
-                            self.get_ttv_secondary_or_warn().await
+                            error!("respond_credential_id={} not found in DB", cred_id);
                         }
                     } else {
-                        // No respond_credential => use the “secondary” account from bot_config
-                        self.get_ttv_secondary_or_warn().await
-                    };
-
-                    for line in texts {
-                        if let Err(e) = self.platform_manager
-                            .send_twitch_irc_message(&account_name, &cmd_channel, &line)
-                            .await
-                        {
-                            warn!("Failed to send IRC reply: {:?}", e);
-                        }
+                        // fallback: we have no respond_credential_id set
+                        // (Should not normally happen if CommandService logic is correct)
+                        error!("No respond_credential_id found for command => skipping response");
                     }
-                } else if cmd_platform.eq_ignore_ascii_case("discord") {
-                    // Potentially implement a Discord message-sending function, if desired
-                    info!("(Discord) would send multi-line: {:?}", texts);
+                }
+                else if cmd_platform.eq_ignore_ascii_case("discord") {
+                    // Potentially implement "send_discord_message"
+                    // (We have a helper on platform_manager).
+                    // For now, just log:
+                    info!("(Discord) would send multi-line => {:?}", texts);
                 } else {
+                    // If 'twitch' or 'vrchat' or something else,
+                    // handle similarly or no-op
                     info!("(Other) command response => platform='{}', lines={:?}", cmd_platform, texts);
                 }
             }
@@ -176,26 +185,6 @@ impl MessageService {
         }
 
         Ok(())
-    }
-
-    /// Returns the secondary Twitch-IRC account name from bot_config, or logs a warning if unset.
-    /// Returns a placeholder string if not configured.
-    async fn get_ttv_secondary_or_warn(&self) -> String {
-        let val = self.command_service
-            .bot_config_repo
-            .get_value("ttv_secondary_account")
-            .await;
-
-        match val {
-            Ok(Some(acc)) if !acc.trim().is_empty() => acc,
-            _ => {
-                warn!(
-                    "No secondary Twitch-IRC account configured in 'ttv_secondary_account'. \
-                     Please set one with 'ttv secondary <account>'."
-                );
-                "NoSecondaryAccount".to_string()
-            }
-        }
     }
 
     /// Returns recent messages from the chat cache.
