@@ -6,7 +6,7 @@ use crate::error::Error;
 use crate::models::{Command, CommandUsage, Redeem, RedeemUsage, UserAnalysis};
 use crate::models::analytics::{BotEvent, ChatMessage};
 use crate::models::auth::Platform;
-use crate::models::discord::{DiscordChannelRecord, DiscordGuildRecord};
+use crate::models::discord::{DiscordAccountRecord, DiscordChannelRecord, DiscordGuildRecord};
 use crate::models::drip::DripAvatarSummary;
 use crate::models::platform::{PlatformConfigData, PlatformCredential, PlatformIdentity};
 use crate::models::plugin::StatusData;
@@ -311,4 +311,21 @@ pub trait DiscordApi {
     /// Returns the guild ID of the “active server” for this Discord bot account,
     /// or None if not set.
     async fn get_discord_active_server(&self, account_name: &str) -> Result<Option<String>, Error>;
+
+    async fn list_discord_accounts(&self) -> Result<Vec<DiscordAccountRecord>, Error>;
+    async fn set_discord_active_account(&self, account_name: &str) -> Result<(), Error>;
+    async fn get_discord_active_account(&self) -> Result<Option<String>, Error>;
+
+    async fn set_discord_active_channel(
+        &self,
+        account_name: &str,
+        guild_id: &str,
+        channel_id: &str
+    ) -> Result<(), Error>;
+
+    async fn get_discord_active_channel(
+        &self,
+        account_name: &str,
+        guild_id: &str
+    ) -> Result<Option<String>, Error>;
 }

@@ -5,7 +5,7 @@ use sqlx::types::JsonValue;
 use uuid::Uuid;
 use crate::error::Error;
 use crate::models::{Command, CommandUsage, Redeem, RedeemUsage, UserAnalysis};
-use crate::models::discord::{DiscordChannelRecord, DiscordGuildRecord};
+use crate::models::discord::{DiscordAccountRecord, DiscordChannelRecord, DiscordGuildRecord};
 use crate::models::link_request::LinkRequest;
 use crate::models::platform::{Platform, PlatformConfig, PlatformCredential, PlatformIdentity};
 use crate::models::user::{User, UserAuditLogEntry};
@@ -236,6 +236,7 @@ pub trait UserAuditLogRepository {
 
 #[async_trait]
 pub trait DiscordRepository {
+    // Existing methods for guilds/channels:
     async fn upsert_guild(&self, account_name: &str, guild_id: &str, guild_name: &str) -> Result<(), Error>;
     async fn list_guilds_for_account(&self, account_name: &str) -> Result<Vec<DiscordGuildRecord>, Error>;
     async fn get_guild(&self, account_name: &str, guild_id: &str) -> Result<Option<DiscordGuildRecord>, Error>;
@@ -251,10 +252,16 @@ pub trait DiscordRepository {
                                      guild_id: &str
     ) -> Result<Vec<DiscordChannelRecord>, Error>;
 
-    // “Active server” is stored per account. Implementation can store it in
-    // a separate “discord_active_servers” table or add a column, or even
-    // reuse “bot_config.” We’ll keep it in the “discord_guilds” table for
-    // demonstration (an optional boolean or we store it in a second table).
+    // "Active server" was previously done in a separate table, now we rely on is_active
     async fn set_active_server(&self, account_name: &str, guild_id: &str) -> Result<(), Error>;
     async fn get_active_server(&self, account_name: &str) -> Result<Option<String>, Error>;
+
+    // New for "active account", "active channel", and listing accounts:
+    async fn list_accounts(&self) -> Result<Vec<DiscordAccountRecord>, Error>;
+    async fn upsert_account(&self, account_name: &str, maybe_credential: Option<Uuid>) -> Result<(), Error>;
+    async fn set_active_account(&self, account_name: &str) -> Result<(), Error>;
+    async fn get_active_account(&self) -> Result<Option<String>, Error>;
+
+    async fn set_active_channel(&self, account_name: &str, guild_id: &str, channel_id: &str) -> Result<(), Error>;
+    async fn get_active_channel(&self, account_name: &str, guild_id: &str) -> Result<Option<String>, Error>;
 }

@@ -12,7 +12,7 @@
 use std::sync::Arc;
 use async_trait::async_trait;
 use maowbot_common::error::Error;
-use maowbot_common::models::discord::{DiscordChannelRecord, DiscordGuildRecord};
+use maowbot_common::models::discord::{DiscordAccountRecord, DiscordChannelRecord, DiscordGuildRecord};
 use maowbot_common::traits::api::DiscordApi;
 use maowbot_common::traits::repository_traits::DiscordRepository;
 use crate::plugins::manager::PluginManager;
@@ -56,5 +56,37 @@ impl DiscordApi for PluginManager {
 
     async fn get_discord_active_server(&self, account_name: &str) -> Result<Option<String>, Error> {
         self.discord_repo.get_active_server(account_name).await
+    }
+
+    async fn list_discord_accounts(&self) -> Result<Vec<DiscordAccountRecord>, Error> {
+        // delegate to the repository
+        self.discord_repo.list_accounts().await
+    }
+
+    async fn set_discord_active_account(&self, account_name: &str) -> Result<(), Error> {
+        // delegate to the repository
+        self.discord_repo.set_active_account(account_name).await
+    }
+
+    async fn get_discord_active_account(&self) -> Result<Option<String>, Error> {
+        // read from the repository
+        self.discord_repo.get_active_account().await
+    }
+
+    async fn set_discord_active_channel(
+        &self,
+        account_name: &str,
+        guild_id: &str,
+        channel_id: &str
+    ) -> Result<(), Error> {
+        self.discord_repo.set_active_channel(account_name, guild_id, channel_id).await
+    }
+
+    async fn get_discord_active_channel(
+        &self,
+        account_name: &str,
+        guild_id: &str
+    ) -> Result<Option<String>, Error> {
+        self.discord_repo.get_active_channel(account_name, guild_id).await
     }
 }
