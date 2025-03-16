@@ -13,6 +13,7 @@ use twilight_gateway::{
     self as gateway,
     CloseFrame,
     Config,
+    Event,
     EventTypeFlags,
     Intents,
     Shard,
@@ -22,11 +23,9 @@ use twilight_gateway::{
 use twilight_http::client::ClientBuilder;
 use twilight_http::Client as HttpClient;
 use twilight_model::channel::{Channel as DiscordChannel, ChannelType};
-use twilight_model::gateway::event::Event;
 use twilight_model::gateway::payload::incoming::{
-    ChannelCreate, GuildCreate, MessageCreate,
+    ChannelCreate, GuildCreate, MessageCreate, Ready as ReadyPayload,
 };
-use twilight_model::guild::{Member};
 use twilight_model::id::Id;
 
 use crate::Error;
@@ -65,11 +64,17 @@ pub async fn shard_runner(
                 cache.update(&event);
 
                 match &event {
-                    Event::Ready(ready) => {
+                    Event::Ready(ready_box) => {
+                        // ready_box is Box<ReadyPayload>, so we can deref it:
+                        let ready_data: &ReadyPayload = ready_box.as_ref();
+                        let user = &ready_data.user;
                         info!(
-                            "(ShardRunner) Shard {} => READY as {}#{}",
-                            shard_id, ready.user.name, ready.user.discriminator
+                            "(ShardRunner) Shard {} => READY as {}#{} (ID={})",
+                            shard_id, user.name, user.discriminator, user.id
                         );
+
+                        // Optionally, after we see READY, we could do a manual REST fetch to ensure
+                        // all guilds/channels are in the DB. See prior explanation if needed.
                     }
 
                     Event::MessageCreate(msg_create) => {
@@ -135,6 +140,7 @@ pub async fn shard_runner(
                         // Optionally publish a chat event to the event bus:
                         if let Some(bus) = &event_bus {
                             // bus.publish_chat("discord", &channel_name, &user_id, &text).await;
+                            trace!("(EventBus) Not implemented for Discord chat");
                         }
                     }
 
@@ -146,6 +152,7 @@ pub async fn shard_runner(
                                 GuildCreate::Available(g) => {
                                     let guild_str_id = g.id.to_string();
                                     let guild_name = &g.name;
+                                    info!("(ShardRunner) GuildCreate => Found guild '{}' (ID={})", guild_name, guild_str_id);
                                     let _ = repo.upsert_guild(&account_name, &guild_str_id, guild_name).await;
 
                                     // Also store channels we already know from the event:
@@ -167,7 +174,7 @@ pub async fn shard_runner(
                                 }
                                 GuildCreate::Unavailable(u) => {
                                     let guild_str_id = u.id.to_string();
-                                    // We only know the ID, so store a placeholder name:
+                                    warn!("(ShardRunner) GuildCreate => Unavailable guild ID={}", guild_str_id);
                                     let _ = repo
                                         .upsert_guild(&account_name, &guild_str_id, "[Unavailable]")
                                         .await;
