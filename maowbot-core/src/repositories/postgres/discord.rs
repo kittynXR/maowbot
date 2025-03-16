@@ -4,7 +4,7 @@
 use async_trait::async_trait;
 use chrono::Utc;
 use sqlx::{Pool, Postgres, Row, Transaction};
-use tracing::{debug, warn};
+use tracing::{debug, warn, info};  // <-- CHANGED: added `info`
 
 // IMPORTANT: We need this import so &mut Transaction<'_, Postgres> implements Executor
 use sqlx::Executor;
@@ -70,6 +70,23 @@ impl DiscordRepository for PostgresDiscordRepository {
             .execute(&self.pool)
             .await?;
 
+        // <-- ADDED: If this is the ONLY account row, make it active by default.
+        let count_q = r#"SELECT COUNT(*) AS cnt FROM discord_accounts"#;
+        let total_count: i64 = sqlx::query_scalar(count_q)
+            .fetch_one(&self.pool)
+            .await
+            .unwrap_or(0);
+
+        if total_count == 1 {
+            // Exactly one row in the entire table => mark it active unconditionally
+            let _ = sqlx::query(
+                "UPDATE discord_accounts SET is_active=true"
+            )
+                .execute(&self.pool)
+                .await?;
+            info!("(upsert_account) Only one Discord account detected => set is_active=true");
+        }
+
         Ok(())
     }
 
@@ -78,7 +95,7 @@ impl DiscordRepository for PostgresDiscordRepository {
 
         // 1) set is_active=false for all accounts
         sqlx::query("UPDATE discord_accounts SET is_active=false")
-            .execute(&mut *tx) // <--- use &mut *tx
+            .execute(&mut *tx)
             .await?;
 
         // 2) set is_active=true for the specified account
@@ -86,12 +103,26 @@ impl DiscordRepository for PostgresDiscordRepository {
             "UPDATE discord_accounts SET is_active=true, updated_at=now() WHERE account_name=$1"
         )
             .bind(account_name)
-            .execute(&mut *tx) // <--- use &mut *tx
+            .execute(&mut *tx)
             .await?
             .rows_affected();
 
         if rows_affected == 0 {
-            warn!("(set_active_account) No account found named '{}'", account_name);
+            // <-- CHANGED: Instead of just warning, we do an upsert if it truly doesn't exist.
+            warn!("(set_active_account) No existing row for account_name='{account_name}'. Will create new row with is_active=true.");
+
+            // Perform an upsert row for it, automatically set is_active on that row:
+            // (We do this by re-using upsert_account, then setting active explicitly in the same txn.)
+            let ins_q = r#"
+            INSERT INTO discord_accounts (account_name, credential_id, is_active, created_at, updated_at)
+            VALUES ($1, NULL, true, now(), now())
+            ON CONFLICT (account_name)
+            DO UPDATE SET is_active=true, updated_at=now()
+            "#;
+            sqlx::query(ins_q)
+                .bind(account_name)
+                .execute(&mut *tx)
+                .await?;
         }
 
         tx.commit().await?;
@@ -134,6 +165,31 @@ impl DiscordRepository for PostgresDiscordRepository {
             .bind(guild_name)
             .execute(&self.pool)
             .await?;
+
+        // <-- ADDED: If this account only has 1 guild row, mark that single guild as active.
+        let count_q = r#"
+            SELECT COUNT(*) AS cnt
+            FROM discord_guilds
+            WHERE account_name = $1
+        "#;
+        let total_guilds_for_acct: i64 = sqlx::query_scalar(count_q)
+            .bind(account_name)
+            .fetch_one(&self.pool)
+            .await
+            .unwrap_or(0);
+
+        if total_guilds_for_acct == 1 {
+            let _ = sqlx::query(
+                "UPDATE discord_guilds SET is_active=true WHERE account_name=$1"
+            )
+                .bind(account_name)
+                .execute(&self.pool)
+                .await?;
+            info!(
+                "(upsert_guild) For account='{account_name}', only 1 guild => set is_active=true."
+            );
+        }
+
         Ok(())
     }
 
@@ -275,6 +331,8 @@ impl DiscordRepository for PostgresDiscordRepository {
             .bind(channel_name)
             .execute(&self.pool)
             .await?;
+
+        // <-- No auto-activate logic for channels, as requested.
         Ok(())
     }
 
