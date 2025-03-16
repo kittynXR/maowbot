@@ -1,6 +1,8 @@
 use std::collections::HashMap;
+use std::format;
 use async_trait::async_trait;
 use tokio::sync::mpsc;
+use twilight_model::id::marker::ApplicationMarker;
 use uuid::Uuid;
 use crate::error::Error;
 use crate::models::{Command, CommandUsage, Redeem, RedeemUsage, UserAnalysis};
@@ -261,34 +263,7 @@ pub trait BotConfigApi: Send + Sync {
 #[async_trait]
 pub trait DiscordApi {
     async fn list_discord_guilds(&self, account_name: &str) -> Result<Vec<DiscordGuildRecord>, Error>;
-    async fn list_discord_channels(
-        &self,
-        account_name: &str,
-        guild_id: &str
-    ) -> Result<Vec<DiscordChannelRecord>, Error>;
-
-    async fn set_discord_active_server(
-        &self,
-        account_name: &str,
-        guild_id: &str
-    ) -> Result<(), Error>;
-
-    async fn get_discord_active_server(&self, account_name: &str) -> Result<Option<String>, Error>;
-
-    async fn list_discord_accounts(&self) -> Result<Vec<DiscordAccountRecord>, Error>;
-    async fn set_discord_active_account(&self, account_name: &str) -> Result<(), Error>;
-    async fn get_discord_active_account(&self) -> Result<Option<String>, Error>;
-
-    async fn set_discord_active_channel(
-        &self,
-        account_name: &str,
-        guild_id: &str,
-        channel_id: &str
-    ) -> Result<(), Error>;
-
-    async fn get_discord_active_channel(
-        &self,
-        account_name: &str,
-        guild_id: &str
-    ) -> Result<Option<String>, Error>;
+    async fn list_discord_channels(&self, account_name: &str, guild_id: &str) -> Result<Vec<DiscordChannelRecord>, Error>;
+    async fn list_discord_commands(&self, account_name: &str) -> Result<Vec<(String, String)>, Error>;
+    async fn send_discord_message(&self, account_name: &str, guild_id: &str, channel_id: &str, text: &str) -> Result<(), Error>;
 }

@@ -164,7 +164,7 @@ pub async fn dispatch_async(
 
         // NEW:
         "discord" => {
-            let msg = discord::handle_discord_command(args, bot_api, tui_module).await;
+            let msg = discord::handle_discord_command(args, bot_api).await;
             (false, Some(msg))
         }
 

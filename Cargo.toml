@@ -26,7 +26,7 @@ twitch_oauth2 = { version = "^0.15", features = ["all", "client", "reqwest", "de
 twilight = { version = "^0.16" }
 twilight-gateway = { version = "^0.16", features = ["default"] }
 twilight-model = "^0.16"
-twilight-http = "^0.16"
+twilight-http = { version = "^0.16", features = ["rustls-native-roots"] }
 twilight-cache-inmemory = "^0.16"
 
 

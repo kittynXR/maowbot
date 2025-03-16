@@ -38,55 +38,15 @@ impl DiscordApi for PluginManager {
         self.discord_repo.list_guilds_for_account(account_name).await
     }
 
-    async fn list_discord_channels(
-        &self,
-        account_name: &str,
-        guild_id: &str
-    ) -> Result<Vec<DiscordChannelRecord>, Error> {
+    async fn list_discord_channels(&self, account_name: &str, guild_id: &str) -> Result<Vec<DiscordChannelRecord>, Error> {
         self.discord_repo.list_channels_for_guild(account_name, guild_id).await
     }
 
-    async fn set_discord_active_server(
-        &self,
-        account_name: &str,
-        guild_id: &str
-    ) -> Result<(), Error> {
-        self.discord_repo.set_active_server(account_name, guild_id).await
+    async fn list_discord_commands(&self, account_name: &str) -> Result<Vec<(String, String)>, Error> {
+        todo!()
     }
 
-    async fn get_discord_active_server(&self, account_name: &str) -> Result<Option<String>, Error> {
-        self.discord_repo.get_active_server(account_name).await
-    }
-
-    async fn list_discord_accounts(&self) -> Result<Vec<DiscordAccountRecord>, Error> {
-        // delegate to the repository
-        self.discord_repo.list_accounts().await
-    }
-
-    async fn set_discord_active_account(&self, account_name: &str) -> Result<(), Error> {
-        // delegate to the repository
-        self.discord_repo.set_active_account(account_name).await
-    }
-
-    async fn get_discord_active_account(&self) -> Result<Option<String>, Error> {
-        // read from the repository
-        self.discord_repo.get_active_account().await
-    }
-
-    async fn set_discord_active_channel(
-        &self,
-        account_name: &str,
-        guild_id: &str,
-        channel_id: &str
-    ) -> Result<(), Error> {
-        self.discord_repo.set_active_channel(account_name, guild_id, channel_id).await
-    }
-
-    async fn get_discord_active_channel(
-        &self,
-        account_name: &str,
-        guild_id: &str
-    ) -> Result<Option<String>, Error> {
-        self.discord_repo.get_active_channel(account_name, guild_id).await
+    async fn send_discord_message(&self, account_name: &str, guild_id: &str, channel_id: &str, text: &str) -> Result<(), Error> {
+        todo!()
     }
 }
