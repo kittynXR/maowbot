@@ -256,11 +256,7 @@ async fn account_add_flow(platform: Platform, typed_name: &str, bot_api: &Arc<dy
             }
         }
 
-        // ---------------------------------------------------------------------
-        // FIX #2: If user is the broadcaster, point seeded redeems at the HELIX
-        // credential, not the IRC credential. We use `new_credential.credential_id`
-        // (the Helix one), because redeem_sync calls Helix to manage them.
-        // ---------------------------------------------------------------------
+        // If user is the broadcaster, optionally point seeded redeems at Helix
         if is_broadcaster {
             let helix_cred_id = new_credential.credential_id;
             if let Err(e) = set_existing_redeems_active_cred(bot_api, helix_cred_id).await {
@@ -359,7 +355,9 @@ async fn discord_bot_add_flow(
     bot_api: &Arc<dyn BotApi>
 ) -> Result<PlatformCredential, Error> {
     let flow_str = bot_api.begin_auth_flow(platform.clone(), true).await?;
-    if !flow_str.contains("Multiple keys") {
+
+    // FIX HERE: changed to "MultipleKeys"
+    if !flow_str.contains("MultipleKeys") {
         return Err(Error::Auth(format!("Unexpected Discord bot prompt => {flow_str}")));
     }
 
@@ -412,7 +410,8 @@ async fn do_oauth_like_flow_and_return_cred(
             .await?;
         Ok(new_cred)
     }
-    else if flow_str.contains("(Multiple keys)") {
+    // FIX HERE: changed to "(MultipleKeys)"
+    else if flow_str.contains("(MultipleKeys)") {
         println!("Auth flow said: {flow_str}");
         let keys_map = prompt_for_multiple_keys()?;
         let cred = bot_api
