@@ -7,6 +7,7 @@ use twilight_cache_inmemory::InMemoryCache;
 use twilight_model::id::marker::GuildMarker;
 use twilight_model::id::Id;
 use uuid::Uuid;
+use maowbot_common::traits::repository_traits::DiscordRepository;
 use crate::plugins::manager::PluginManager;
 
 #[async_trait]
@@ -114,5 +115,16 @@ impl DiscordApi for PluginManager {
             channel_id,
             maybe_credential_id
         ).await
+    }
+
+    async fn upsert_discord_account(
+        &self,
+        account_name: &str,
+        credential_id: Option<Uuid>,
+        discord_id: Option<&str>
+    ) -> Result<(), Error> {
+        self.discord_repo
+            .upsert_account(account_name, credential_id, discord_id)
+            .await
     }
 }

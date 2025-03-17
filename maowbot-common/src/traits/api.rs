@@ -268,18 +268,25 @@ pub trait DiscordApi {
 
     async fn list_discord_event_configs(&self) -> Result<Vec<DiscordEventConfigRecord>, Error>;
     async fn add_discord_event_config(
-                                        &self,
-                                        event_name: &str,
-                                        guild_id: &str,
-                                        channel_id: &str,
-                                        maybe_credential_id: Option<Uuid>
+        &self,
+        event_name: &str,
+        guild_id: &str,
+        channel_id: &str,
+        maybe_credential_id: Option<Uuid>
     ) -> Result<(), Error>;
 
     async fn remove_discord_event_config(
-                                          &self,
-                                          event_name: &str,
-                                          guild_id: &str,
-                                          channel_id: &str,
-                                          maybe_credential_id: Option<Uuid>
+        &self,
+        event_name: &str,
+        guild_id: &str,
+        channel_id: &str,
+        maybe_credential_id: Option<Uuid>
+    ) -> Result<(), Error>;
+
+    async fn upsert_discord_account(
+        &self,
+        account_name: &str,
+        credential_id: Option<Uuid>,
+        discord_id: Option<&str>
     ) -> Result<(), Error>;
 }

@@ -7,6 +7,7 @@ use chrono::{DateTime, Utc};
 #[derive(Debug, Clone)]
 pub struct DiscordAccountRecord {
     pub account_name: String,
+    pub discord_id: Option<String>,
     pub credential_id: Option<uuid::Uuid>,
     pub is_active: bool,
     pub created_at: DateTime<Utc>,

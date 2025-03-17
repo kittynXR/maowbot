@@ -258,7 +258,7 @@ pub trait DiscordRepository {
 
     // New for "active account", "active channel", and listing accounts:
     async fn list_accounts(&self) -> Result<Vec<DiscordAccountRecord>, Error>;
-    async fn upsert_account(&self, account_name: &str, maybe_credential: Option<Uuid>) -> Result<(), Error>;
+    async fn upsert_account(&self, account_name: &str, maybe_credential: Option<Uuid>, discord_id: Option<&str>) -> Result<(), Error>;
     async fn set_active_account(&self, account_name: &str) -> Result<(), Error>;
     async fn get_active_account(&self) -> Result<Option<String>, Error>;
 

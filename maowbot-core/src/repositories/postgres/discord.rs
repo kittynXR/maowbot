@@ -28,12 +28,7 @@ impl PostgresDiscordRepository {
     }
 
     // -----------------------------------------------------------------------------------
-    // "Single-row" (legacy) upsert method:
-    // upsert_event_config() => uses ON CONFLICT (event_name).
-    //
-    // Many code paths used this to store a single config row per event_name.
-    // We will keep it in place for backward compatibility, but note that
-    // the new multi-row approach is below.
+    // "Single-row" (legacy) upsert method: upsert_event_config()
     // -----------------------------------------------------------------------------------
     pub async fn upsert_event_config(
         &self,
@@ -71,7 +66,6 @@ impl PostgresDiscordRepository {
         Ok(())
     }
 
-    /// Retrieves the event config row for a given event_name (the old single-row design).
     pub async fn get_event_config_by_name(
         &self,
         event_name: &str
@@ -109,7 +103,6 @@ impl PostgresDiscordRepository {
         }
     }
 
-    /// Lists *all* event configs in the table (possibly multiple).
     pub async fn list_event_configs(&self) -> Result<Vec<DiscordEventConfigRecord>, Error> {
         let q = r#"
             SELECT event_config_id,
@@ -142,9 +135,7 @@ impl PostgresDiscordRepository {
     }
 
     // -------------------------------------------------------------------------
-    // NEW: multi-row approach for storing Discord event configs.
-    // We rely on a composite unique index on
-    // (event_name, guild_id, channel_id, respond_with_credential).
+    // NEW: multi-row approach for storing Discord event configs
     // -------------------------------------------------------------------------
     pub async fn insert_event_config_multi(
         &self,
@@ -166,7 +157,7 @@ impl PostgresDiscordRepository {
             VALUES (gen_random_uuid(), $1, $2, $3, $4, now(), now())
             ON CONFLICT (event_name, guild_id, channel_id, respond_with_credential)
             DO NOTHING
-        "#; // <-- ADDED for multi
+        "#;
         sqlx::query(q)
             .bind(event_name)
             .bind(guild_id)
@@ -191,7 +182,7 @@ impl PostgresDiscordRepository {
               AND channel_id = $3
               AND (($4 IS NULL AND respond_with_credential IS NULL)
                    OR respond_with_credential = $4)
-        "#; // <-- ADDED for multi
+        "#;
         sqlx::query(q)
             .bind(event_name)
             .bind(guild_id)
@@ -204,7 +195,7 @@ impl PostgresDiscordRepository {
 }
 
 // =================================================================================================
-// Implementation of the DiscordRepository trait for the main guilds/channels/accounts logic
+// Implementation of the DiscordRepository trait
 // =================================================================================================
 #[async_trait]
 impl DiscordRepository for PostgresDiscordRepository {
@@ -213,7 +204,12 @@ impl DiscordRepository for PostgresDiscordRepository {
     // ------------------------------------------------------------------------
     async fn list_accounts(&self) -> Result<Vec<DiscordAccountRecord>, Error> {
         let q = r#"
-            SELECT account_name, credential_id, is_active, created_at, updated_at
+            SELECT account_name,
+                   credential_id,
+                   is_active,
+                   created_at,
+                   updated_at,
+                   discord_id
             FROM discord_accounts
             ORDER BY account_name
         "#;
@@ -229,23 +225,27 @@ impl DiscordRepository for PostgresDiscordRepository {
                 is_active: row.try_get("is_active")?,
                 created_at: row.try_get("created_at")?,
                 updated_at: row.try_get("updated_at")?,
+                discord_id: row.try_get("discord_id").ok(),
             });
         }
         Ok(results)
     }
 
-    async fn upsert_account(&self, account_name: &str, maybe_credential: Option<uuid::Uuid>) -> Result<(), Error> {
+    // UPDATED METHOD: now has an extra parameter for `discord_id`.
+    async fn upsert_account(&self, account_name: &str, maybe_credential: Option<uuid::Uuid>, discord_id: Option<&str>) -> Result<(), Error> {
         let q = r#"
-            INSERT INTO discord_accounts (account_name, credential_id, is_active, created_at, updated_at)
-            VALUES ($1, $2, false, now(), now())
+            INSERT INTO discord_accounts (account_name, credential_id, is_active, created_at, updated_at, discord_id)
+            VALUES ($1, $2, false, now(), now(), $3)
             ON CONFLICT (account_name)
             DO UPDATE SET
                 credential_id = EXCLUDED.credential_id,
-                updated_at = now()
+                updated_at = now(),
+                discord_id = EXCLUDED.discord_id
         "#;
         sqlx::query(q)
             .bind(account_name)
             .bind(maybe_credential)
+            .bind(discord_id)
             .execute(&self.pool)
             .await?;
 
@@ -286,8 +286,8 @@ impl DiscordRepository for PostgresDiscordRepository {
             warn!("(set_active_account) No existing row for account_name='{account_name}'. Will create new row with is_active=true.");
 
             let ins_q = r#"
-            INSERT INTO discord_accounts (account_name, credential_id, is_active, created_at, updated_at)
-            VALUES ($1, NULL, true, now(), now())
+            INSERT INTO discord_accounts (account_name, credential_id, is_active, created_at, updated_at, discord_id)
+            VALUES ($1, NULL, true, now(), now(), NULL)
             ON CONFLICT (account_name)
             DO UPDATE SET is_active=true, updated_at=now()
             "#;
