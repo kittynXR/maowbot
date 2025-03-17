@@ -2,11 +2,11 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use maowbot_common::error::Error;
 use maowbot_common::traits::api::DiscordApi;
-use maowbot_common::models::discord::{DiscordGuildRecord, DiscordChannelRecord};
+use maowbot_common::models::discord::{DiscordGuildRecord, DiscordChannelRecord, DiscordEventConfigRecord};
 use twilight_cache_inmemory::InMemoryCache;
 use twilight_model::id::marker::GuildMarker;
 use twilight_model::id::Id;
-
+use uuid::Uuid;
 use crate::plugins::manager::PluginManager;
 
 #[async_trait]
@@ -79,5 +79,40 @@ impl DiscordApi for PluginManager {
         self.platform_manager
             .send_discord_message(account_name, server_id, channel_id, text)
             .await
+    }
+
+    async fn list_discord_event_configs(&self) -> Result<Vec<DiscordEventConfigRecord>, Error> {
+        // We have a direct reference to self.discord_repo:
+        self.discord_repo.list_event_configs().await
+    }
+
+    async fn add_discord_event_config(
+        &self,
+        event_name: &str,
+        guild_id: &str,
+        channel_id: &str,
+        maybe_credential_id: Option<Uuid>
+    ) -> Result<(), Error> {
+        self.discord_repo.insert_event_config_multi(
+            event_name,
+            guild_id,
+            channel_id,
+            maybe_credential_id,
+        ).await
+    }
+
+    async fn remove_discord_event_config(
+        &self,
+        event_name: &str,
+        guild_id: &str,
+        channel_id: &str,
+        maybe_credential_id: Option<Uuid>
+    ) -> Result<(), Error> {
+        self.discord_repo.remove_event_config_multi(
+            event_name,
+            guild_id,
+            channel_id,
+            maybe_credential_id
+        ).await
     }
 }

@@ -8,7 +8,7 @@ use crate::error::Error;
 use crate::models::{Command, CommandUsage, Redeem, RedeemUsage, UserAnalysis};
 use crate::models::analytics::{BotEvent, ChatMessage};
 use crate::models::auth::Platform;
-use crate::models::discord::{DiscordAccountRecord, DiscordChannelRecord, DiscordGuildRecord};
+use crate::models::discord::{DiscordAccountRecord, DiscordChannelRecord, DiscordEventConfigRecord, DiscordGuildRecord};
 use crate::models::drip::DripAvatarSummary;
 use crate::models::platform::{PlatformConfigData, PlatformCredential, PlatformIdentity};
 use crate::models::plugin::StatusData;
@@ -265,4 +265,21 @@ pub trait DiscordApi {
     async fn list_discord_guilds(&self, account_name: &str) -> Result<Vec<DiscordGuildRecord>, Error>;
     async fn list_discord_channels(&self, account_name: &str, guild_id: &str) -> Result<Vec<DiscordChannelRecord>, Error>;
     async fn send_discord_message(&self, account_name: &str, server_id: &str, channel_id: &str, text: &str) -> Result<(), Error>;
+
+    async fn list_discord_event_configs(&self) -> Result<Vec<DiscordEventConfigRecord>, Error>;
+    async fn add_discord_event_config(
+                                        &self,
+                                        event_name: &str,
+                                        guild_id: &str,
+                                        channel_id: &str,
+                                        maybe_credential_id: Option<Uuid>
+    ) -> Result<(), Error>;
+
+    async fn remove_discord_event_config(
+                                          &self,
+                                          event_name: &str,
+                                          guild_id: &str,
+                                          channel_id: &str,
+                                          maybe_credential_id: Option<Uuid>
+    ) -> Result<(), Error>;
 }

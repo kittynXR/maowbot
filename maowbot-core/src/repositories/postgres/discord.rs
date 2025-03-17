@@ -10,13 +10,13 @@ use sqlx::Executor;
 
 use maowbot_common::error::Error;
 use maowbot_common::models::discord::{
-    DiscordAccountRecord, DiscordChannelRecord, DiscordGuildRecord,
-    // NEW:
+    DiscordAccountRecord,
+    DiscordChannelRecord,
+    DiscordGuildRecord,
     DiscordEventConfigRecord,
 };
 use maowbot_common::traits::repository_traits::DiscordRepository;
 
-/// Implementation of DiscordRepository using Postgres.
 #[derive(Clone)]
 pub struct PostgresDiscordRepository {
     pool: Pool<Postgres>,
@@ -27,11 +27,14 @@ impl PostgresDiscordRepository {
         Self { pool }
     }
 
-    // ------------------------------------------------------------------------------------
-    // HELPER: For DiscordEventConfigRecord, add new CRUD or at least "upsert" & "get" below
-    // ------------------------------------------------------------------------------------
-    /// Creates or updates a `discord_event_config` row keyed by event_name.
-    /// If you only allow one row per `event_name`, you can use event_name as a unique key.
+    // -----------------------------------------------------------------------------------
+    // "Single-row" (legacy) upsert method:
+    // upsert_event_config() => uses ON CONFLICT (event_name).
+    //
+    // Many code paths used this to store a single config row per event_name.
+    // We will keep it in place for backward compatibility, but note that
+    // the new multi-row approach is below.
+    // -----------------------------------------------------------------------------------
     pub async fn upsert_event_config(
         &self,
         event_name: &str,
@@ -68,7 +71,7 @@ impl PostgresDiscordRepository {
         Ok(())
     }
 
-    /// Retrieves the event config row for a given event_name, if any.
+    /// Retrieves the event config row for a given event_name (the old single-row design).
     pub async fn get_event_config_by_name(
         &self,
         event_name: &str
@@ -106,7 +109,7 @@ impl PostgresDiscordRepository {
         }
     }
 
-    /// (Optional) Lists all event configs you might have stored.
+    /// Lists *all* event configs in the table (possibly multiple).
     pub async fn list_event_configs(&self) -> Result<Vec<DiscordEventConfigRecord>, Error> {
         let q = r#"
             SELECT event_config_id,
@@ -137,11 +140,71 @@ impl PostgresDiscordRepository {
         }
         Ok(out)
     }
+
+    // -------------------------------------------------------------------------
+    // NEW: multi-row approach for storing Discord event configs.
+    // We rely on a composite unique index on
+    // (event_name, guild_id, channel_id, respond_with_credential).
+    // -------------------------------------------------------------------------
+    pub async fn insert_event_config_multi(
+        &self,
+        event_name: &str,
+        guild_id: &str,
+        channel_id: &str,
+        respond_with_credential: Option<uuid::Uuid>,
+    ) -> Result<(), Error> {
+        let q = r#"
+            INSERT INTO discord_event_config (
+                event_config_id,
+                event_name,
+                guild_id,
+                channel_id,
+                respond_with_credential,
+                created_at,
+                updated_at
+            )
+            VALUES (gen_random_uuid(), $1, $2, $3, $4, now(), now())
+            ON CONFLICT (event_name, guild_id, channel_id, respond_with_credential)
+            DO NOTHING
+        "#; // <-- ADDED for multi
+        sqlx::query(q)
+            .bind(event_name)
+            .bind(guild_id)
+            .bind(channel_id)
+            .bind(respond_with_credential)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn remove_event_config_multi(
+        &self,
+        event_name: &str,
+        guild_id: &str,
+        channel_id: &str,
+        respond_with_credential: Option<uuid::Uuid>,
+    ) -> Result<(), Error> {
+        let q = r#"
+            DELETE FROM discord_event_config
+            WHERE event_name = $1
+              AND guild_id   = $2
+              AND channel_id = $3
+              AND (($4 IS NULL AND respond_with_credential IS NULL)
+                   OR respond_with_credential = $4)
+        "#; // <-- ADDED for multi
+        sqlx::query(q)
+            .bind(event_name)
+            .bind(guild_id)
+            .bind(channel_id)
+            .bind(respond_with_credential)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
 }
 
 // =================================================================================================
-// Implementation of the existing trait methods
-// (The code below is copied from earlier. We have not changed these beyond possibly logging.)
+// Implementation of the DiscordRepository trait for the main guilds/channels/accounts logic
 // =================================================================================================
 #[async_trait]
 impl DiscordRepository for PostgresDiscordRepository {
@@ -362,7 +425,7 @@ impl DiscordRepository for PostgresDiscordRepository {
             UPDATE discord_guilds
             SET is_active=false
             WHERE account_name=$1
-            "#,
+            "#
         )
             .bind(account_name)
             .execute(&mut *tx)
