@@ -97,7 +97,7 @@ pub async fn handle_account_command(args: &[&str], bot_api: &Arc<dyn BotApi>) ->
 }
 
 /// Main “add” flow for user credentials on a given platform, with revised prompts for
-/// broadcaster/teammate/bot.
+/// broadcaster/teammate/bot, plus the Discord “app id” is now stored in `refresh_token`.
 async fn account_add_flow(platform: Platform, typed_name: &str, bot_api: &Arc<dyn BotApi>) -> String {
     // Step 0: Check if there's already a broadcaster for this platform
     let all_creds = match bot_api.list_credentials(Some(platform.clone())).await {
@@ -189,7 +189,7 @@ async fn account_add_flow(platform: Platform, typed_name: &str, bot_api: &Arc<dy
         user.global_username.as_deref().unwrap_or("(none)")
     );
 
-    // B) Do the actual flows (VRChat, Discord, or standard OAuth)
+    // Step B) Do the actual flows (VRChat, Discord, or standard OAuth)
     let cred_result = if platform == Platform::VRChat {
         vrchat_add_flow(platform.clone(), user.user_id, bot_api).await
     } else if platform == Platform::Discord && is_bot {
@@ -318,7 +318,7 @@ async fn vrchat_add_flow(
     match first_res {
         Ok(first_cred) => {
             // success on the first try
-            return Ok(first_cred);
+            Ok(first_cred)
         }
         Err(err) => {
             let msg = format!("{err}");
@@ -348,7 +348,8 @@ async fn vrchat_add_flow(
     }
 }
 
-/// Specialized Discord flow for bot accounts: prompt for "bot_token" (and possibly fetch /users/@me).
+/// Specialized Discord flow for bot accounts: prompt for "bot_token" (and possibly fetch /users/@me)
+/// and also ask for the "app id" to store in `refresh_token`.
 async fn discord_bot_add_flow(
     platform: Platform,
     user_id: Uuid,
@@ -356,12 +357,12 @@ async fn discord_bot_add_flow(
 ) -> Result<PlatformCredential, Error> {
     let flow_str = bot_api.begin_auth_flow(platform.clone(), true).await?;
 
-    // FIX HERE: changed to "MultipleKeys"
     if !flow_str.contains("MultipleKeys") {
         return Err(Error::Auth(format!("Unexpected Discord bot prompt => {flow_str}")));
     }
 
-    // We'll gather the token, attempt to fetch /users/@me, then pass results:
+    // We'll gather the token, attempt to fetch /users/@me, then pass results,
+    // plus also ask for the "app_id" that we store in refresh_token.
     let map = prompt_discord_bot_token_and_fetch().await?;
     let final_cred = bot_api
         .complete_auth_flow_for_user_multi(platform, user_id, map)
@@ -410,7 +411,6 @@ async fn do_oauth_like_flow_and_return_cred(
             .await?;
         Ok(new_cred)
     }
-    // FIX HERE: changed to "(MultipleKeys)"
     else if flow_str.contains("(MultipleKeys)") {
         println!("Auth flow said: {flow_str}");
         let keys_map = prompt_for_multiple_keys()?;
@@ -564,7 +564,8 @@ fn prompt_for_multiple_keys() -> Result<HashMap<String, String>, Error> {
     Ok(keys_map)
 }
 
-/// Prompt user for a Discord Bot Token, possibly call /users/@me, and let user override.
+/// Prompt user for a Discord Bot Token and attempt to fetch /users/@me.
+/// Also ask for the Bot Application ID, which we store in refresh_token.
 async fn prompt_discord_bot_token_and_fetch() -> Result<HashMap<String, String>, Error> {
     use reqwest::Client;
     #[derive(serde::Deserialize)]
@@ -574,7 +575,7 @@ async fn prompt_discord_bot_token_and_fetch() -> Result<HashMap<String, String>,
         discriminator: String,
     }
 
-    println!("\nDiscord flow => we’ll ask for your Bot token, then fetch /users/@me.\n");
+    println!("\nDiscord flow => we’ll ask for your Bot token, fetch /users/@me, and then your Application ID.\n");
     print!("Paste your Discord Bot Token: ");
     let _ = stdout().flush();
     let mut token_line = String::new();
@@ -594,20 +595,20 @@ async fn prompt_discord_bot_token_and_fetch() -> Result<HashMap<String, String>,
         Ok(r) => r,
         Err(e) => {
             eprintln!("(Warning) Could not call /users/@me => {e}");
-            return read_discord_bot_ids_manually(bot_token);
+            return read_discord_bot_ids_manually(bot_token).await;
         }
     };
 
     if !resp.status().is_success() {
         eprintln!("(Warning) /users/@me returned HTTP {}", resp.status());
-        return read_discord_bot_ids_manually(bot_token);
+        return read_discord_bot_ids_manually(bot_token).await;
     }
 
     let body: DiscordMe = match resp.json().await {
         Ok(b) => b,
         Err(e) => {
             eprintln!("(Warning) Could not parse Discord /users/@me => {e}");
-            return read_discord_bot_ids_manually(bot_token);
+            return read_discord_bot_ids_manually(bot_token).await;
         }
     };
 
@@ -641,15 +642,24 @@ async fn prompt_discord_bot_token_and_fetch() -> Result<HashMap<String, String>,
         }
     };
 
+    // Now also ask for the Bot's App ID
+    println!("Enter your Discord Application ID (App ID):");
+    print!("> ");
+    let _ = stdout().flush();
+    let mut line_app = String::new();
+    stdin().read_line(&mut line_app).ok();
+    let final_app_id = line_app.trim().to_string();
+
     let mut map = HashMap::new();
     map.insert("bot_token".to_string(), bot_token.to_string());
     map.insert("bot_user_id".to_string(), final_id.to_string());
     map.insert("bot_username".to_string(), final_name.to_string());
+    map.insert("bot_app_id".to_string(), final_app_id);
     Ok(map)
 }
 
-/// If we fail the /users/@me fetch, ask for IDs manually:
-fn read_discord_bot_ids_manually(bot_token: &str) -> Result<HashMap<String, String>, Error> {
+/// If we fail the /users/@me fetch, ask for IDs manually. Also ask for `bot_app_id`.
+async fn read_discord_bot_ids_manually(bot_token: &str) -> Result<HashMap<String, String>, Error> {
     println!("Enter your Discord Bot User ID:");
     print!("> ");
     let _ = stdout().flush();
@@ -670,10 +680,22 @@ fn read_discord_bot_ids_manually(bot_token: &str) -> Result<HashMap<String, Stri
         return Err(Error::Auth("Discord: no bot_username provided.".into()));
     }
 
+    // Also get the app ID
+    println!("Enter your Discord Application ID (App ID):");
+    print!("> ");
+    let _ = stdout().flush();
+    let mut line_app = String::new();
+    stdin().read_line(&mut line_app).ok();
+    let final_app_id = line_app.trim().to_string();
+    if final_app_id.is_empty() {
+        eprintln!("(Warning) No Discord Application ID entered. We'll store an empty refresh_token.");
+    }
+
     let mut map = HashMap::new();
     map.insert("bot_token".to_string(), bot_token.to_string());
     map.insert("bot_user_id".to_string(), final_id);
     map.insert("bot_username".to_string(), final_name);
+    map.insert("bot_app_id".to_string(), final_app_id);
     Ok(map)
 }
 
@@ -864,7 +886,7 @@ async fn set_account_type(
             // try by name
             match bot_api.find_user_by_name(user_str).await {
                 Ok(u) => u.user_id,
-                Err(e) => return format!("No user found: {:?}", e),
+                Err(_) => return format!("No user found: {user_str}"),
             }
         }
     };
