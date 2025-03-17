@@ -19,20 +19,21 @@ use twilight_gateway::{
     MessageSender,
     StreamExt,
 };
-use twilight_http::Client as HttpClient;
 use twilight_http::client::ClientBuilder;
-use twilight_model::channel::ChannelType;
-use twilight_model::gateway::payload::incoming::{MessageCreate, Ready as ReadyPayload};
-use twilight_model::id::marker::{ChannelMarker, GuildMarker};
-use twilight_model::id::Id;
+use twilight_http::Client as HttpClient;
+use twilight_model::{
+    channel::ChannelType,
+    gateway::payload::incoming::{InteractionCreate, MessageCreate, Ready as ReadyPayload},
+    id::marker::{ApplicationMarker, ChannelMarker},
+};
 
-use crate::Error;
-use crate::eventbus::EventBus;
-use maowbot_common::error::Error as CommonError;
-use maowbot_common::models::discord::{DiscordChannelRecord, DiscordGuildRecord};
-use maowbot_common::traits::api::DiscordApi;
+use maowbot_common::error::Error;
 use maowbot_common::traits::platform_traits::{ConnectionStatus, PlatformAuth, PlatformIntegration};
 
+use crate::eventbus::EventBus;
+use crate::services::discord::slashcommands;
+
+/// Represents inbound chat message data (not slash commands).
 #[derive(Debug, Clone)]
 pub struct DiscordMessageEvent {
     pub channel: String,
@@ -42,16 +43,14 @@ pub struct DiscordMessageEvent {
     pub user_roles: Vec<String>,
 }
 
-/// The shard runner function remains basically the same:
-///   - calls `shard.next_event(...)`
-///   - updates the in-memory cache
-///   - sends inbound chat messages to `tx`.
+/// The shard runner reads gateway events and updates the cache.
 async fn shard_runner(
     mut shard: Shard,
     tx: UnboundedSender<DiscordMessageEvent>,
     http: Arc<HttpClient>,
     event_bus: Option<Arc<EventBus>>,
     cache: Arc<InMemoryCache>,
+    application_id: Option<twilight_model::id::Id<ApplicationMarker>>,
 ) {
     let shard_id = shard.id().number();
     info!("(ShardRunner) Shard {shard_id} started. Listening for events.");
@@ -59,6 +58,7 @@ async fn shard_runner(
     while let Some(item) = shard.next_event(EventTypeFlags::all()).await {
         match item {
             Ok(event) => {
+                // Update the in-memory cache with each event
                 cache.update(&event);
 
                 match &event {
@@ -71,32 +71,76 @@ async fn shard_runner(
                     }
                     Event::MessageCreate(msg_create) => {
                         let msg: &MessageCreate = msg_create;
+                        // Ignore bot messages:
                         if msg.author.bot {
                             debug!("Ignoring bot message from {}", msg.author.name);
                             continue;
                         }
-                        let channel_name = match http.channel(msg.channel_id).await {
-                            Ok(resp) => match resp.model().await {
-                                Ok(ch_obj) => match ch_obj.kind {
-                                    ChannelType::GuildText
-                                    | ChannelType::GuildVoice
-                                    | ChannelType::GuildForum
-                                    | ChannelType::GuildStageVoice => {
-                                        ch_obj.name.unwrap_or_else(|| msg.channel_id.to_string())
-                                    }
-                                    ChannelType::Private => format!("(DM {})", msg.channel_id),
-                                    ChannelType::Group => "(Group DM)".to_string(),
-                                    _ => msg.channel_id.to_string(),
-                                },
-                                Err(e) => {
-                                    error!("Error parsing channel => {e:?}");
-                                    msg.channel_id.to_string()
-                                }
-                            },
+
+                        // Using .await? style in 0.16:
+                        let channel_resp = match http.channel(msg.channel_id).await {
+                            Ok(resp) => resp, // a Response<Channel>
                             Err(e) => {
                                 error!("Error fetching channel => {e:?}");
-                                msg.channel_id.to_string()
+                                continue;
                             }
+                        };
+
+                        // Attempt to deserialize the channel
+                        let ch_obj = match channel_resp.model().await {
+                            Ok(ch) => ch,
+                            Err(_) => {
+                                // fallback if we fail to parse
+                                twilight_model::channel::Channel {
+                                    id: msg.channel_id,
+                                    invitable: None,
+                                    kind: ChannelType::Unknown(0),
+                                    name: None,
+                                    last_message_id: None,
+                                    last_pin_timestamp: None,
+                                    parent_id: None,
+                                    permission_overwrites: None,
+                                    position: None,
+                                    bitrate: None,
+                                    default_auto_archive_duration: None,
+                                    default_forum_layout: None,
+                                    default_reaction_emoji: None,
+                                    default_sort_order: None,
+                                    default_thread_rate_limit_per_user: None,
+                                    user_limit: None,
+                                    rate_limit_per_user: None,
+                                    recipients: None,
+                                    rtc_region: None,
+                                    nsfw: None,
+                                    topic: None,
+                                    guild_id: None,
+                                    icon: None,
+                                    owner_id: None,
+                                    application_id,
+                                    applied_tags: None,
+                                    managed: None,
+                                    member: None,
+                                    member_count: None,
+                                    message_count: None,
+                                    available_tags: None,
+                                    flags: None,
+                                    newly_created: None,
+                                    thread_metadata: None,
+                                    video_quality_mode: None,
+                                }
+                            }
+                        };
+
+                        let channel_name = match ch_obj.kind {
+                            ChannelType::GuildText
+                            | ChannelType::GuildVoice
+                            | ChannelType::GuildForum
+                            | ChannelType::GuildStageVoice => {
+                                ch_obj.name.unwrap_or_else(|| msg.channel_id.to_string())
+                            }
+                            ChannelType::Private => format!("(DM {})", msg.channel_id),
+                            ChannelType::Group => "(Group DM)".to_string(),
+                            _ => msg.channel_id.to_string(),
                         };
 
                         let user_roles: Vec<String> = msg
@@ -112,10 +156,19 @@ async fn shard_runner(
                             text: msg.content.clone(),
                             user_roles,
                         });
-
-                        if let Some(bus) = &event_bus {
-                            trace!("(EventBus) Not implemented for Discord chat yet.");
-                            let _ = bus;
+                    }
+                    Event::InteractionCreate(inter_create) => {
+                        if let Some(app_id) = application_id {
+                            // Dispatch slash command
+                            if let Err(e) = slashcommands::handle_interaction_create(
+                                http.clone(),
+                                app_id,
+                                inter_create,
+                            )
+                                .await
+                            {
+                                error!("Slash command error => {e:?}");
+                            }
                         }
                     }
                     _ => {
@@ -132,21 +185,23 @@ async fn shard_runner(
     warn!("(ShardRunner) Shard {shard_id} event loop ended.");
 }
 
-/// The main DiscordPlatform struct now stores:
-///   - `rx: Mutex<Option<UnboundedReceiver<DiscordMessageEvent>>>`
+/// Primary struct for your Discord integration.
 pub struct DiscordPlatform {
     pub token: String,
     pub connection_status: ConnectionStatus,
-
-    /// We store the receiver in an Option. By default in the constructor, it's None.
+    /// For normal chat messages
     pub rx: Mutex<Option<UnboundedReceiver<DiscordMessageEvent>>>,
-
+    /// Each shard spawns a task
     pub shard_tasks: Vec<JoinHandle<()>>,
     pub shard_senders: Vec<MessageSender>,
-
+    /// The Twilight HTTP client
     pub http: Option<Arc<HttpClient>>,
+    /// The in-memory cache as an Arc
     pub cache: Option<Arc<InMemoryCache>>,
+    /// Optional event bus for global broadcast
     pub event_bus: Option<Arc<EventBus>>,
+    /// If set, the ID for slash commands
+    pub application_id: Option<twilight_model::id::Id<ApplicationMarker>>,
 }
 
 impl DiscordPlatform {
@@ -154,13 +209,13 @@ impl DiscordPlatform {
         Self {
             token,
             connection_status: ConnectionStatus::Disconnected,
-            // Start out with no channel set
             rx: Mutex::new(None),
             shard_tasks: Vec::new(),
             shard_senders: Vec::new(),
             http: None,
             cache: None,
             event_bus: None,
+            application_id: None,
         }
     }
 
@@ -168,23 +223,25 @@ impl DiscordPlatform {
         self.event_bus = Some(bus);
     }
 
-    /// Callers can `await` the next inbound message. We'll lock `self.rx`,
-    /// get the receiver from the Option, then call `.recv()` on it if present.
+    pub fn set_application_id_from_refresh_token(&mut self, refresh_token: &str) -> Result<(), Error> {
+        let app_id = refresh_token.parse::<u64>()
+            .map_err(|e| Error::Platform(format!("Failed to parse application id from refresh token: {e}")))?;
+        self.application_id = Some(twilight_model::id::Id::new(app_id));
+        Ok(())
+    }
+
+    /// Wait for the next inbound chat message.
     pub async fn next_message_event(&self) -> Option<DiscordMessageEvent> {
         let mut guard = self.rx.lock().await;
-        match guard.as_mut() {
-            Some(r) => r.recv().await,
-            None => None,
-        }
+        guard.as_mut()?.recv().await
     }
 }
 
-/// For auth, unchanged:
 #[async_trait]
 impl PlatformAuth for DiscordPlatform {
     async fn authenticate(&mut self) -> Result<(), Error> {
         if self.token.is_empty() {
-            return Err(Error::Auth("Discord token is empty".into()));
+            return Err(Error::Auth("Discord token is empty.".into()));
         }
         Ok(())
     }
@@ -199,7 +256,6 @@ impl PlatformAuth for DiscordPlatform {
     }
 }
 
-/// Connect, create the unbounded channel, store it in `rx`, and spawn the shard runner
 #[async_trait]
 impl PlatformIntegration for DiscordPlatform {
     async fn connect(&mut self) -> Result<(), Error> {
@@ -208,51 +264,56 @@ impl PlatformIntegration for DiscordPlatform {
             return Ok(());
         }
 
-        // Create the unbounded channel:
+        // For normal chat messages
         let (tx, rx) = unbounded_channel::<DiscordMessageEvent>();
-
-        // Store the receiver in our `Mutex<Option<Receiver<...>>>`
         {
             let mut guard = self.rx.lock().await;
             *guard = Some(rx);
         }
 
-        // Prepare the Twilight client:
+        // Build the Twilight HTTP client
         let http_client = Arc::new(
             ClientBuilder::new()
                 .token(self.token.clone())
                 .timeout(Duration::from_secs(30))
-                .build()
+                .build(),
         );
         self.http = Some(http_client.clone());
 
-        // Prepare the in-memory cache:
+        // Build the in-memory cache as an Arc
         let cache = InMemoryCache::builder()
             .resource_types(ResourceType::GUILD | ResourceType::CHANNEL | ResourceType::MESSAGE)
             .build();
-        let cache = Arc::new(cache);
-        self.cache = Some(cache.clone());
+        let arc_cache = Arc::new(cache);
+        self.cache = Some(arc_cache.clone());
 
-        // Gateway config:
+        // If we have an application_id, register slash commands
+        if let Some(app_id) = self.application_id {
+            if let Err(e) = slashcommands::register_global_slash_commands(&http_client, app_id).await {
+                error!("Failed to register slash commands => {e:?}");
+            }
+        }
+
+        // Create recommended shards
         let config = Config::new(
             self.token.clone(),
             Intents::GUILDS | Intents::GUILD_MESSAGES | Intents::MESSAGE_CONTENT,
         );
 
-        // Create recommended shards:
         let shards = gateway::create_recommended(&http_client, config, |_, b| b.build())
             .await
             .map_err(|e| Error::Platform(format!("create_recommended error: {e}")))?;
 
+        // Spawn each shard
         for shard in shards {
             self.shard_senders.push(shard.sender());
 
             let tx_for_shard = tx.clone();
             let http_for_shard = http_client.clone();
             let bus_for_shard = self.event_bus.clone();
-            let cache_for_shard = cache.clone();
+            let cache_for_shard = arc_cache.clone();
+            let app_id = self.application_id;
 
-            // Spawn the shard runner:
             let handle = tokio::spawn(async move {
                 shard_runner(
                     shard,
@@ -260,6 +321,7 @@ impl PlatformIntegration for DiscordPlatform {
                     http_for_shard,
                     bus_for_shard,
                     cache_for_shard,
+                    app_id,
                 )
                     .await;
             });
@@ -273,19 +335,17 @@ impl PlatformIntegration for DiscordPlatform {
     async fn disconnect(&mut self) -> Result<(), Error> {
         self.connection_status = ConnectionStatus::Disconnected;
 
-        // Gracefully close shards
+        // Gracefully close
         for sender in &self.shard_senders {
             let _ = sender.close(CloseFrame::NORMAL);
         }
-        // Wait for them
         for task in &mut self.shard_tasks {
             let _ = task.await;
         }
-
         self.shard_senders.clear();
         self.shard_tasks.clear();
 
-        // Optionally set rx back to None:
+        // Clear inbound channel
         {
             let mut guard = self.rx.lock().await;
             *guard = None;
@@ -294,17 +354,20 @@ impl PlatformIntegration for DiscordPlatform {
         Ok(())
     }
 
+    /// For 0.16, `.content(...)` is not a `Result`. No `?` needed.
     async fn send_message(&self, channel: &str, message: &str) -> Result<(), Error> {
         let channel_id_u64: u64 = channel.parse().map_err(|_| {
-            Error::Platform(format!("Invalid channel ID: {channel}"))
+            Error::Platform(format!("Invalid channel ID: {}", channel))
         })?;
-        let channel_id = Id::<ChannelMarker>::new(channel_id_u64);
+        let channel_id = twilight_model::id::Id::<ChannelMarker>::new(channel_id_u64);
 
         if let Some(http) = &self.http {
             http.create_message(channel_id)
                 .content(message)
+                // `.content(...)` is not a Result in Twilight 0.16,
+                // so no `.map_err(...)` or `?`.
                 .await
-                .map_err(|e| Error::Platform(format!("Error sending Discord message: {e:?}")))?;
+                .map_err(|e| Error::Platform(format!("Failed to send Discord message: {e}")))?;
         }
 
         Ok(())

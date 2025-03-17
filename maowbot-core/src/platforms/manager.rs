@@ -173,6 +173,11 @@ impl PlatformManager {
 
         // We create the DiscordPlatform:
         let mut discord = DiscordPlatform::new(token);
+
+        if let Some(app_id_str) = &credential.refresh_token {
+            discord.set_application_id_from_refresh_token(app_id_str)?;
+        }
+
         discord.set_event_bus(self.event_bus.clone());
         discord.connect().await?;
 
