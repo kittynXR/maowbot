@@ -17,10 +17,6 @@ pub async fn handle_stream_online(
     platform_manager: &PlatformManager,
     user_service: &UserService,
     bot_config_repo: &dyn BotConfigRepository,
-    // If you need the Discord repo, pass it in or fetch from container, etc.
-    // For example, if your code organizes it differently, you might pass
-    // `discord_repo: &PostgresDiscordRepository`. For now, we assume we have
-    // access to it somehow:
     discord_repo: &PostgresDiscordRepository,
 ) -> Result<(), Error> {
     // 1) Possibly do your custom logic with 'evt'
@@ -51,11 +47,9 @@ pub async fn handle_stream_online(
                 {
                     dc_cred.user_name
                 } else {
-                    // fallback
                     "cutecat_chat".to_string()
                 }
             } else {
-                // fallback if not specified
                 "cutecat_chat".to_string()
             };
 

@@ -1,0 +1,8 @@
+[package]
+name = "maowbot-ai"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+maowbot-common = { path = "../maowbot-common" }
+

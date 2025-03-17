@@ -2,6 +2,7 @@
 [workspace]
 resolver = "2"
 members = [
+    "maowbot-ai",
     "maowbot-common",
     "maowbot-core",
     "maowbot-osc",
