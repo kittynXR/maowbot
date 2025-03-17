@@ -50,5 +50,7 @@ CREATE TABLE discord_event_config (
     channel_id                  TEXT NOT NULL,
     respond_with_credential     UUID NULL,
     created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+CONSTRAINT discord_event_config_unique
+UNIQUE (event_name, guild_id, channel_id, respond_with_credential)
 );

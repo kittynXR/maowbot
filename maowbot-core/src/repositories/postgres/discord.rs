@@ -27,9 +27,6 @@ impl PostgresDiscordRepository {
         Self { pool }
     }
 
-    // -----------------------------------------------------------------------------------
-    // "Single-row" (legacy) upsert method: upsert_event_config()
-    // -----------------------------------------------------------------------------------
     pub async fn upsert_event_config(
         &self,
         event_name: &str,
@@ -48,7 +45,7 @@ impl PostgresDiscordRepository {
                 updated_at
             )
             VALUES (gen_random_uuid(), $1, $2, $3, $4, NOW(), NOW())
-            ON CONFLICT (event_name)
+            ON CONFLICT (event_name, guild_id, channel_id, respond_with_credential)
             DO UPDATE SET
                 guild_id = EXCLUDED.guild_id,
                 channel_id = EXCLUDED.channel_id,
@@ -156,7 +153,8 @@ impl PostgresDiscordRepository {
             )
             VALUES (gen_random_uuid(), $1, $2, $3, $4, now(), now())
             ON CONFLICT (event_name, guild_id, channel_id, respond_with_credential)
-            DO NOTHING
+            DO UPDATE SET
+                updated_at = now()
         "#;
         sqlx::query(q)
             .bind(event_name)
@@ -545,7 +543,7 @@ impl DiscordRepository for PostgresDiscordRepository {
             SET is_active=false
             WHERE account_name=$1
               AND guild_id=$2
-            "#,
+            "#
         )
             .bind(account_name)
             .bind(guild_id)

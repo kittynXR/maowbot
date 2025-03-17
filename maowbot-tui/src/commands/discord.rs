@@ -4,7 +4,6 @@ use maowbot_common::models::platform::Platform;
 use maowbot_common::traits::api::BotApi;
 
 /// Handle "discord" TUI commands.
-
 pub async fn handle_discord_command(args: &[&str], bot_api: &Arc<dyn BotApi>) -> String {
     if args.is_empty() {
         return show_usage();
@@ -173,8 +172,8 @@ pub async fn handle_discord_command(args: &[&str], bot_api: &Arc<dyn BotApi>) ->
 /// Helper for “discord event add|remove|list” subcommands
 /// Usage:
 ///   discord event list
-///   discord event add <eventname> [guildid] <channelid> [accountOrCredUUID]
-///   discord event remove <eventname> [guildid] <channelid> [accountOrCredUUID]
+///   discord event add <eventname> <channelid> [guildid] [acctOrCred]
+///   discord event remove <eventname> <channelid> [guildid] [acctOrCred]
 /// --------------------------------------------------------------------------
 async fn handle_discord_event_command(args: &[&str], bot_api: &Arc<dyn BotApi>) -> String {
     if args.is_empty() {
@@ -207,107 +206,52 @@ async fn handle_discord_event_command(args: &[&str], bot_api: &Arc<dyn BotApi>) 
             }
         }
         "add" => {
-            if args.len() < 2 {
-                return "Usage: discord event add <eventname> [guildid] <channelid> [acctOrCred]".to_string();
+            // New format: discord event add <eventname> <channelid> [guildid] [acctOrCred]
+            if args.len() < 3 {
+                return "Usage: discord event add <eventname> <channelid> [guildid] [acctOrCred]".to_string();
             }
-            let mut idx = 1;
-            let event_name = args[idx];
-            idx += 1;
+            let event_name = args[1];
+            let channel_arg = args[2];
+            let maybe_guild = if args.len() >= 4 { Some(args[3]) } else { None };
+            let maybe_acct_or_cred = if args.len() >= 5 { Some(args[4]) } else { None };
 
-            // We may or may not have a "guildid" next
-            // We also need a channelId. Let's parse them carefully.
-            // We'll see how many remaining arguments we have.
-            if args.len() < (idx + 1) {
-                return "Usage: discord event add <eventname> [guildid] <channelid> [acctOrCred]".to_string();
-            }
-
-            // We'll store optional guild first
-            // Then mandatory channel
-            let mut maybe_guild = None;
-            let mut channel_arg = "";
-
-            // We'll try to guess if the next arg is a channel or a guild.
-            // If there's only one guild in the system, we can skip asking for it.
-            let accounts = match bot_api.list_credentials(Some(Platform::Discord)).await {
-                Ok(list) => list,
-                Err(e) => return format!("Could not list Discord credentials: {e}"),
-            };
-
-            // We'll see if the next argument is a numeric or large Snowflake => let's assume it might be guildID
-            // But user might skip guild if there's only one. Let's see how many guilds we have for the single
-            // or active account. If there's multiple accounts or multiple guilds, we must parse or fail.
-            // For brevity, we do a minimal approach:
-
-            // Figure out how many Discord accounts we have:
-            let discord_accounts: Vec<_> = accounts.into_iter().collect();
-            let single_account_name = if discord_accounts.len() == 1 {
-                discord_accounts[0].user_name.clone()
-            } else if discord_accounts.is_empty() {
-                return "No Discord accounts found in credentials.".to_string();
-            } else {
-                // multiple accounts
-                // The user might specify the last argument as an account name or credential UUID
-                // We'll just do partial checking: let them pass it explicitly.
-                // We'll keep going but won't handle multiple seamlessly.
-                // We'll store that for the respond_with_credential if given.
-                discord_accounts[0].user_name.clone()
-            };
-
-            // We'll next see if we can parse a possible guild ID from the next arg
-            let next_arg = args[idx];
-            if is_possible_snowflake(next_arg) && args.len() > (idx + 1) {
-                // We'll assume it's guild
-                maybe_guild = Some(next_arg);
-                idx += 1;
-                // now the next arg is channel
-                if args.len() <= idx {
-                    return "Expected a <channelid> after the guildid.".to_string();
-                }
-                channel_arg = args[idx];
-                idx += 1;
-            } else {
-                // We skip guild, let's see if there's only one guild
-                channel_arg = next_arg;
-                idx += 1;
-            }
-
-            // Finally, optional accountOrCred
-            let maybe_acct_or_cred = if args.len() > idx {
-                Some(args[idx])
-            } else {
-                None
-            };
-
-            // If we did not specify guild, see if there's exactly one known guild for the default account
+            // Determine guild string
             let guild_str = if let Some(g) = maybe_guild {
                 g.to_string()
             } else {
-                // Try listing guilds for single_account_name
+                // If no guild is specified, try to use the single guild from the default account.
+                let accounts = match bot_api.list_credentials(Some(Platform::Discord)).await {
+                    Ok(list) => list,
+                    Err(e) => return format!("Could not list Discord credentials: {e}"),
+                };
+                if accounts.is_empty() {
+                    return "No Discord accounts found in credentials.".to_string();
+                }
+                let single_account_name = if accounts.len() == 1 {
+                    accounts[0].user_name.clone()
+                } else {
+                    return "Multiple Discord accounts found; please specify guild ID explicitly.".to_string();
+                };
                 match bot_api.list_discord_guilds(&single_account_name).await {
                     Ok(guilds) => {
                         if guilds.len() == 1 {
                             guilds[0].guild_id.clone()
                         } else if guilds.is_empty() {
-                            return "No guilds found in memory for that account. Provide a guild ID explicitly.".to_string();
+                            return "No guilds found for that account. Provide a guild ID explicitly.".to_string();
                         } else {
-                            return "Multiple guilds found; please specify [guildid].".to_string();
+                            return "Multiple guilds found; please specify guild ID explicitly.".to_string();
                         }
                     }
                     Err(e) => return format!("Error listing guilds => {e}"),
                 }
             };
 
-            // parse channel
-            let channel_str = channel_arg.to_string();
-
-            // parse credential (accountName or credential UUID)
+            // Parse credential (optional)
             let mut respond_with_cred: Option<Uuid> = None;
             if let Some(acct_or_cred) = maybe_acct_or_cred {
-                // check if it might be a UUID
                 if let Ok(cid) = Uuid::parse_str(acct_or_cred) {
                     respond_with_cred = Some(cid);
                 } else {
-                    // or see if it matches a known credential name:
                     let platform_creds = match bot_api.list_credentials(Some(Platform::Discord)).await {
                         Ok(c) => c,
                         Err(e) => return format!("Could not fetch credentials: {e}"),
@@ -319,59 +263,36 @@ async fn handle_discord_event_command(args: &[&str], bot_api: &Arc<dyn BotApi>) 
                         return format!("Could not find a Discord credential for '{acct_or_cred}'.");
                     }
                 }
-            } else {
-                // if we have multiple accounts, user must specify
-                // we'll just do nothing if there's exactly one
             }
 
             // Now call the API
             match bot_api
-                .add_discord_event_config(&event_name, &guild_str, &channel_str, respond_with_cred)
+                .add_discord_event_config(&event_name, &guild_str, &channel_arg, respond_with_cred)
                 .await
             {
                 Ok(_) => format!(
-                    "Added event config: event='{}' guild='{}' channel='{}' cred={:?}",
-                    event_name, guild_str, channel_str, respond_with_cred
+                    "Added event config: event='{}' channel='{}' guild='{}' cred={:?}",
+                    event_name, channel_arg, guild_str, respond_with_cred
                 ),
                 Err(e) => format!("Error adding event config => {e}"),
             }
         }
 
         "remove" => {
-            // Usage: discord event remove <eventname> [guildid] <channelid> [accountOrCred]
-            if args.len() < 2 {
-                return "Usage: discord event remove <eventname> [guildid] <channelid> [acctOrCred]".to_string();
+            // New format: discord event remove <eventname> <channelid> [guildid] [acctOrCred]
+            if args.len() < 3 {
+                return "Usage: discord event remove <eventname> <channelid> [guildid] [acctOrCred]".to_string();
             }
+            let event_name = args[1];
+            let channel_arg = args[2];
+            let maybe_guild = if args.len() >= 4 { Some(args[3]) } else { None };
+            let maybe_acct_or_cred = if args.len() >= 5 { Some(args[4]) } else { None };
 
-            let mut idx = 1;
-            let event_name = args[idx];
-            idx += 1;
-
-            let next_arg = args[idx];
-            idx += 1;
-
-            let mut maybe_guild = None;
-            let mut channel_arg = "";
-
-            if is_possible_snowflake(next_arg) && args.len() > idx {
-                maybe_guild = Some(next_arg);
-                channel_arg = args[idx];
-                idx += 1;
-            } else {
-                channel_arg = next_arg;
-            }
-
-            let maybe_acct_or_cred = if args.len() > idx {
-                Some(args[idx])
-            } else {
-                None
-            };
-
-            let single_account_name = "cutecat_chat"; // for brevity, we re-use
             let guild_str = if let Some(g) = maybe_guild {
                 g.to_string()
             } else {
-                // attempt to see if there's only one guild:
+                // Use a default account's single guild if available
+                let single_account_name = "cutecat_chat";
                 match bot_api.list_discord_guilds(single_account_name).await {
                     Ok(guilds) => {
                         if guilds.len() == 1 {
@@ -386,14 +307,11 @@ async fn handle_discord_event_command(args: &[&str], bot_api: &Arc<dyn BotApi>) 
                 }
             };
 
-            let channel_str = channel_arg.to_string();
-
             let mut respond_with_cred: Option<Uuid> = None;
             if let Some(acct_or_cred) = maybe_acct_or_cred {
                 if let Ok(cid) = Uuid::parse_str(acct_or_cred) {
                     respond_with_cred = Some(cid);
                 } else {
-                    // see if it’s a known user_name for a Discord credential
                     let platform_creds = match bot_api.list_credentials(Some(Platform::Discord)).await {
                         Ok(c) => c,
                         Err(e) => return format!("Could not fetch credentials: {e}"),
@@ -408,12 +326,12 @@ async fn handle_discord_event_command(args: &[&str], bot_api: &Arc<dyn BotApi>) 
             }
 
             match bot_api
-                .remove_discord_event_config(&event_name, &guild_str, &channel_str, respond_with_cred)
+                .remove_discord_event_config(&event_name, &guild_str, &channel_arg, respond_with_cred)
                 .await
             {
                 Ok(_) => format!(
-                    "Removed event config for event='{}' guild='{}' channel='{}' cred={:?}",
-                    event_name, guild_str, channel_str, respond_with_cred
+                    "Removed event config for event='{}' channel='{}' guild='{}' cred={:?}",
+                    event_name, channel_arg, guild_str, respond_with_cred
                 ),
                 Err(e) => format!("Error removing event config => {e}"),
             }
@@ -430,14 +348,14 @@ fn show_usage() -> String {
   discord channels [guildId]
       -> list channels in the single known guild or the specified one
   discord event list
-  discord event add <eventName> [guildId] <channelId> [accountOrCredUUID]
-  discord event remove <eventName> [guildId] <channelId> [accountOrCredUUID]
+  discord event add <eventName> <channelId> [guildId] [accountOrCredUUID]
+  discord event remove <eventName> <channelId> [guildId] [accountOrCredUUID]
   discord msg <serverId> <channelId> [message text...]
 "#
         .to_string()
 }
 
-/// A small helper to check if a string might be a Discord snowflake (18-20 digits).
+// A small helper to check if a string might be a Discord snowflake (18-20 digits).
 fn is_possible_snowflake(s: &str) -> bool {
     if s.len() < 5 || s.len() > 20 {
         return false;
