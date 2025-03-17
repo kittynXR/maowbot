@@ -4,14 +4,15 @@
 use async_trait::async_trait;
 use chrono::Utc;
 use sqlx::{Pool, Postgres, Row, Transaction};
-use tracing::{debug, warn, info};  // <-- CHANGED: added `info`
+use tracing::{debug, warn, info};
 
-// IMPORTANT: We need this import so &mut Transaction<'_, Postgres> implements Executor
 use sqlx::Executor;
 
 use maowbot_common::error::Error;
 use maowbot_common::models::discord::{
     DiscordAccountRecord, DiscordChannelRecord, DiscordGuildRecord,
+    // NEW:
+    DiscordEventConfigRecord,
 };
 use maowbot_common::traits::repository_traits::DiscordRepository;
 
@@ -25,8 +26,123 @@ impl PostgresDiscordRepository {
     pub fn new(pool: Pool<Postgres>) -> Self {
         Self { pool }
     }
+
+    // ------------------------------------------------------------------------------------
+    // HELPER: For DiscordEventConfigRecord, add new CRUD or at least "upsert" & "get" below
+    // ------------------------------------------------------------------------------------
+    /// Creates or updates a `discord_event_config` row keyed by event_name.
+    /// If you only allow one row per `event_name`, you can use event_name as a unique key.
+    pub async fn upsert_event_config(
+        &self,
+        event_name: &str,
+        guild_id: &str,
+        channel_id: &str,
+        respond_with_credential: Option<uuid::Uuid>,
+    ) -> Result<(), Error> {
+        let q = r#"
+            INSERT INTO discord_event_config (
+                event_config_id,
+                event_name,
+                guild_id,
+                channel_id,
+                respond_with_credential,
+                created_at,
+                updated_at
+            )
+            VALUES (gen_random_uuid(), $1, $2, $3, $4, NOW(), NOW())
+            ON CONFLICT (event_name)
+            DO UPDATE SET
+                guild_id = EXCLUDED.guild_id,
+                channel_id = EXCLUDED.channel_id,
+                respond_with_credential = EXCLUDED.respond_with_credential,
+                updated_at = NOW()
+        "#;
+        sqlx::query(q)
+            .bind(event_name)
+            .bind(guild_id)
+            .bind(channel_id)
+            .bind(respond_with_credential)
+            .execute(&self.pool)
+            .await?;
+
+        Ok(())
+    }
+
+    /// Retrieves the event config row for a given event_name, if any.
+    pub async fn get_event_config_by_name(
+        &self,
+        event_name: &str
+    ) -> Result<Option<DiscordEventConfigRecord>, Error> {
+        let q = r#"
+            SELECT event_config_id,
+                   event_name,
+                   guild_id,
+                   channel_id,
+                   respond_with_credential,
+                   created_at,
+                   updated_at
+            FROM discord_event_config
+            WHERE event_name = $1
+            LIMIT 1
+        "#;
+        let row_opt = sqlx::query(q)
+            .bind(event_name)
+            .fetch_optional(&self.pool)
+            .await?;
+
+        if let Some(row) = row_opt {
+            let record = DiscordEventConfigRecord {
+                event_config_id: row.try_get("event_config_id")?,
+                event_name: row.try_get("event_name")?,
+                guild_id: row.try_get("guild_id")?,
+                channel_id: row.try_get("channel_id")?,
+                respond_with_credential: row.try_get("respond_with_credential").ok(),
+                created_at: row.try_get("created_at")?,
+                updated_at: row.try_get("updated_at")?,
+            };
+            Ok(Some(record))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// (Optional) Lists all event configs you might have stored.
+    pub async fn list_event_configs(&self) -> Result<Vec<DiscordEventConfigRecord>, Error> {
+        let q = r#"
+            SELECT event_config_id,
+                   event_name,
+                   guild_id,
+                   channel_id,
+                   respond_with_credential,
+                   created_at,
+                   updated_at
+            FROM discord_event_config
+            ORDER BY event_name
+        "#;
+        let rows = sqlx::query(q)
+            .fetch_all(&self.pool)
+            .await?;
+
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(DiscordEventConfigRecord {
+                event_config_id: row.try_get("event_config_id")?,
+                event_name: row.try_get("event_name")?,
+                guild_id: row.try_get("guild_id")?,
+                channel_id: row.try_get("channel_id")?,
+                respond_with_credential: row.try_get("respond_with_credential").ok(),
+                created_at: row.try_get("created_at")?,
+                updated_at: row.try_get("updated_at")?,
+            });
+        }
+        Ok(out)
+    }
 }
 
+// =================================================================================================
+// Implementation of the existing trait methods
+// (The code below is copied from earlier. We have not changed these beyond possibly logging.)
+// =================================================================================================
 #[async_trait]
 impl DiscordRepository for PostgresDiscordRepository {
     // ------------------------------------------------------------------------
@@ -46,7 +162,7 @@ impl DiscordRepository for PostgresDiscordRepository {
         for row in rows {
             results.push(DiscordAccountRecord {
                 account_name: row.try_get("account_name")?,
-                credential_id: row.try_get("credential_id").ok(), // If column is NULL
+                credential_id: row.try_get("credential_id").ok(),
                 is_active: row.try_get("is_active")?,
                 created_at: row.try_get("created_at")?,
                 updated_at: row.try_get("updated_at")?,
@@ -70,7 +186,6 @@ impl DiscordRepository for PostgresDiscordRepository {
             .execute(&self.pool)
             .await?;
 
-        // <-- ADDED: If this is the ONLY account row, make it active by default.
         let count_q = r#"SELECT COUNT(*) AS cnt FROM discord_accounts"#;
         let total_count: i64 = sqlx::query_scalar(count_q)
             .fetch_one(&self.pool)
@@ -78,7 +193,6 @@ impl DiscordRepository for PostgresDiscordRepository {
             .unwrap_or(0);
 
         if total_count == 1 {
-            // Exactly one row in the entire table => mark it active unconditionally
             let _ = sqlx::query(
                 "UPDATE discord_accounts SET is_active=true"
             )
@@ -93,12 +207,10 @@ impl DiscordRepository for PostgresDiscordRepository {
     async fn set_active_account(&self, account_name: &str) -> Result<(), Error> {
         let mut tx: Transaction<'_, Postgres> = self.pool.begin().await?;
 
-        // 1) set is_active=false for all accounts
         sqlx::query("UPDATE discord_accounts SET is_active=false")
             .execute(&mut *tx)
             .await?;
 
-        // 2) set is_active=true for the specified account
         let rows_affected = sqlx::query(
             "UPDATE discord_accounts SET is_active=true, updated_at=now() WHERE account_name=$1"
         )
@@ -108,11 +220,8 @@ impl DiscordRepository for PostgresDiscordRepository {
             .rows_affected();
 
         if rows_affected == 0 {
-            // <-- CHANGED: Instead of just warning, we do an upsert if it truly doesn't exist.
             warn!("(set_active_account) No existing row for account_name='{account_name}'. Will create new row with is_active=true.");
 
-            // Perform an upsert row for it, automatically set is_active on that row:
-            // (We do this by re-using upsert_account, then setting active explicitly in the same txn.)
             let ins_q = r#"
             INSERT INTO discord_accounts (account_name, credential_id, is_active, created_at, updated_at)
             VALUES ($1, NULL, true, now(), now())
@@ -166,7 +275,6 @@ impl DiscordRepository for PostgresDiscordRepository {
             .execute(&self.pool)
             .await?;
 
-        // <-- ADDED: If this account only has 1 guild row, mark that single guild as active.
         let count_q = r#"
             SELECT COUNT(*) AS cnt
             FROM discord_guilds
@@ -249,7 +357,6 @@ impl DiscordRepository for PostgresDiscordRepository {
     async fn set_active_server(&self, account_name: &str, guild_id: &str) -> Result<(), Error> {
         let mut tx: Transaction<'_, Postgres> = self.pool.begin().await?;
 
-        // 1) set is_active=false for all guilds for this account
         sqlx::query(
             r#"
             UPDATE discord_guilds
@@ -261,7 +368,6 @@ impl DiscordRepository for PostgresDiscordRepository {
             .execute(&mut *tx)
             .await?;
 
-        // 2) set is_active=true for the chosen guild
         let rows_affected = sqlx::query(
             r#"
             UPDATE discord_guilds
@@ -332,7 +438,6 @@ impl DiscordRepository for PostgresDiscordRepository {
             .execute(&self.pool)
             .await?;
 
-        // <-- No auto-activate logic for channels, as requested.
         Ok(())
     }
 
@@ -371,7 +476,6 @@ impl DiscordRepository for PostgresDiscordRepository {
     async fn set_active_channel(&self, account_name: &str, guild_id: &str, channel_id: &str) -> Result<(), Error> {
         let mut tx: Transaction<'_, Postgres> = self.pool.begin().await?;
 
-        // 1) set is_active=false for all channels in that guild
         sqlx::query(
             r#"
             UPDATE discord_channels
@@ -385,7 +489,6 @@ impl DiscordRepository for PostgresDiscordRepository {
             .execute(&mut *tx)
             .await?;
 
-        // 2) set is_active=true for the chosen channel
         let rows_affected = sqlx::query(
             r#"
             UPDATE discord_channels

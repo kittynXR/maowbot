@@ -41,3 +41,13 @@ FOREIGN KEY (account_name, guild_id)
 REFERENCES discord_guilds (account_name, guild_id)
 ON DELETE CASCADE
 );
+
+CREATE TABLE IF NOT EXISTS discord_event_config (
+    event_config_id             UUID NOT NULL DEFAULT gen_random_uuid() PRIMARY KEY,
+    event_name                  TEXT NOT NULL,
+    guild_id                    TEXT NOT NULL,
+    channel_id                  TEXT NOT NULL,
+    respond_with_credential     UUID NULL,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+);

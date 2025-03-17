@@ -187,6 +187,7 @@ impl ServerContext {
             user_service.clone(),
             platform_manager.clone(),
             bot_config_repo.clone(),
+            discord_repo.clone(),
         ));
 
         // 7) Plugin manager

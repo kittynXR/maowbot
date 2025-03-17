@@ -37,3 +37,20 @@ pub struct DiscordChannelRecord {
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
+
+// ------------------------------------------------------------------------------------------------
+// NEW: Holds config for specific Discord events (like "stream.online", "stream.offline", etc.)
+// ------------------------------------------------------------------------------------------------
+#[derive(Debug, Clone)]
+pub struct DiscordEventConfigRecord {
+    pub event_config_id: uuid::Uuid,
+    pub event_name: String,
+    pub guild_id: String,
+    pub channel_id: String,
+    /// If multiple Discord credentials exist, which credential (bot) is used to post?
+    /// If null, use whichever default is active.
+    pub respond_with_credential: Option<uuid::Uuid>,
+
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
