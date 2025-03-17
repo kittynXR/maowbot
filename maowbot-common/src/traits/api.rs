@@ -264,6 +264,4 @@ pub trait BotConfigApi: Send + Sync {
 pub trait DiscordApi {
     async fn list_discord_guilds(&self, account_name: &str) -> Result<Vec<DiscordGuildRecord>, Error>;
     async fn list_discord_channels(&self, account_name: &str, guild_id: &str) -> Result<Vec<DiscordChannelRecord>, Error>;
-    async fn list_discord_commands(&self, account_name: &str) -> Result<Vec<(String, String)>, Error>;
-    async fn send_discord_message(&self, account_name: &str, guild_id: &str, channel_id: &str, text: &str) -> Result<(), Error>;
 }

@@ -3,6 +3,7 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
+use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 use tracing::{debug, error, info, trace, warn};
 
@@ -18,7 +19,8 @@ use twilight_gateway::{
     MessageSender,
     StreamExt,
 };
-use twilight_http::{client::ClientBuilder, Client as HttpClient};
+use twilight_http::Client as HttpClient;
+use twilight_http::client::ClientBuilder;
 use twilight_model::channel::ChannelType;
 use twilight_model::gateway::payload::incoming::{MessageCreate, Ready as ReadyPayload};
 use twilight_model::id::marker::{ChannelMarker, GuildMarker};
@@ -27,11 +29,10 @@ use twilight_model::id::Id;
 use crate::Error;
 use crate::eventbus::EventBus;
 use maowbot_common::error::Error as CommonError;
-use maowbot_common::models::discord::{DiscordAccountRecord, DiscordChannelRecord, DiscordGuildRecord};
+use maowbot_common::models::discord::{DiscordChannelRecord, DiscordGuildRecord};
 use maowbot_common::traits::api::DiscordApi;
 use maowbot_common::traits::platform_traits::{ConnectionStatus, PlatformAuth, PlatformIntegration};
 
-/// Holds incoming Discord chat messages from the shard task.
 #[derive(Debug, Clone)]
 pub struct DiscordMessageEvent {
     pub channel: String,
@@ -41,9 +42,11 @@ pub struct DiscordMessageEvent {
     pub user_roles: Vec<String>,
 }
 
-/// The shard loop. It reads Gateway events, updates the cache, and forwards
-/// message-create events to `tx`.
-pub async fn shard_runner(
+/// The shard runner function remains basically the same:
+///   - calls `shard.next_event(...)`
+///   - updates the in-memory cache
+///   - sends inbound chat messages to `tx`.
+async fn shard_runner(
     mut shard: Shard,
     tx: UnboundedSender<DiscordMessageEvent>,
     http: Arc<HttpClient>,
@@ -51,21 +54,19 @@ pub async fn shard_runner(
     cache: Arc<InMemoryCache>,
 ) {
     let shard_id = shard.id().number();
-    info!("(ShardRunner) Shard {} started. Listening for events.", shard_id);
+    info!("(ShardRunner) Shard {shard_id} started. Listening for events.");
 
-    while let Some(event_res) = shard.next_event(EventTypeFlags::all()).await {
-        match event_res {
+    while let Some(item) = shard.next_event(EventTypeFlags::all()).await {
+        match item {
             Ok(event) => {
-                // Update our cache with every event.
                 cache.update(&event);
 
                 match &event {
-                    Event::Ready(ready_box) => {
-                        let ready_data: &ReadyPayload = ready_box.as_ref();
-                        let user = &ready_data.user;
+                    Event::Ready(ready) => {
+                        let data: &ReadyPayload = ready.as_ref();
                         info!(
-                            "(ShardRunner) Shard {} => READY as {}#{} (ID={})",
-                            shard_id, user.name, user.discriminator, user.id
+                            "Shard {shard_id} => READY as {}#{} (ID={})",
+                            data.user.name, data.user.discriminator, data.user.id
                         );
                     }
                     Event::MessageCreate(msg_create) => {
@@ -74,106 +75,87 @@ pub async fn shard_runner(
                             debug!("Ignoring bot message from {}", msg.author.name);
                             continue;
                         }
-
                         let channel_name = match http.channel(msg.channel_id).await {
-                            Ok(response) => match response.model().await {
-                                Ok(channel_obj) => match channel_obj.kind {
+                            Ok(resp) => match resp.model().await {
+                                Ok(ch_obj) => match ch_obj.kind {
                                     ChannelType::GuildText
                                     | ChannelType::GuildVoice
                                     | ChannelType::GuildForum
                                     | ChannelType::GuildStageVoice => {
-                                        channel_obj
-                                            .name
-                                            .unwrap_or_else(|| msg.channel_id.to_string())
+                                        ch_obj.name.unwrap_or_else(|| msg.channel_id.to_string())
                                     }
-                                    ChannelType::Private => {
-                                        format!("(DM {})", msg.channel_id)
-                                    }
+                                    ChannelType::Private => format!("(DM {})", msg.channel_id),
                                     ChannelType::Group => "(Group DM)".to_string(),
                                     _ => msg.channel_id.to_string(),
                                 },
                                 Err(e) => {
-                                    error!("Error parsing channel => {:?}", e);
+                                    error!("Error parsing channel => {e:?}");
                                     msg.channel_id.to_string()
                                 }
                             },
                             Err(e) => {
-                                error!("Error fetching channel => {:?}", e);
+                                error!("Error fetching channel => {e:?}");
                                 msg.channel_id.to_string()
                             }
                         };
 
-                        let user_id = msg.author.id.to_string();
-                        let username = msg.author.name.clone();
-                        let text = msg.content.clone();
                         let user_roles: Vec<String> = msg
                             .member
                             .as_ref()
                             .map(|m| m.roles.iter().map(|r| r.to_string()).collect())
                             .unwrap_or_default();
 
-                        debug!(
-                            "(ShardRunner) Shard {} => msg '{}' from {} in '{}'; roles={:?}",
-                            shard_id, text, username, channel_name, user_roles
-                        );
-
                         let _ = tx.send(DiscordMessageEvent {
                             channel: channel_name,
-                            user_id,
-                            username,
-                            text,
+                            user_id: msg.author.id.to_string(),
+                            username: msg.author.name.clone(),
+                            text: msg.content.clone(),
                             user_roles,
                         });
 
                         if let Some(bus) = &event_bus {
-                            // Optionally broadcast to your EventBus
                             trace!("(EventBus) Not implemented for Discord chat yet.");
                             let _ = bus;
                         }
                     }
                     _ => {
-                        trace!(
-                            "(ShardRunner) Shard {} => unhandled event: {:?}",
-                            shard_id,
-                            event
-                        );
+                        trace!("Shard {shard_id} => unhandled event: {event:?}");
                     }
                 }
             }
             Err(err) => {
-                error!(
-                    "(ShardRunner) Shard {} => error receiving event: {:?}",
-                    shard_id, err
-                );
+                error!("Shard {shard_id} => error receiving event: {err:?}");
             }
         }
     }
 
-    warn!("(ShardRunner) Shard {} event loop ended.", shard_id);
+    warn!("(ShardRunner) Shard {shard_id} event loop ended.");
 }
 
-/// DiscordPlatform is our ephemeral Discord client + runtime state.
+/// The main DiscordPlatform struct now stores:
+///   - `rx: Mutex<Option<UnboundedReceiver<DiscordMessageEvent>>>`
 pub struct DiscordPlatform {
     pub token: String,
     pub connection_status: ConnectionStatus,
 
-    // Where incoming messages are queued.
-    pub rx: Option<UnboundedReceiver<DiscordMessageEvent>>,
+    /// We store the receiver in an Option. By default in the constructor, it's None.
+    pub rx: Mutex<Option<UnboundedReceiver<DiscordMessageEvent>>>,
+
     pub shard_tasks: Vec<JoinHandle<()>>,
     pub shard_senders: Vec<MessageSender>,
 
-    pub(crate) http: Option<Arc<HttpClient>>,
+    pub http: Option<Arc<HttpClient>>,
     pub cache: Option<Arc<InMemoryCache>>,
     pub event_bus: Option<Arc<EventBus>>,
 }
 
 impl DiscordPlatform {
     pub fn new(token: String) -> Self {
-        info!("DiscordPlatform::new token=(masked)");
         Self {
             token,
             connection_status: ConnectionStatus::Disconnected,
-            rx: None,
+            // Start out with no channel set
+            rx: Mutex::new(None),
             shard_tasks: Vec::new(),
             shard_senders: Vec::new(),
             http: None,
@@ -186,53 +168,56 @@ impl DiscordPlatform {
         self.event_bus = Some(bus);
     }
 
-    /// Wait for the next inbound Discord message (if any).
-    pub async fn next_message_event(&mut self) -> Option<DiscordMessageEvent> {
-        if let Some(rx) = &mut self.rx {
-            rx.recv().await
-        } else {
-            None
+    /// Callers can `await` the next inbound message. We'll lock `self.rx`,
+    /// get the receiver from the Option, then call `.recv()` on it if present.
+    pub async fn next_message_event(&self) -> Option<DiscordMessageEvent> {
+        let mut guard = self.rx.lock().await;
+        match guard.as_mut() {
+            Some(r) => r.recv().await,
+            None => None,
         }
     }
 }
 
+/// For auth, unchanged:
 #[async_trait]
 impl PlatformAuth for DiscordPlatform {
     async fn authenticate(&mut self) -> Result<(), Error> {
         if self.token.is_empty() {
-            return Err(Error::Auth("Empty Discord token".into()));
+            return Err(Error::Auth("Discord token is empty".into()));
         }
-        debug!("(DiscordPlatform) authenticate => token is non-empty.");
         Ok(())
     }
-
     async fn refresh_auth(&mut self) -> Result<(), Error> {
-        // Discord bot tokens generally do not expire.
         Ok(())
     }
-
     async fn revoke_auth(&mut self) -> Result<(), Error> {
-        // No direct revoke path for Discord bots
         Ok(())
     }
-
     async fn is_authenticated(&self) -> Result<bool, Error> {
         Ok(!self.token.is_empty())
     }
 }
 
+/// Connect, create the unbounded channel, store it in `rx`, and spawn the shard runner
 #[async_trait]
 impl PlatformIntegration for DiscordPlatform {
     async fn connect(&mut self) -> Result<(), Error> {
         if matches!(self.connection_status, ConnectionStatus::Connected) {
-            info!("(DiscordPlatform) connect => already connected; skipping.");
+            info!("(DiscordPlatform) Already connected => skipping");
             return Ok(());
         }
 
-        info!("(DiscordPlatform) connect => starting Discord shards...");
+        // Create the unbounded channel:
         let (tx, rx) = unbounded_channel::<DiscordMessageEvent>();
-        self.rx = Some(rx);
 
+        // Store the receiver in our `Mutex<Option<Receiver<...>>>`
+        {
+            let mut guard = self.rx.lock().await;
+            *guard = Some(rx);
+        }
+
+        // Prepare the Twilight client:
         let http_client = Arc::new(
             ClientBuilder::new()
                 .token(self.token.clone())
@@ -241,26 +226,23 @@ impl PlatformIntegration for DiscordPlatform {
         );
         self.http = Some(http_client.clone());
 
+        // Prepare the in-memory cache:
         let cache = InMemoryCache::builder()
             .resource_types(ResourceType::GUILD | ResourceType::CHANNEL | ResourceType::MESSAGE)
             .build();
         let cache = Arc::new(cache);
         self.cache = Some(cache.clone());
 
+        // Gateway config:
         let config = Config::new(
             self.token.clone(),
             Intents::GUILDS | Intents::GUILD_MESSAGES | Intents::MESSAGE_CONTENT,
         );
 
+        // Create recommended shards:
         let shards = gateway::create_recommended(&http_client, config, |_, b| b.build())
             .await
-            .map_err(|e| Error::Platform(format!("Error creating recommended shards: {e:?}")))?;
-
-        let shard_count = shards.len();
-        info!(
-            "(DiscordPlatform) create_recommended => {} shard(s).",
-            shard_count
-        );
+            .map_err(|e| Error::Platform(format!("create_recommended error: {e}")))?;
 
         for shard in shards {
             self.shard_senders.push(shard.sender());
@@ -270,6 +252,7 @@ impl PlatformIntegration for DiscordPlatform {
             let bus_for_shard = self.event_bus.clone();
             let cache_for_shard = cache.clone();
 
+            // Spawn the shard runner:
             let handle = tokio::spawn(async move {
                 shard_runner(
                     shard,
@@ -288,45 +271,40 @@ impl PlatformIntegration for DiscordPlatform {
     }
 
     async fn disconnect(&mut self) -> Result<(), Error> {
-        info!("(DiscordPlatform) disconnect => shutting down shards...");
         self.connection_status = ConnectionStatus::Disconnected;
 
-        for (i, sender) in self.shard_senders.iter().enumerate() {
-            debug!("(DiscordPlatform) closing shard #{}...", i);
+        // Gracefully close shards
+        for sender in &self.shard_senders {
             let _ = sender.close(CloseFrame::NORMAL);
         }
-
-        for (i, task) in self.shard_tasks.iter_mut().enumerate() {
-            debug!("(DiscordPlatform) waiting for shard #{} to finish...", i);
+        // Wait for them
+        for task in &mut self.shard_tasks {
             let _ = task.await;
         }
-        self.shard_tasks.clear();
-        self.shard_senders.clear();
 
-        info!("(DiscordPlatform) disconnected.");
+        self.shard_senders.clear();
+        self.shard_tasks.clear();
+
+        // Optionally set rx back to None:
+        {
+            let mut guard = self.rx.lock().await;
+            *guard = None;
+        }
+
         Ok(())
     }
 
-    /// Send a text message by:
-    /// 1. Setting the `.content(...)`
-    /// 2. `.await` the returned future
     async fn send_message(&self, channel: &str, message: &str) -> Result<(), Error> {
         let channel_id_u64: u64 = channel.parse().map_err(|_| {
-            Error::Platform(format!("Invalid channel ID '{channel}' (must be numeric)"))
+            Error::Platform(format!("Invalid channel ID: {channel}"))
         })?;
         let channel_id = Id::<ChannelMarker>::new(channel_id_u64);
 
         if let Some(http) = &self.http {
-            // Build the request
-            let fut = http.create_message(channel_id).content(message);
-
-            // Now `.content(...)` returns a `CreateMessage<'_>`, which is a Future.
-            // The actual sending + validation + HTTP call happens at `.await`.
-            fut.await.map_err(|err| {
-                Error::Platform(format!("Error sending Discord message: {err:?}"))
-            })?;
-        } else {
-            warn!("(DiscordPlatform) send_message => no HttpClient available?");
+            http.create_message(channel_id)
+                .content(message)
+                .await
+                .map_err(|e| Error::Platform(format!("Error sending Discord message: {e:?}")))?;
         }
 
         Ok(())
@@ -337,25 +315,22 @@ impl PlatformIntegration for DiscordPlatform {
     }
 }
 
-/// Ephemeral `DiscordApi` implementation, suitable for a single-bot use case
-/// or as a placeholder if you do not store data persistently in a DB.
+/// Example minimal `DiscordApi` using the in-memory cache
 #[async_trait]
 impl DiscordApi for DiscordPlatform {
     async fn list_discord_guilds(
         &self,
         account_name: &str,
     ) -> Result<Vec<DiscordGuildRecord>, CommonError> {
-        let cache = match &self.cache {
-            Some(c) => c,
-            None => return Ok(vec![]),
+        let Some(ref c) = self.cache else {
+            return Ok(vec![]);
         };
 
         let mut out = Vec::new();
-        for guild_ref in cache.iter().guilds() {
+        for guild_ref in c.iter().guilds() {
             let guild_id = guild_ref.key();
-            let guild = guild_ref.value();
-            let name = guild.name().to_string(); // `CachedGuild::name()` is &str in 0.16
-
+            let data = guild_ref.value();
+            let name = data.name().to_string();
             out.push(DiscordGuildRecord {
                 account_name: account_name.to_string(),
                 guild_id: guild_id.to_string(),
@@ -365,36 +340,28 @@ impl DiscordApi for DiscordPlatform {
                 updated_at: chrono::Utc::now(),
             });
         }
-
         Ok(out)
     }
 
     async fn list_discord_channels(
         &self,
         account_name: &str,
-        guild_id_str: &str,
+        guild_id_str: &str
     ) -> Result<Vec<DiscordChannelRecord>, CommonError> {
-        let cache = match &self.cache {
-            Some(c) => c,
-            None => return Ok(vec![]),
+        let Some(ref c) = self.cache else {
+            return Ok(vec![]);
         };
 
-        let guild_id_u64 = guild_id_str.parse::<u64>().map_err(|_| {
-            CommonError::Platform(format!("Guild ID '{guild_id_str}' not numeric"))
-        })?;
-        let guild_id = Id::<GuildMarker>::new(guild_id_u64);
+        let guild_id_num = guild_id_str.parse::<u64>()
+            .map_err(|_| CommonError::Platform(format!("'{guild_id_str}' is not numeric")))?;
+        let guild_id = Id::<GuildMarker>::new(guild_id_num);
 
         let mut out = Vec::new();
-        for channel_ref in cache.iter().channels() {
+        for channel_ref in c.iter().channels() {
             let channel_id = channel_ref.key();
-            let channel = channel_ref.value();
-
-            if channel.guild_id == Some(guild_id) {
-                let ch_name = channel
-                    .name
-                    .clone()
-                    .unwrap_or_else(|| channel_id.to_string());
-
+            let ch_data = channel_ref.value();
+            if ch_data.guild_id == Some(guild_id) {
+                let ch_name = ch_data.name.clone().unwrap_or_else(|| channel_id.to_string());
                 out.push(DiscordChannelRecord {
                     account_name: account_name.to_string(),
                     guild_id: guild_id_str.to_string(),
@@ -406,73 +373,6 @@ impl DiscordApi for DiscordPlatform {
                 });
             }
         }
-
         Ok(out)
-    }
-
-    #[cfg(feature = "interactions")]
-    async fn list_discord_commands(
-        &self,
-        account_name: &str,
-    ) -> Result<Vec<(String, String)>, CommonError> {
-        use twilight_model::id::marker::ApplicationMarker;
-
-        if self.http.is_none() {
-            return Err(CommonError::Platform("No HTTP client".into()));
-        }
-        let http = self.http.as_ref().unwrap();
-
-        let app_resp = http
-            .current_user_application()
-            .await
-            .map_err(|e| CommonError::Platform(format!("Discord get application error => {e:?}")))?;
-        let app = app_resp
-            .model()
-            .await
-            .map_err(|e| CommonError::Platform(format!("Discord parse application => {e:?}")))?;
-        let application_id = app.id;
-
-        let commands_response = http
-            .interaction(application_id)
-            .global_commands()
-            .await
-            .map_err(|e| CommonError::Platform(format!("Discord fetch commands => {e:?}")))?;
-
-        let commands = commands_response
-            .models()
-            .await
-            .map_err(|e| CommonError::Platform(format!("Discord parse commands => {e:?}")))?;
-
-        info!(
-            "(list_discord_commands) Found {} global command(s) for ephemeral account '{}'.",
-            commands.len(),
-            account_name
-        );
-
-        let mut out = Vec::new();
-        for cmd in commands {
-            out.push((cmd.id.to_string(), cmd.name.clone()));
-        }
-        Ok(out)
-    }
-
-    #[cfg(not(feature = "interactions"))]
-    async fn list_discord_commands(
-        &self,
-        _account_name: &str,
-    ) -> Result<Vec<(String, String)>, CommonError> {
-        // If you're not using slash commands, just return empty
-        Ok(vec![])
-    }
-
-    async fn send_discord_message(
-        &self,
-        _account_name: &str,
-        _guild_id: &str,
-        channel_id: &str,
-        text: &str
-    ) -> Result<(), CommonError> {
-        self.send_message(channel_id, text).await?;
-        Ok(())
     }
 }

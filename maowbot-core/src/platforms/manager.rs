@@ -4,7 +4,7 @@ use tokio::task::JoinHandle;
 use tracing::{info, error, warn};
 use tokio::sync::Mutex as AsyncMutex;
 use std::sync::Mutex;
-
+use twilight_cache_inmemory::InMemoryCache;
 use maowbot_common::models::platform::{Platform, PlatformCredential};
 use maowbot_common::traits::platform_traits::{ChatPlatform, ConnectionStatus, PlatformIntegration};
 use maowbot_common::traits::repository_traits::CredentialsRepository;
@@ -26,7 +26,7 @@ pub struct PlatformRuntimeHandle {
 
     pub twitch_irc_instance: Option<Arc<AsyncMutex<TwitchIrcPlatform>>>,
     pub vrchat_instance: Option<Arc<AsyncMutex<VRChatPlatform>>>,
-    pub discord_instance: Option<Arc<AsyncMutex<DiscordPlatform>>>,
+    pub discord_instance: Option<Arc<DiscordPlatform>>,
 }
 
 /// Manages starting/stopping platform runtimes, holding references to them, etc.
@@ -37,6 +37,7 @@ pub struct PlatformManager {
     pub(crate) credentials_repo: Arc<dyn CredentialsRepository + Send + Sync>,
 
     pub active_runtimes: AsyncMutex<HashMap<(String, String), PlatformRuntimeHandle>>,
+    pub discord_caches: AsyncMutex<HashMap<(String, String), Arc<InMemoryCache>>>,
 }
 
 impl PlatformManager {
@@ -51,6 +52,7 @@ impl PlatformManager {
             event_bus,
             credentials_repo,
             active_runtimes: AsyncMutex::new(HashMap::new()),
+            discord_caches: AsyncMutex::new(HashMap::new()),
         }
     }
 
@@ -141,67 +143,105 @@ impl PlatformManager {
         Ok(())
     }
 
-    // -----------------------------------------------------------------------
-    // spawn_* methods
-    // -----------------------------------------------------------------------
+    pub async fn get_discord_instance(
+        &self,
+        account_name: &str
+    ) -> Result<Arc<DiscordPlatform>, Error> {
+        let user = self.user_svc.find_user_by_global_username(account_name).await?;
+        let key = ("discord".to_string(), user.user_id.to_string());
+        let guard = self.active_runtimes.lock().await;
+        if let Some(handle) = guard.get(&key) {
+            if let Some(discord_arc) = &handle.discord_instance {
+                Ok(Arc::clone(discord_arc))
+            } else {
+                Err(Error::Platform(format!(
+                    "No DiscordPlatform instance found for account='{account_name}'"
+                )))
+            }
+        } else {
+            Err(Error::Platform(format!(
+                "No active Discord runtime for account='{account_name}'"
+            )))
+        }
+    }
+
     async fn spawn_discord(&self, credential: PlatformCredential) -> Result<PlatformRuntimeHandle, Error> {
-        let message_svc = self.get_message_service()?;
+        let msg_svc = self.get_message_service()?;
 
         let user_id_str = credential.user_id.to_string();
-        let user_id_str_for_handle = user_id_str.clone();
-        let user_id_str_for_closure = user_id_str.clone();
-
         let token = credential.primary_token.clone();
 
+        // We create the DiscordPlatform:
         let mut discord = DiscordPlatform::new(token);
         discord.set_event_bus(self.event_bus.clone());
         discord.connect().await?;
-        info!("[Discord] Connected for user_id={}", user_id_str_for_closure);
 
-        let arc_discord = Arc::new(AsyncMutex::new(discord));
-        let cloned_discord = arc_discord.clone();
+        // We pull out its Arc<InMemoryCache> so we can store it in `discord_caches`:
+        let cache = discord.cache.clone()
+            .ok_or_else(|| Error::Platform("DiscordPlatform missing in-memory cache".into()))?;
 
-        let join_handle = tokio::spawn(async move {
-            loop {
-                let msg_event_opt = cloned_discord.lock().await.next_message_event().await;
-                match msg_event_opt {
-                    Some(msg_event) => {
-                        let channel = msg_event.channel;
-                        let user_platform_id = msg_event.user_id.clone();
-                        let display_name = msg_event.username.clone();
-                        let roles = msg_event.user_roles.clone();
-                        let text = msg_event.text;
-
-                        if let Err(e) = message_svc
-                            .process_incoming_message(
-                                "discord",
-                                &channel,
-                                &user_platform_id,
-                                Some(&display_name),
-                                &roles,
-                                &text,
-                            )
-                            .await
-                        {
-                            error!("[Discord] process_incoming_message => {e:?}");
+        // For inbound messages, just spawn a loop reading next_message_event:
+        let cloned_discord = Arc::new(discord);
+        let join_handle = tokio::spawn({
+            let cloned_discord2 = cloned_discord.clone();
+            async move {
+                loop {
+                    match cloned_discord2.next_message_event().await {
+                        Some(msg_event) => {
+                            if let Err(e) = msg_svc
+                                .process_incoming_message(
+                                    "discord",
+                                    &msg_event.channel,
+                                    &msg_event.user_id,
+                                    Some(&msg_event.username),
+                                    &msg_event.user_roles,
+                                    &msg_event.text
+                                )
+                                .await
+                            {
+                                tracing::error!("Discord message error: {e}");
+                            }
                         }
-                    }
-                    None => {
-                        info!("[Discord] No more events => user_id={}", user_id_str_for_closure);
-                        break;
+                        None => break,
                     }
                 }
             }
         });
 
+        // Insert the Arc<InMemoryCache> and the handle into our manager
+        let key = ("discord".to_string(), user_id_str.clone());
+        {
+            let mut lock = self.discord_caches.lock().await;
+            lock.insert(key.clone(), cache);
+        }
+
         Ok(PlatformRuntimeHandle {
             join_handle,
             platform: "discord".into(),
-            user_id: user_id_str_for_handle,
+            user_id: user_id_str,
+            discord_instance: Some(cloned_discord),
             twitch_irc_instance: None,
             vrchat_instance: None,
-            discord_instance: Some(arc_discord),
         })
+    }
+
+    pub async fn get_discord_cache(
+        &self,
+        account_name: &str
+    ) -> Result<Arc<InMemoryCache>, Error> {
+        let user = self.user_svc
+            .find_user_by_global_username(account_name)
+            .await?;
+        let key = ("discord".to_string(), user.user_id.to_string());
+
+        let lock = self.discord_caches.lock().await;
+        if let Some(cache) = lock.get(&key) {
+            Ok(Arc::clone(cache))
+        } else {
+            Err(Error::Platform(format!(
+                "No Discord in-memory cache found for account='{account_name}'"
+            )))
+        }
     }
 
     async fn spawn_twitch_helix(&self, credential: PlatformCredential) -> Result<PlatformRuntimeHandle, Error> {
@@ -542,13 +582,10 @@ impl PlatformManager {
         }
     }
 
-    // -------------------------------------------------------------
-    // NEW: Send a message to Discord from a given account + server + channel
-    // -------------------------------------------------------------
     pub async fn send_discord_message(
         &self,
         account_name: &str,
-        server_id: &str,
+        _server_id: &str,
         channel_id: &str,
         text: &str
     ) -> Result<(), Error> {
@@ -558,7 +595,7 @@ impl PlatformManager {
         let guard = self.active_runtimes.lock().await;
         if let Some(handle) = guard.get(&key) {
             if let Some(discord_arc) = &handle.discord_instance {
-                let discord_lock = discord_arc.lock().await;
+                let discord_lock = discord_arc;
                 discord_lock.send_message(channel_id, text).await
             } else {
                 Err(Error::Platform(format!(
