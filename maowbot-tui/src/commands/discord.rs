@@ -2,9 +2,8 @@ use std::sync::Arc;
 use maowbot_common::traits::api::BotApi;
 
 /// Handle "discord" TUI commands.
-/// We focus on just:
-///   - `discord list guilds`
-///   - `discord list channels <guildId>`
+/// We focus on previously existing "list" subcommands,
+/// plus the new "msg" subcommand for sending a Discord message.
 pub async fn handle_discord_command(args: &[&str], bot_api: &Arc<dyn BotApi>) -> String {
     if args.is_empty() {
         return show_usage();
@@ -59,6 +58,29 @@ pub async fn handle_discord_command(args: &[&str], bot_api: &Arc<dyn BotApi>) ->
             }
         }
 
+        // ------------------------------------------------------------------
+        // NEW: "msg" subcommand => send a message to the specified channel
+        // usage: discord msg <serverid> <channelid> [message text...]
+        // Example: discord msg 123456789012345678 876543210987654321 "Hello from TUI!"
+        // ------------------------------------------------------------------
+        "msg" => {
+            if args.len() < 3 {
+                return "Usage: discord msg <serverId> <channelId> <message...>".to_string();
+            }
+            let server_id = args[1];
+            let channel_id = args[2];
+            let text = if args.len() > 3 {
+                args[3..].join(" ")
+            } else {
+                "".to_string()
+            };
+
+            match bot_api.send_discord_message("cutecat_chat", server_id, channel_id, &text).await {
+                Ok(_) => format!("Sent message to channel {}: '{}'", channel_id, text),
+                Err(e) => format!("Error sending Discord message => {}", e),
+            }
+        }
+
         _ => show_usage(),
     }
 }
@@ -67,6 +89,7 @@ fn show_usage() -> String {
     r#"Discord Commands:
   discord list guilds
   discord list channels <guildId>
+  discord msg <serverId> <channelId> [message text...]
 "#
         .to_string()
 }

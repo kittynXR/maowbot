@@ -4,7 +4,7 @@ use maowbot_common::error::Error;
 use maowbot_common::traits::api::DiscordApi;
 use maowbot_common::models::discord::{DiscordGuildRecord, DiscordChannelRecord};
 use twilight_cache_inmemory::InMemoryCache;
-use twilight_model::id::marker::{GuildMarker};
+use twilight_model::id::marker::GuildMarker;
 use twilight_model::id::Id;
 
 use crate::plugins::manager::PluginManager;
@@ -67,5 +67,17 @@ impl DiscordApi for PluginManager {
             }
         }
         Ok(out)
+    }
+    async fn send_discord_message(
+        &self,
+        account_name: &str,
+        server_id: &str,
+        channel_id: &str,
+        text: &str
+    ) -> Result<(), Error> {
+        // The platform manager has a helper that does the actual sending:
+        self.platform_manager
+            .send_discord_message(account_name, server_id, channel_id, text)
+            .await
     }
 }
