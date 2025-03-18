@@ -14,6 +14,7 @@ use crate::services::user_service::UserService;
 use crate::Error;
 
 use crate::platforms::discord::runtime::DiscordPlatform;
+use crate::platforms::twitch::client::TwitchHelixClient;
 use crate::platforms::twitch::runtime::TwitchPlatform;
 use crate::platforms::vrchat_pipeline::runtime::VRChatPlatform;
 use crate::platforms::twitch_irc::runtime::TwitchIrcPlatform;
@@ -164,6 +165,23 @@ impl PlatformManager {
             )))
         }
     }
+
+    pub async fn get_twitch_client(&self) -> Option<TwitchHelixClient> {
+        match self.credentials_repo.get_broadcaster_credential(&Platform::Twitch).await {
+            Ok(Some(cred)) => {
+                if let Some(additional_data) = cred.additional_data {
+                    if let Some(client_id_val) = additional_data.get("client_id") {
+                        if let Some(client_id_str) = client_id_val.as_str() {
+                            return Some(TwitchHelixClient::new(&cred.primary_token, client_id_str));
+                        }
+                    }
+                }
+                None
+            },
+            _ => None,
+        }
+    }
+
 
     async fn spawn_discord(&self, credential: PlatformCredential) -> Result<PlatformRuntimeHandle, Error> {
         let msg_svc = self.get_message_service()?;

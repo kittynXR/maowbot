@@ -12,26 +12,11 @@ use crate::repositories::postgres::discord::PostgresDiscordRepository;
 use crate::tasks::redeem_sync;
 use tracing::{debug, info};
 
-/// Struct representing additional Twitch stream details.
-#[derive(Debug)]
-pub struct StreamDetails {
-    pub title: String,
-    pub game: String,
-    pub game_thumbnail: String,
-    pub pfp: String,
-}
+// Import the updated fetch_stream_details function and TwitchHelixClient.
+use crate::platforms::twitch::client::TwitchHelixClient;
+use crate::platforms::twitch::requests::stream::fetch_stream_details;
 
-/// Dummy function to simulate fetching stream details from Twitch.
-/// In production, this should call Twitch’s API.
-async fn fetch_stream_details(twitch_name: &str) -> Result<StreamDetails, Error> {
-    Ok(StreamDetails {
-        title: "Awesome Stream".to_string(),
-        game: "Super Game".to_string(),
-        game_thumbnail: "https://example.com/game_thumbnail.jpg".to_string(),
-        pfp: "https://example.com/twitch_pfp.jpg".to_string(),
-    })
-}
-
+/// Handles the Twitch stream.online event by fetching real-time stream details.
 pub async fn handle_stream_online(
     evt: StreamOnline,
     redeem_service: &RedeemService,
@@ -49,11 +34,16 @@ pub async fn handle_stream_online(
         .await?;
 
     if let Some(broadcaster_cred) = broadcaster_cred_opt {
-        let twitch_name = &broadcaster_cred.user_name;
-        let link = format!("https://twitch.tv/{}", twitch_name);
+        // Use the broadcaster's username from the credential.
+        let broadcaster_name = broadcaster_cred.user_name.clone();
+        let link = format!("https://twitch.tv/{}", broadcaster_name);
 
-        // 2) Fetch additional stream details from Twitch.
-        let details = fetch_stream_details(twitch_name).await?;
+        // 2) Fetch additional stream details from Twitch using real-time API data.
+        let twitch_client = platform_manager
+            .get_twitch_client()
+            .await
+            .ok_or_else(|| Error::Platform("Twitch client not available".into()))?;
+        let details = fetch_stream_details(&twitch_client, &broadcaster_name).await?;
 
         // 3) Look up the Discord event config for "stream.online".
         if let Some(config) = discord_repo.get_event_config_by_name("stream.online").await? {
@@ -75,7 +65,10 @@ pub async fn handle_stream_online(
             // If any ping roles are set, format them as Discord role mentions.
             let ping_str = if let Some(roles) = &config.ping_roles {
                 if !roles.is_empty() {
-                    roles.iter().map(|r| format!("<@&{}>", r)).collect::<Vec<_>>().join(" ")
+                    roles.iter()
+                        .map(|r| format!("<@&{}>", r))
+                        .collect::<Vec<_>>()
+                        .join(" ")
                 } else {
                     "".to_string()
                 }
@@ -83,12 +76,18 @@ pub async fn handle_stream_online(
                 "".to_string()
             };
 
-            // Build the go-live message with additional Twitch details.
+            // Build the go-live message with updated Twitch details.
             let go_live_msg = format!(
-                "🔴 **{}** is now live!\nPlaying: {}\n[Game Thumbnail]({})\nProfile: {}\nJoin at: {}\n{}",
-                details.title, details.game, details.game_thumbnail, details.pfp, link, ping_str
+                "🔴 **{}** is now live!\nTitle: {}\nPlaying: {}\n[Game Thumbnail]({})\nProfile: {}\nJoin at: {}\n{}",
+                details.broadcaster_name,
+                details.stream_title,
+                details.game,
+                details.game_thumbnail,
+                details.pfp,
+                link,
+                ping_str
             );
-            info!("send discord message: {} {} {}", go_live_msg, link, account_name);
+            info!("Sending Discord message from account '{}': {}", account_name, go_live_msg);
 
             // 4) Send the Discord message.
             platform_manager
