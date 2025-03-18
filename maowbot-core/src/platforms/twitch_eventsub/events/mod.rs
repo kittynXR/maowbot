@@ -166,6 +166,14 @@ pub fn parse_twitch_notification(
                 .ok()
                 .map(TwitchEventSubData::ChannelPointsCustomRewardRedemptionUpdate)
         }
+        "stream.online" => {
+            serde_json::from_value::<StreamOnline>(event_json.clone()).ok()
+                .map(TwitchEventSubData::StreamOnline)
+        }
+        "stream.offline" => {
+            serde_json::from_value::<StreamOffline>(event_json.clone()).ok()
+            .map(TwitchEventSubData::StreamOffline)
+        }
         _ => None,
     }
 }

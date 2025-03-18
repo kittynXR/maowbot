@@ -289,4 +289,8 @@ pub trait DiscordApi {
         credential_id: Option<Uuid>,
         discord_id: Option<&str>
     ) -> Result<(), Error>;
+
+    async fn add_discord_event_role(&self, event_name: &str, role_id: &str) -> Result<(), Error>;
+    async fn remove_discord_event_role(&self, event_name: &str, role_id: &str) -> Result<(), Error>;
+    async fn list_discord_roles(&self, guild_id: &str) -> Result<Vec<(String, String)>, Error>;
 }

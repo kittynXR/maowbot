@@ -127,4 +127,16 @@ impl DiscordApi for PluginManager {
             .upsert_account(account_name, credential_id, discord_id)
             .await
     }
+
+    async fn add_discord_event_role(&self, event_name: &str, role_id: &str) -> Result<(), Error> {
+        self.discord_repo.add_event_config_role(event_name, role_id).await
+    }
+
+    async fn remove_discord_event_role(&self, event_name: &str, role_id: &str) -> Result<(), Error> {
+        self.discord_repo.remove_event_config_role(event_name, role_id).await
+    }
+
+    async fn list_discord_roles(&self, guild_id: &str) -> Result<Vec<(String, String)>, Error> {
+        self.discord_repo.list_roles_for_guild(guild_id).await
+    }
 }

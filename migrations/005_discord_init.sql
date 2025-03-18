@@ -49,6 +49,7 @@ CREATE TABLE discord_event_config (
     guild_id                    TEXT NOT NULL,
     channel_id                  TEXT NOT NULL,
     respond_with_credential     UUID NULL,
+    ping_roles                  TEXT[] NULL,
     created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
 CONSTRAINT discord_event_config_unique

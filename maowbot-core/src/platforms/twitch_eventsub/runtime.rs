@@ -247,7 +247,7 @@ impl TwitchEventSubPlatform {
         // Existing events plus your new channel points events:
         let events_to_subscribe = vec![
             // existing examples:
-            ("channel.bits.use", "beta",  json!({ "broadcaster_user_id": broadcaster_id })),
+            ("channel.bits.use", "1",  json!({ "broadcaster_user_id": broadcaster_id })),
             ("channel.update",   "2",     json!({ "broadcaster_user_id": broadcaster_id })),
             ("channel.follow",   "2",     json!({
                 "broadcaster_user_id": broadcaster_id,
@@ -288,8 +288,6 @@ impl TwitchEventSubPlatform {
                 "broadcaster_user_id": broadcaster_id,
                 "moderator_user_id": broadcaster_id
             })),
-
-            // ----- ADD THESE 6 new channel points events -----
             ("channel.channel_points_automatic_reward_redemption.add", "beta",
              json!({ "broadcaster_user_id": broadcaster_id })),
             ("channel.channel_points_custom_reward.add", "1",
@@ -302,6 +300,10 @@ impl TwitchEventSubPlatform {
              json!({ "broadcaster_user_id": broadcaster_id })),
             ("channel.channel_points_custom_reward_redemption.update", "1",
              json!({ "broadcaster_user_id": broadcaster_id })),
+            ("stream.online", "1",
+            json!({"broadcaster_user_id": broadcaster_id })),
+            ("stream.offline", "1",
+            json!({ "broadcaster_user_id": broadcaster_id })),
         ];
 
         for (etype, version, condition) in events_to_subscribe {

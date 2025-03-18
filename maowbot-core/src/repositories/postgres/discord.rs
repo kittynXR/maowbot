@@ -73,6 +73,7 @@ impl PostgresDiscordRepository {
                    guild_id,
                    channel_id,
                    respond_with_credential,
+                   ping_roles,
                    created_at,
                    updated_at
             FROM discord_event_config
@@ -91,6 +92,7 @@ impl PostgresDiscordRepository {
                 guild_id: row.try_get("guild_id")?,
                 channel_id: row.try_get("channel_id")?,
                 respond_with_credential: row.try_get("respond_with_credential").ok(),
+                ping_roles: row.try_get("ping_roles").ok(),
                 created_at: row.try_get("created_at")?,
                 updated_at: row.try_get("updated_at")?,
             };
@@ -107,6 +109,7 @@ impl PostgresDiscordRepository {
                    guild_id,
                    channel_id,
                    respond_with_credential,
+                   ping_roles,
                    created_at,
                    updated_at
             FROM discord_event_config
@@ -124,6 +127,7 @@ impl PostgresDiscordRepository {
                 guild_id: row.try_get("guild_id")?,
                 channel_id: row.try_get("channel_id")?,
                 respond_with_credential: row.try_get("respond_with_credential").ok(),
+                ping_roles: row.try_get("ping_roles").ok(),
                 created_at: row.try_get("created_at")?,
                 updated_at: row.try_get("updated_at")?,
             });
@@ -132,7 +136,7 @@ impl PostgresDiscordRepository {
     }
 
     // -------------------------------------------------------------------------
-    // NEW: multi-row approach for storing Discord event configs
+    // NEW: multi-row approach for storing Discord event configs (existing functions)
     // -------------------------------------------------------------------------
     pub async fn insert_event_config_multi(
         &self,
@@ -190,13 +194,70 @@ impl PostgresDiscordRepository {
             .await?;
         Ok(())
     }
+
+    // -------------------------------------------------------------------------
+    // NEW: Functions to manage ping_roles in the discord_event_config table
+    // -------------------------------------------------------------------------
+    pub async fn add_event_config_role(
+        &self,
+        event_name: &str,
+        role_id: &str,
+    ) -> Result<(), Error> {
+        let q = r#"
+            UPDATE discord_event_config
+            SET ping_roles =
+                CASE
+                    WHEN ping_roles IS NULL THEN ARRAY[$2]
+                    WHEN NOT ($2 = ANY(ping_roles)) THEN array_append(ping_roles, $2)
+                    ELSE ping_roles
+                END,
+                updated_at = NOW()
+            WHERE event_name = $1
+        "#;
+        sqlx::query(q)
+            .bind(event_name)
+            .bind(role_id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn remove_event_config_role(
+        &self,
+        event_name: &str,
+        role_id: &str,
+    ) -> Result<(), Error> {
+        let q = r#"
+            UPDATE discord_event_config
+            SET ping_roles =
+                CASE
+                    WHEN ping_roles IS NOT NULL THEN array_remove(ping_roles, $2)
+                    ELSE NULL
+                END,
+                updated_at = NOW()
+            WHERE event_name = $1
+        "#;
+        sqlx::query(q)
+            .bind(event_name)
+            .bind(role_id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    /// NEW: Dummy implementation for listing roles for a guild.
+    /// In production, this should call the Discord API.
+    pub async fn list_roles_for_guild(&self, guild_id: &str) -> Result<Vec<(String, String)>, Error> {
+        // For now, return an empty list.
+        Ok(vec![])
+    }
 }
 
 // =================================================================================================
 // Implementation of the DiscordRepository trait
 // =================================================================================================
 #[async_trait]
-impl DiscordRepository for PostgresDiscordRepository {
+impl maowbot_common::traits::repository_traits::DiscordRepository for PostgresDiscordRepository {
     // ------------------------------------------------------------------------
     // Accounts
     // ------------------------------------------------------------------------
@@ -435,7 +496,7 @@ impl DiscordRepository for PostgresDiscordRepository {
             SET is_active=true, updated_at=now()
             WHERE account_name=$1
               AND guild_id=$2
-            "#,
+            "#
         )
             .bind(account_name)
             .bind(guild_id)
@@ -557,7 +618,7 @@ impl DiscordRepository for PostgresDiscordRepository {
             WHERE account_name=$1
               AND guild_id=$2
               AND channel_id=$3
-            "#,
+            "#
         )
             .bind(account_name)
             .bind(guild_id)

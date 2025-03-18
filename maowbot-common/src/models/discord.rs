@@ -51,7 +51,7 @@ pub struct DiscordEventConfigRecord {
     /// If multiple Discord credentials exist, which credential (bot) is used to post?
     /// If null, use whichever default is active.
     pub respond_with_credential: Option<uuid::Uuid>,
-
+    pub ping_roles: Option<Vec<String>>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }

@@ -1,3 +1,6 @@
+// ========================================================
+// File: maowbot-tui/src/commands/discord.rs
+// ========================================================
 use std::sync::Arc;
 use uuid::Uuid;
 use maowbot_common::models::platform::Platform;
@@ -139,7 +142,7 @@ pub async fn handle_discord_command(args: &[&str], bot_api: &Arc<dyn BotApi>) ->
         }
 
         // ------------------------------------------------------------------
-        // 3) discord event ...
+        // 3) discord event subcommands (including addrole/delrole)
         // ------------------------------------------------------------------
         "event" => handle_discord_event_command(&args[1..], bot_api).await,
 
@@ -164,20 +167,71 @@ pub async fn handle_discord_command(args: &[&str], bot_api: &Arc<dyn BotApi>) ->
             }
         }
 
+        // ------------------------------------------------------------------
+        // 5) discord roles [guildId]
+        // ------------------------------------------------------------------
+        "roles" => {
+            let guild_id = if args.len() > 1 {
+                args[1].to_string()
+            } else {
+                // If no guild ID is provided, try to use the single guild from the default account.
+                let all_discord_creds = match bot_api.list_credentials(Some(Platform::Discord)).await {
+                    Ok(creds) => creds,
+                    Err(e) => return format!("Error listing Discord credentials: {e}"),
+                };
+                if all_discord_creds.is_empty() {
+                    return "No Discord credentials found.".to_string();
+                }
+                let chosen_account_name = if all_discord_creds.len() == 1 {
+                    all_discord_creds[0].user_name.clone()
+                } else {
+                    return "Multiple Discord accounts found; please specify guild ID: discord roles <guildId>".to_string();
+                };
+                match bot_api.list_discord_guilds(&chosen_account_name).await {
+                    Ok(guilds) => {
+                        if guilds.len() == 1 {
+                            guilds[0].guild_id.clone()
+                        } else if guilds.is_empty() {
+                            return "No guilds found for that account. Provide a guild ID explicitly.".to_string();
+                        } else {
+                            return "Multiple guilds found; please specify guild ID explicitly.".to_string();
+                        }
+                    }
+                    Err(e) => return format!("Error listing guilds => {e}"),
+                }
+            };
+            match bot_api.list_discord_roles(&guild_id).await {
+                Ok(roles) => {
+                    if roles.is_empty() {
+                        format!("No roles found for guild ID '{}'.", guild_id)
+                    } else {
+                        let mut out = format!("Roles for guild ID '{}':\n", guild_id);
+                        for (role_id, role_name) in roles {
+                            out.push_str(&format!(" - {}: {}\n", role_id, role_name));
+                        }
+                        out
+                    }
+                }
+                Err(e) => format!("Error listing roles: {e}"),
+            }
+        }
+
         _ => show_usage(),
     }
 }
 
 /// --------------------------------------------------------------------------
-/// Helper for “discord event add|remove|list” subcommands
-/// Usage:
+/// Helper for “discord event …” subcommands
+/// Supports:
 ///   discord event list
 ///   discord event add <eventname> <channelid> [guildid] [acctOrCred]
 ///   discord event remove <eventname> <channelid> [guildid] [acctOrCred]
+///   discord event addrole <eventname> <roleid>
+///   discord event delrole <eventname> <roleid>
 /// --------------------------------------------------------------------------
 async fn handle_discord_event_command(args: &[&str], bot_api: &Arc<dyn BotApi>) -> String {
     if args.is_empty() {
-        return "Usage: discord event (list|add|remove) ...".to_string();
+        return "Usage: discord event (list|add|remove|addrole|delrole) ...".to_string();
     }
 
     match args[0].to_lowercase().as_str() {
@@ -194,9 +248,14 @@ async fn handle_discord_event_command(args: &[&str], bot_api: &Arc<dyn BotApi>) 
                             } else {
                                 "credential=None".to_string()
                             };
+                            let roles_str = if let Some(roles) = rec.ping_roles {
+                                format!("ping_roles={:?}", roles)
+                            } else {
+                                "ping_roles=None".to_string()
+                            };
                             out.push_str(&format!(
-                                " - event='{}' guild='{}' channel='{}' {}\n",
-                                rec.event_name, rec.guild_id, rec.channel_id, cred_str
+                                " - event='{}' guild='{}' channel='{}' {} {}\n",
+                                rec.event_name, rec.guild_id, rec.channel_id, cred_str, roles_str
                             ));
                         }
                         out
@@ -277,7 +336,6 @@ async fn handle_discord_event_command(args: &[&str], bot_api: &Arc<dyn BotApi>) 
                 Err(e) => format!("Error adding event config => {e}"),
             }
         }
-
         "remove" => {
             // New format: discord event remove <eventname> <channelid> [guildid] [acctOrCred]
             if args.len() < 3 {
@@ -336,8 +394,31 @@ async fn handle_discord_event_command(args: &[&str], bot_api: &Arc<dyn BotApi>) 
                 Err(e) => format!("Error removing event config => {e}"),
             }
         }
-
-        _ => "Usage: discord event (list|add|remove) ...".to_string(),
+        "addrole" => {
+            // New command: discord event addrole <eventname> <roleid>
+            if args.len() < 3 {
+                return "Usage: discord event addrole <eventname> <roleid>".to_string();
+            }
+            let event_name = args[1];
+            let role_id = args[2];
+            match bot_api.add_discord_event_role(event_name, role_id).await {
+                Ok(_) => format!("Added role {} to event '{}'.", role_id, event_name),
+                Err(e) => format!("Error adding role: {e}"),
+            }
+        }
+        "delrole" => {
+            // New command: discord event delrole <eventname> <roleid>
+            if args.len() < 3 {
+                return "Usage: discord event delrole <eventname> <roleid>".to_string();
+            }
+            let event_name = args[1];
+            let role_id = args[2];
+            match bot_api.remove_discord_event_role(event_name, role_id).await {
+                Ok(_) => format!("Removed role {} from event '{}'.", role_id, event_name),
+                Err(e) => format!("Error removing role: {e}"),
+            }
+        }
+        _ => "Usage: discord event (list|add|remove|addrole|delrole) ...".to_string(),
     }
 }
 
@@ -348,17 +429,13 @@ fn show_usage() -> String {
   discord channels [guildId]
       -> list channels in the single known guild or the specified one
   discord event list
-  discord event add <eventName> <channelId> [guildId] [accountOrCredUUID]
-  discord event remove <eventName> <channelId> [guildId] [accountOrCredUUID]
+  discord event add <eventName> <channelId> [guildId] [acctOrCred]
+  discord event remove <eventName> <channelId> [guildId] [acctOrCred]
+  discord event addrole <eventName> <roleid>
+  discord event delrole <eventName> <roleid>
   discord msg <serverId> <channelId> [message text...]
+  discord roles [guildId]
+      -> list all role IDs and names for the specified guild (or the single guild if only one is joined)
 "#
         .to_string()
-}
-
-// A small helper to check if a string might be a Discord snowflake (18-20 digits).
-fn is_possible_snowflake(s: &str) -> bool {
-    if s.len() < 5 || s.len() > 20 {
-        return false;
-    }
-    s.chars().all(|c| c.is_ascii_digit())
 }
