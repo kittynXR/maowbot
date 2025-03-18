@@ -21,7 +21,7 @@ pub struct StreamData {
     pub user_login: String,
     pub user_name: String,
     pub game_id: String,
-    pub game_name: String, // NEW: Added field for game/category name.
+    pub game_name: String, // Added field for game/category name.
     #[serde(rename = "type")]
     pub type_field: String, // e.g., "live"
     pub title: String,
@@ -70,18 +70,30 @@ pub struct StreamDetails {
     pub pfp: String,
 }
 
-/// Fetches stream details for the given Twitch user by calling Twitch’s Helix endpoints.
+/// Fetches stream details for the given Twitch identifier by calling Twitch’s Helix endpoints.
 ///
 /// It performs:
 ///   1. A request to "Get Streams" (to obtain the live stream details).
 ///   2. A request to "Get Users" (to get the profile image).
 ///   3. A request to "Get Games" (to resolve the game name and its thumbnail).
+///
+/// The function now determines whether to filter by user_id or user_login for both endpoints.
+/// If the provided identifier is entirely numeric, it is assumed to be a Twitch user ID.
+/// Otherwise, it is converted to lowercase and used as a login name.
 pub async fn fetch_stream_details(
     client: &TwitchHelixClient,
-    twitch_name: &str,
+    twitch_identifier: &str,
 ) -> Result<StreamDetails, Error> {
+    // Determine the query parameter for streams lookup.
+    let streams_query = if twitch_identifier.chars().all(|c| c.is_ascii_digit()) {
+        format!("user_id={}", twitch_identifier)
+    } else {
+        // Twitch expects login names in lowercase.
+        format!("user_login={}", twitch_identifier.to_lowercase())
+    };
+
     // 1. Get stream info
-    let streams_url = format!("https://api.twitch.tv/helix/streams?user_login={}", twitch_name);
+    let streams_url = format!("https://api.twitch.tv/helix/streams?{}", streams_query);
     let streams_resp = client
         .http_client()
         .get(&streams_url)
@@ -114,7 +126,14 @@ pub async fn fetch_stream_details(
     let game_name_from_stream = stream.game_name.clone();
 
     // 2. Get user info to obtain profile image (pfp)
-    let users_url = format!("https://api.twitch.tv/helix/users?login={}", twitch_name);
+    // Use "id" if numeric, or "login" (lowercase) if not.
+    let users_query = if twitch_identifier.chars().all(|c| c.is_ascii_digit()) {
+        format!("id={}", twitch_identifier)
+    } else {
+        format!("login={}", twitch_identifier.to_lowercase())
+    };
+
+    let users_url = format!("https://api.twitch.tv/helix/users?{}", users_query);
     let users_resp = client
         .http_client()
         .get(&users_url)
@@ -168,10 +187,10 @@ pub async fn fetch_stream_details(
     let games_data: GamesResponse = serde_json::from_str(&game_body)
         .map_err(|e| Error::Platform(format!("fetch_stream_details game parse error: {}", e)))?;
 
-    // Use the game data if available; otherwise fall back to what the stream returned.
+    // Use the game data if available; otherwise, fall back to the game name provided by the stream.
     let (game_name, game_thumbnail) = if let Some(game) = games_data.data.first() {
         let name = game.name.clone();
-        // Use the game's box_art_url as the thumbnail and replace the size placeholders.
+        // Replace the width and height placeholders in the box_art_url.
         let thumbnail = game.box_art_url.replace("{width}", "285").replace("{height}", "380");
         (name, thumbnail)
     } else if !game_name_from_stream.is_empty() {
