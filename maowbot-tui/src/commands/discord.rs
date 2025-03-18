@@ -171,22 +171,23 @@ pub async fn handle_discord_command(args: &[&str], bot_api: &Arc<dyn BotApi>) ->
         // 5) discord roles [guildId]
         // ------------------------------------------------------------------
         "roles" => {
+            // Determine which Discord credential to use
+            let all_discord_creds = match bot_api.list_credentials(Some(Platform::Discord)).await {
+                Ok(creds) => creds,
+                Err(e) => return format!("Error listing Discord credentials: {e}"),
+            };
+            if all_discord_creds.is_empty() {
+                return "No Discord credentials found.".to_string();
+            }
+            let chosen_account_name = if all_discord_creds.len() == 1 {
+                all_discord_creds[0].user_name.clone()
+            } else {
+                return "Multiple Discord accounts found; please specify one first, e.g. 'discord guilds <acct>'.".to_string();
+            };
+
             let guild_id = if args.len() > 1 {
                 args[1].to_string()
             } else {
-                // If no guild ID is provided, try to use the single guild from the default account.
-                let all_discord_creds = match bot_api.list_credentials(Some(Platform::Discord)).await {
-                    Ok(creds) => creds,
-                    Err(e) => return format!("Error listing Discord credentials: {e}"),
-                };
-                if all_discord_creds.is_empty() {
-                    return "No Discord credentials found.".to_string();
-                }
-                let chosen_account_name = if all_discord_creds.len() == 1 {
-                    all_discord_creds[0].user_name.clone()
-                } else {
-                    return "Multiple Discord accounts found; please specify guild ID: discord roles <guildId>".to_string();
-                };
                 match bot_api.list_discord_guilds(&chosen_account_name).await {
                     Ok(guilds) => {
                         if guilds.len() == 1 {
@@ -200,7 +201,7 @@ pub async fn handle_discord_command(args: &[&str], bot_api: &Arc<dyn BotApi>) ->
                     Err(e) => return format!("Error listing guilds => {e}"),
                 }
             };
-            match bot_api.list_discord_roles(&guild_id).await {
+            match bot_api.list_discord_roles(&chosen_account_name, &guild_id).await {
                 Ok(roles) => {
                     if roles.is_empty() {
                         format!("No roles found for guild ID '{}'.", guild_id)

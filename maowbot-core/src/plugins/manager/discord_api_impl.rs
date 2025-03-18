@@ -4,7 +4,7 @@ use maowbot_common::error::Error;
 use maowbot_common::traits::api::DiscordApi;
 use maowbot_common::models::discord::{DiscordGuildRecord, DiscordChannelRecord, DiscordEventConfigRecord};
 use twilight_cache_inmemory::InMemoryCache;
-use twilight_model::id::marker::GuildMarker;
+use twilight_model::id::marker::{GuildMarker};
 use twilight_model::id::Id;
 use uuid::Uuid;
 use maowbot_common::traits::repository_traits::DiscordRepository;
@@ -69,6 +69,7 @@ impl DiscordApi for PluginManager {
         }
         Ok(out)
     }
+
     async fn send_discord_message(
         &self,
         account_name: &str,
@@ -136,7 +137,19 @@ impl DiscordApi for PluginManager {
         self.discord_repo.remove_event_config_role(event_name, role_id).await
     }
 
-    async fn list_discord_roles(&self, guild_id: &str) -> Result<Vec<(String, String)>, Error> {
-        self.discord_repo.list_roles_for_guild(guild_id).await
+    async fn list_discord_roles(&self, account_name: &str, guild_id_str: &str) -> Result<Vec<(String, String)>, Error> {
+        let cache = self.platform_manager.get_discord_cache(account_name).await?;
+        let guild_id_num = guild_id_str.parse::<u64>()
+            .map_err(|_| Error::Platform(format!("Guild ID '{guild_id_str}' not numeric")))?;
+        let guild_id = Id::<GuildMarker>::new(guild_id_num);
+
+        let guild = cache.guild(guild_id)
+            .ok_or_else(|| Error::Platform(format!("Guild ID '{}' not found in cache", guild_id_str)))?;
+
+        let mut out = Vec::new();
+        for role in cache.iter().roles() {
+            out.push((role.id.to_string(), role.name.clone()));
+        }
+        Ok(out)
     }
 }

@@ -280,9 +280,9 @@ impl PlatformIntegration for DiscordPlatform {
         );
         self.http = Some(http_client.clone());
 
-        // Build the in-memory cache as an Arc
+        // Build the in-memory cache as an Arc, including ROLE resource type
         let cache = InMemoryCache::builder()
-            .resource_types(ResourceType::GUILD | ResourceType::CHANNEL | ResourceType::MESSAGE)
+            .resource_types(ResourceType::GUILD | ResourceType::CHANNEL | ResourceType::MESSAGE | ResourceType::ROLE)
             .build();
         let arc_cache = Arc::new(cache);
         self.cache = Some(arc_cache.clone());
