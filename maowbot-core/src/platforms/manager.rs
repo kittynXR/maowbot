@@ -5,6 +5,7 @@ use tracing::{info, error, warn};
 use tokio::sync::Mutex as AsyncMutex;
 use std::sync::Mutex;
 use twilight_cache_inmemory::InMemoryCache;
+use maowbot_common::models::discord::DiscordEmbed;
 use maowbot_common::models::platform::{Platform, PlatformCredential};
 use maowbot_common::traits::platform_traits::{ChatPlatform, ConnectionStatus, PlatformIntegration};
 use maowbot_common::traits::repository_traits::CredentialsRepository;
@@ -630,5 +631,19 @@ impl PlatformManager {
                 "No active Discord runtime for account='{account_name}'"
             )))
         }
+    }
+    pub async fn send_discord_embed(
+        &self,
+        account_name: &str,
+        _server_id: &str, // Not needed for this implementation but kept for API consistency
+        channel_id: &str,
+        embed: &DiscordEmbed,
+        content: Option<&str>
+    ) -> Result<(), Error> {
+        // Get the Discord platform for the specified account
+        let discord = self.get_discord_instance(account_name).await?;
+
+        // Send the embed to the channel
+        discord.send_channel_embed(channel_id, embed, content).await
     }
 }

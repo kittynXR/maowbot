@@ -26,7 +26,8 @@ use twilight_model::{
     gateway::payload::incoming::{InteractionCreate, MessageCreate, Ready as ReadyPayload},
     id::marker::{ApplicationMarker, ChannelMarker},
 };
-
+use twilight_model::util::Timestamp;
+use twilight_util::builder::embed::ImageSource;
 use maowbot_common::error::Error;
 use maowbot_common::traits::platform_traits::{ConnectionStatus, PlatformAuth, PlatformIntegration};
 
@@ -234,6 +235,170 @@ impl DiscordPlatform {
     pub async fn next_message_event(&self) -> Option<DiscordMessageEvent> {
         let mut guard = self.rx.lock().await;
         guard.as_mut()?.recv().await
+    }
+    /// Sends a Discord embed
+    pub async fn send_embed(
+        &self,
+        channel_id: twilight_model::id::Id<ChannelMarker>,
+        embed: &maowbot_common::models::discord::DiscordEmbed,
+        content: Option<&str>,
+    ) -> Result<(), Error> {
+        if let Some(http) = &self.http {
+            // Begin creating the message
+            let mut message_builder = http.create_message(channel_id);
+
+            // Add content if provided
+            if let Some(content_text) = content {
+                message_builder = message_builder.content(content_text);
+            }
+
+            // Create a Twilight embed builder with the correct structure
+            use twilight_util::builder::embed::{
+                EmbedBuilder, EmbedAuthorBuilder, EmbedFieldBuilder, EmbedFooterBuilder,
+            };
+
+            let mut embed_builder = EmbedBuilder::new();
+
+            // Add basic fields
+            if let Some(title) = &embed.title {
+                embed_builder = embed_builder.title(title);
+            }
+
+            if let Some(description) = &embed.description {
+                embed_builder = embed_builder.description(description);
+            }
+
+            if let Some(url) = &embed.url {
+                embed_builder = embed_builder.url(url);
+            }
+
+            // Handle timestamp - convert from DateTime<Utc> to Timestamp
+            if let Some(timestamp) = &embed.timestamp {
+                // Convert DateTime<Utc> to Timestamp using parse
+                match Timestamp::parse(&timestamp.to_rfc3339()) {
+                    Ok(ts) => {
+                        embed_builder = embed_builder.timestamp(ts);
+                    },
+                    Err(e) => {
+                        return Err(Error::Platform(format!("Failed to parse timestamp: {}", e)));
+                    }
+                }
+            }
+
+            if let Some(color) = &embed.color {
+                embed_builder = embed_builder.color(color.0);
+            }
+
+            // Add author if present
+            if let Some(author) = &embed.author {
+                let mut author_builder = EmbedAuthorBuilder::new(author.name.clone());
+
+                if let Some(author_url) = &author.url {
+                    author_builder = author_builder.url(author_url);
+                }
+
+                if let Some(icon_url) = &author.icon_url {
+                    // Convert URL string to ImageSource safely without using ?
+                    match ImageSource::url(icon_url) {
+                        Ok(img) => {
+                            author_builder = author_builder.icon_url(img);
+                        },
+                        Err(e) => {
+                            return Err(Error::Platform(format!("Invalid author icon URL: {}", e)));
+                        }
+                    }
+                }
+
+                embed_builder = embed_builder.author(author_builder.build());
+            }
+
+            // Add footer if present
+            if let Some(footer) = &embed.footer {
+                let mut footer_builder = EmbedFooterBuilder::new(footer.text.clone());
+
+                if let Some(icon_url) = &footer.icon_url {
+                    // Convert URL string to ImageSource safely
+                    match ImageSource::url(icon_url) {
+                        Ok(img) => {
+                            footer_builder = footer_builder.icon_url(img);
+                        },
+                        Err(e) => {
+                            return Err(Error::Platform(format!("Invalid footer icon URL: {}", e)));
+                        }
+                    }
+                }
+
+                embed_builder = embed_builder.footer(footer_builder.build());
+            }
+
+            // Add image if present
+            if let Some(image) = &embed.image {
+                // Convert the URL string to an ImageSource without using ?
+                match ImageSource::url(&image.url) {
+                    Ok(img) => {
+                        embed_builder = embed_builder.image(img);
+                    },
+                    Err(e) => {
+                        return Err(Error::Platform(format!("Invalid image URL: {}", e)));
+                    }
+                }
+            }
+
+            // Add thumbnail if present
+            if let Some(thumbnail) = &embed.thumbnail {
+                // Convert the URL string to an ImageSource without using ?
+                match ImageSource::url(&thumbnail.url) {
+                    Ok(img) => {
+                        embed_builder = embed_builder.thumbnail(img);
+                    },
+                    Err(e) => {
+                        return Err(Error::Platform(format!("Invalid thumbnail URL: {}", e)));
+                    }
+                }
+            }
+
+            // Add fields
+            for field in &embed.fields {
+                let mut field_builder = EmbedFieldBuilder::new(
+                    field.name.clone(),
+                    field.value.clone()
+                );
+
+                // Call .inline() only if the field should be inline
+                if field.inline {
+                    field_builder = field_builder.inline();
+                }
+
+                embed_builder = embed_builder.field(field_builder.build());
+            }
+
+            // Build the embed
+            let built_embed = embed_builder.build();
+
+            // Create a longer-lived array that won't be dropped
+            let embeds = [built_embed];
+            message_builder = message_builder.embeds(&embeds);
+
+            // Send the message
+            message_builder
+                .await
+                .map_err(|e| Error::Platform(format!("Failed to send Discord embed: {}", e)))?;
+        }
+
+        Ok(())
+    }
+    pub async fn send_channel_embed(
+        &self,
+        channel_id_str: &str,
+        embed: &maowbot_common::models::discord::DiscordEmbed,
+        content: Option<&str>
+    ) -> Result<(), Error> {
+        let channel_id_u64: u64 = channel_id_str.parse().map_err(|_| {
+            Error::Platform(format!("Invalid channel ID: {}", channel_id_str))
+        })?;
+        let channel_id = twilight_model::id::Id::<ChannelMarker>::new(channel_id_u64);
+
+        self.send_embed(channel_id, embed, content).await
     }
 }
 

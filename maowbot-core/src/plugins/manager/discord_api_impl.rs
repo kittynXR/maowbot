@@ -2,7 +2,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use maowbot_common::error::Error;
 use maowbot_common::traits::api::DiscordApi;
-use maowbot_common::models::discord::{DiscordGuildRecord, DiscordChannelRecord, DiscordEventConfigRecord};
+use maowbot_common::models::discord::{DiscordGuildRecord, DiscordChannelRecord, DiscordEventConfigRecord, DiscordEmbed};
 use twilight_cache_inmemory::InMemoryCache;
 use twilight_model::id::marker::{GuildMarker};
 use twilight_model::id::Id;
@@ -80,6 +80,20 @@ impl DiscordApi for PluginManager {
         // The platform manager has a helper that does the actual sending:
         self.platform_manager
             .send_discord_message(account_name, server_id, channel_id, text)
+            .await
+    }
+
+    async fn send_discord_embed(
+        &self,
+        account_name: &str,
+        server_id: &str,
+        channel_id: &str,
+        embed: &DiscordEmbed,
+        content: Option<&str>
+    ) -> Result<(), Error> {
+        // Delegate to the platform manager to send the embed
+        self.platform_manager
+            .send_discord_embed(account_name, server_id, channel_id, embed, content)
             .await
     }
 
