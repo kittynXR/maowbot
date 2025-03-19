@@ -1,12 +1,12 @@
-
 pub mod oscquery;
 pub mod vrchat;
 pub mod robo;
 
-use std::net::UdpSocket;
+use std::net::{UdpSocket, SocketAddr};
 use std::sync::Arc;
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, mpsc};
 use thiserror::Error;
+use tokio::task::JoinHandle;
 
 use crate::oscquery::OscQueryServer;
 use rosc::{OscPacket, OscType};
@@ -45,6 +45,8 @@ pub type Result<T> = std::result::Result<T, OscError>;
 pub struct MaowOscManager {
     pub inner: Arc<Mutex<OscManagerInner>>,
     pub oscquery_server: Arc<Mutex<OscQueryServer>>,
+    pub vrchat_watcher: Option<Arc<Mutex<vrchat::avatar_watcher::AvatarWatcher>>>,
+    pub osc_receiver: Arc<Mutex<Option<OscReceiver>>>,
 }
 
 pub struct OscManagerInner {
@@ -59,6 +61,69 @@ pub struct OscManagerStatus {
     pub listening_port: Option<u16>,
 }
 
+/// Struct to manage receiving OSC messages
+pub struct OscReceiver {
+    pub receiver_handle: JoinHandle<()>,
+    pub incoming_tx: mpsc::UnboundedSender<OscPacket>,
+    pub incoming_rx: Option<mpsc::UnboundedReceiver<OscPacket>>,
+}
+
+impl OscReceiver {
+    pub fn new(port: u16) -> Result<Self> {
+        let (tx, rx) = mpsc::unbounded_channel();
+
+        // Create the socket for listening
+        let socket_addr = SocketAddr::from(([127, 0, 0, 1], port));
+        let socket = UdpSocket::bind(socket_addr)
+            .map_err(|e| OscError::IoError(format!("Could not bind to port {}: {}", port, e)))?;
+
+        socket.set_nonblocking(true)
+            .map_err(|e| OscError::IoError(format!("Failed to set nonblocking: {}", e)))?;
+
+        // Move ownership of the socket to the spawned task
+        let tx_clone = tx.clone();
+        let handle = tokio::spawn(async move {
+            let mut buf = [0u8; 1024];
+            tracing::info!("OSC receiver listening on UDP port {}...", port);
+
+            loop {
+                // Non-blocking receive
+                match socket.recv_from(&mut buf) {
+                    Ok((size, _addr)) => {
+                        // Parse packet
+                        match rosc::decoder::decode_udp(&buf[..size]) {
+                            Ok((_remaining, packet)) => {
+                                let _ = tx_clone.send(packet);
+                            }
+                            Err(e) => {
+                                tracing::error!("OSC decode error: {:?}", e);
+                            }
+                        }
+                    }
+                    Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                        // No data available, sleep briefly
+                        std::thread::sleep(std::time::Duration::from_millis(10));
+                    }
+                    Err(e) => {
+                        tracing::error!("OSC receiver error: {:?}", e);
+                        std::thread::sleep(std::time::Duration::from_secs(1));
+                    }
+                }
+            }
+        });
+
+        Ok(Self {
+            receiver_handle: handle,
+            incoming_tx: tx,
+            incoming_rx: Some(rx),
+        })
+    }
+
+    pub fn take_receiver(&mut self) -> Option<mpsc::UnboundedReceiver<OscPacket>> {
+        self.incoming_rx.take()
+    }
+}
+
 impl MaowOscManager {
     pub fn new() -> Self {
         let inner = OscManagerInner {
@@ -71,6 +136,8 @@ impl MaowOscManager {
         Self {
             inner: Arc::new(Mutex::new(inner)),
             oscquery_server: Arc::new(Mutex::new(oscquery_server)),
+            vrchat_watcher: None,
+            osc_receiver: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -123,6 +190,32 @@ impl MaowOscManager {
             });
         }
 
+        // 4) Start the OSC receiver on port 9001 (VRChat sends data here)
+        {
+            let mut osc_rcv = self.osc_receiver.lock().await;
+            if osc_rcv.is_none() {
+                match OscReceiver::new(9001) {
+                    Ok(receiver) => {
+                        *osc_rcv = Some(receiver);
+                        tracing::info!("OSC receiver started on port 9001 (for VRChat)");
+                    }
+                    Err(e) => {
+                        tracing::error!("Failed to start OSC receiver: {:?}", e);
+                    }
+                }
+            }
+        }
+
+        // 5) Initialize and start VRChat avatar watcher if available
+        if let Some(watcher_mutex) = &self.vrchat_watcher {
+            let mut watcher = watcher_mutex.lock().await;
+            if let Err(e) = watcher.start() {
+                tracing::error!("Failed to start VRChat avatar watcher: {:?}", e);
+            } else {
+                tracing::info!("VRChat avatar watcher started");
+            }
+        }
+
         Ok(())
     }
 
@@ -135,6 +228,16 @@ impl MaowOscManager {
             let mut oscq = self.oscquery_server.lock().await;
             oscq.stop().await?;
         }
+
+        // Stop the OSC receiver if running
+        {
+            let mut osc_rcv = self.osc_receiver.lock().await;
+            if let Some(receiver) = osc_rcv.take() {
+                receiver.receiver_handle.abort();
+                tracing::info!("OSC receiver stopped");
+            }
+        }
+
         Ok(())
     }
 
@@ -256,5 +359,20 @@ impl MaowOscManager {
             args: vec![OscType::Float(value)],
         });
         self.send_osc_packet(packet)
+    }
+
+    /// Set the VRChat avatar watcher
+    pub fn set_vrchat_watcher(&mut self, watcher: Arc<Mutex<vrchat::avatar_watcher::AvatarWatcher>>) {
+        self.vrchat_watcher = Some(watcher);
+    }
+
+    /// Take the OSC packet receiver to monitor all incoming messages
+    pub async fn take_osc_receiver(&self) -> Option<mpsc::UnboundedReceiver<OscPacket>> {
+        let mut receiver_guard = self.osc_receiver.lock().await;
+        if let Some(ref mut receiver) = *receiver_guard {
+            receiver.take_receiver()
+        } else {
+            None
+        }
     }
 }

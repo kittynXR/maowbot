@@ -18,7 +18,7 @@ use maowbot_core::Error;
 
 use crate::Args;
 use crate::portable_postgres::*;
-use tracing::{info, error};
+use tracing::{info, error, warn};
 use rand::{thread_rng, Rng};
 use keyring::Entry;
 use base64;
@@ -43,6 +43,7 @@ use maowbot_core::repositories::postgres::user_analysis::PostgresUserAnalysisRep
 use maowbot_osc::MaowOscManager;
 use maowbot_osc::oscquery::OscQueryServer;
 use maowbot_osc::robo::RoboControlSystem;
+use maowbot_osc::vrchat::AvatarWatcher;
 
 /// The global server context (a bag of references to DB, event bus, plugin manager, etc.).
 pub struct ServerContext {
@@ -223,14 +224,24 @@ impl ServerContext {
         }
 
         // Create the new manager for OSC:
-        let osc_manager = Arc::new(MaowOscManager::new());
-        let oscquery_port = 8080;
-        let oscquery_server = Arc::new(tokio::sync::Mutex::new(OscQueryServer::new(oscquery_port)));
+        let mut osc_manager = MaowOscManager::new();
+
+        // Set up the VRChat avatar watcher if VRChat directories are found
+        if let Some(avatar_dir) = maowbot_osc::vrchat::get_vrchat_avatar_dir() {
+            tracing::info!("Found VRChat avatar directory: {}", avatar_dir.display());
+            let avatar_watcher = Arc::new(Mutex::new(maowbot_osc::vrchat::avatar_watcher::AvatarWatcher::new(avatar_dir)));
+            osc_manager.set_vrchat_watcher(avatar_watcher);
+        } else {
+            tracing::warn!("VRChat avatar directory not found - avatar watcher disabled");
+        }
+
+        // After we're done with mutations, create the Arc
+        let osc_manager_arc = Arc::new(osc_manager);
 
         // Create the new robo system:
         let robo_control = Arc::new(Mutex::new(RoboControlSystem::new()));
 
-        plugin_manager.set_osc_manager(Arc::clone(&osc_manager));
+        plugin_manager.set_osc_manager(Arc::clone(&osc_manager_arc));
 
         Ok(ServerContext {
             db,
@@ -244,9 +255,9 @@ impl ServerContext {
             redeem_service,
             creds_repo: creds_repo_arc,
             bot_config_repo: bot_config_repo,
-            osc_manager,
+            osc_manager: osc_manager_arc.clone(),
             robo_control,
-            oscquery_server,
+            oscquery_server: Arc::clone(&osc_manager_arc.oscquery_server),
         })
     }
 

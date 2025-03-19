@@ -9,7 +9,7 @@ pub mod toggles;
 pub mod chatbox;
 
 use crate::{OscError, Result};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::fs;
 use serde::{Deserialize, Serialize};
 
@@ -76,8 +76,84 @@ pub fn load_all_vrchat_avatar_configs<P: AsRef<Path>>(dir: P) -> Vec<VrchatAvata
     results
 }
 
-// NEW: Re-export the new 'avatar_watcher' and 'avatar_toggle_menu'
+// Re-export the new 'avatar_watcher' and 'avatar_toggle_menu'
 pub mod avatar_watcher;
 
 pub use avatar_watcher::AvatarWatcher;
 
+/// Get the path to VRChat's OSC output directory
+pub fn get_vrchat_osc_dir() -> Option<PathBuf> {
+    // Default locations by platform
+    #[cfg(target_os = "windows")]
+    {
+        if let Some(local_low) = dirs::data_local_dir() {
+            if let Some(parent) = local_low.parent() {
+                // Windows: %LOCALAPPDATA%\LocalLow\VRChat\VRChat\OSC
+                let path = parent.join("LocalLow").join("VRChat").join("VRChat").join("OSC");
+
+                if path.exists() {
+                    return Some(path);
+                }
+            }
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        if let Some(home) = dirs::home_dir() {
+            // macOS: ~/Library/Application Support/com.vrchat.VRChat/OSC
+            let path = home.join("Library")
+                .join("Application Support")
+                .join("com.vrchat.VRChat")
+                .join("OSC");
+
+            if path.exists() {
+                return Some(path);
+            }
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        if let Some(home) = dirs::home_dir() {
+            // Linux: ~/.local/share/VRChat/VRChat/OSC
+            let path = home.join(".local")
+                .join("share")
+                .join("VRChat")
+                .join("VRChat")
+                .join("OSC");
+
+            if path.exists() {
+                return Some(path);
+            }
+        }
+    }
+
+    None
+}
+
+/// Get the path to VRChat's avatar folder for the current user
+pub fn get_vrchat_avatar_dir() -> Option<PathBuf> {
+    get_vrchat_osc_dir().and_then(|osc_dir| {
+        // Look for any user folder (usr_*)
+        if let Ok(entries) = fs::read_dir(&osc_dir) {
+            for entry in entries {
+                if let Ok(entry) = entry {
+                    let path = entry.path();
+                    if path.is_dir() && path.file_name()
+                        .and_then(|n| n.to_str())
+                        .map(|s| s.starts_with("usr_"))
+                        .unwrap_or(false)
+                    {
+                        // Found user folder, look for Avatars subfolder
+                        let avatar_dir = path.join("Avatars");
+                        if avatar_dir.exists() && avatar_dir.is_dir() {
+                            return Some(avatar_dir);
+                        }
+                    }
+                }
+            }
+        }
+        None
+    })
+}

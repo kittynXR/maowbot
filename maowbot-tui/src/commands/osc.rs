@@ -8,6 +8,7 @@
 //!     (if no <message>, open a REPL-like chat loop until /quit)
 //!   osc status
 //!   osc discover
+//!   osc raw
 //!
 
 use std::sync::Arc;
@@ -28,6 +29,7 @@ pub async fn handle_osc_command(
   osc chatbox [message...]
   osc status
   osc discover
+  osc raw
 "#.to_string();
     }
     match args[0] {
@@ -92,6 +94,41 @@ pub async fn handle_osc_command(
                 Err(e) => format!("Error => {:?}", e),
             }
         }
+        "raw" => {
+            // Start the OSC raw packet listener
+            println!("Starting OSC raw packet monitor. Press Ctrl+C to stop.");
+
+            match bot_api.osc_take_raw_receiver().await {
+                Ok(Some(mut rx)) => {
+                    // Start a background task to monitor incoming OSC packets
+                    tokio::spawn(async move {
+                        println!("Raw OSC packet monitoring active.");
+                        println!("Waiting for incoming OSC packets...");
+
+                        while let Some(packet) = rx.recv().await {
+                            match packet {
+                                rosc::OscPacket::Message(msg) => {
+                                    println!("OSC Message: addr={}, args={:?}", msg.addr, msg.args);
+                                }
+                                rosc::OscPacket::Bundle(bundle) => {
+                                    println!("OSC Bundle: time={:?}, {} messages",
+                                             bundle.timetag, bundle.content.len());
+                                    for (i, content) in bundle.content.iter().enumerate() {
+                                        println!("  [{}]: {:?}", i, content);
+                                    }
+                                }
+                            }
+                        }
+
+                        println!("OSC raw packet monitor stopped.");
+                    });
+
+                    "OSC raw packet monitor started. Messages will appear in console.".to_string()
+                },
+                Ok(None) => "No OSC receiver available. Try starting OSC first.".to_string(),
+                Err(e) => format!("Error getting OSC receiver: {:?}", e),
+            }
+        },
         _ => "Unknown subcommand. Type 'osc' for help.".to_string(),
     }
 }

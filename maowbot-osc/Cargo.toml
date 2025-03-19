@@ -12,8 +12,9 @@ tracing = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
+dirs = { workspace = true }
 
-rosc = { version = "^0.11" }
+rosc = { workspace = true }
 
 mdns-sd = { version = "^0.13" }
 warp = "^0.3"

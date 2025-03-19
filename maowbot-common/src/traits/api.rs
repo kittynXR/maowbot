@@ -131,6 +131,9 @@ pub trait OscApi: Send + Sync {
     async fn osc_status(&self) -> Result<crate::models::osc::OscStatus, Error>;
     async fn osc_chatbox(&self, message: &str) -> Result<(), Error>;
     async fn osc_discover_peers(&self) -> Result<Vec<String>, Error>;
+    // Need to add to OscApi trait:
+    // Add to the OscApi trait
+    async fn osc_take_raw_receiver(&self) -> Result<Option<mpsc::UnboundedReceiver<rosc::OscPacket>>, Error>;
 }
 
 #[async_trait]

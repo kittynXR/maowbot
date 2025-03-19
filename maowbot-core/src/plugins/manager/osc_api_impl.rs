@@ -80,4 +80,15 @@ impl OscApi for PluginManager {
             .await
             .map_err(|e| Error::Platform(format!("OSC discover error: {e:?}")))
     }
+
+    // Add the implementation for osc_take_raw_receiver:
+    async fn osc_take_raw_receiver(&self) -> Result<Option<tokio::sync::mpsc::UnboundedReceiver<rosc::OscPacket>>, Error> {
+        let mgr = self.osc_manager
+            .as_ref()
+            .ok_or_else(|| Error::Platform("No OSC manager attached".to_string()))?;
+
+        // Now this method returns Future<Output = Option<...>>
+        let receiver = mgr.take_osc_receiver().await;
+        Ok(receiver)
+    }
 }
