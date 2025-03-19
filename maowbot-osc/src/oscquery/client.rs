@@ -42,12 +42,25 @@ impl OscQueryClient {
         let url = format!("http://{}:{}/host_info", host, port);
         debug!("Querying OSCQuery host info from {}", url);
 
-        let client = reqwest::Client::new();
-        let res = client.get(&url)
+        let client = reqwest::Client::builder()
             .timeout(self.timeout)
+            .build()
+            .map_err(|e| OscError::OscQueryError(format!("Failed to build HTTP client: {}", e)))?;
+
+        let res = client.get(&url)
             .send()
             .await
-            .map_err(|e| OscError::OscQueryError(format!("Failed to query host info: {}", e)))?;
+            .map_err(|e| {
+                // More detailed error message
+                let err_msg = if e.is_timeout() {
+                    format!("Connection timed out after {:?}", self.timeout)
+                } else if e.is_connect() {
+                    format!("Connection failed to {}", url)
+                } else {
+                    format!("{}", e)
+                };
+                OscError::OscQueryError(format!("Failed to query host info: {}", err_msg))
+            })?;
 
         let json = res.json::<Value>()
             .await

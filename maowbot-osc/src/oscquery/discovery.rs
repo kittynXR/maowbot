@@ -34,7 +34,17 @@ impl DiscoveredService {
     pub fn from_service_info(info: &ServiceInfo) -> Self {
         let fullname = info.get_fullname().to_string();
         let hostname = info.get_hostname().to_string();
-        let port = info.get_port();
+        let port = info.get_port(); // This is the HTTP port for OSCQuery
+
+        // Debug TXT records for troubleshooting
+        debug!("Service TXT records for {}", fullname);
+        // Instead of trying to iterate directly, use the get_property_val_str method to check specific keys
+        let txt_keys = ["OSC_PORT", "osc.port", "osc.udp.port", "_osc._udp.port", "OSC_IP", "osc.ip", "OSC.IP"];
+        for key in &txt_keys {
+            if let Some(value) = info.get_property_val_str(key) {
+                debug!("  {} = {}", key, value);
+            }
+        }
 
         // Try to find the OSC port from TXT records - try different potential names that VRChat might use
         let osc_port_str = info.get_property_val_str("OSC_PORT")
@@ -57,7 +67,7 @@ impl DiscoveredService {
             name: fullname,
             hostname,
             addr,
-            port,
+            port, // This is the HTTP OSCQuery port!
             osc_port,
             osc_ip,
         }
@@ -218,81 +228,124 @@ impl OscQueryDiscovery {
     /// Discover local `_oscjson._tcp.local.` services with more detailed information
     /// Returns detailed information about each discovered service
     pub async fn discover_services(&self) -> Result<Vec<DiscoveredService>> {
-        let service_type = "_oscjson._tcp.local.";
-        let browser = self
-            .daemon
-            .browse(service_type)
-            .map_err(|e| OscError::OscQueryError(format!("Browse error: {e}")))?;
+        // Try both service types that VRChat uses
+        let service_types = ["_oscjson._tcp.local.", "_osc._udp.local."];
+        let mut all_discovered = Vec::new();
 
-        let (tx, mut rx) = mpsc::channel::<ServiceEvent>(50);
+        for &service_type in &service_types {
+            info!("Browsing for mDNS service type: {}", service_type);
+            let browser = self
+                .daemon
+                .browse(service_type)
+                .map_err(|e| OscError::OscQueryError(format!("Browse error for {}: {}", service_type, e)))?;
 
-        // We'll capture the browser events in a blocking thread and forward them to `tx`.
-        std::thread::spawn(move || {
-            while let Ok(event) = browser.recv() {
-                let _ = tx.blocking_send(event);
-            }
-        });
+            let (tx, mut rx) = mpsc::channel::<ServiceEvent>(50);
 
-        let start_time = tokio::time::Instant::now();
-        let mut discovered = Vec::new();
-
-        // We'll wait up to 5 seconds total, checking every 0.5s for new events
-        while start_time.elapsed() < Duration::from_secs(5) {
-            match timeout(Duration::from_millis(500), rx.recv()).await {
-                Ok(Some(event)) => match event {
-                    // Inside the discover_services method where we handle the ServiceResolved event
-                    ServiceEvent::ServiceResolved(info) => {
-                        let service = DiscoveredService::from_service_info(&info);
-
-                        debug!("Resolved service: {}, hostname: {}, port: {}, OSC port: {:?}",
-                        service.name, service.hostname, service.port, service.osc_port);
-
-                        discovered.push(service);
-                    }
-                    _ => {} // Ignore other events
-                },
-                Ok(None) => {
-                    // Sender closed, no more events
-                    break;
+            // We'll capture the browser events in a blocking thread and forward them to `tx`.
+            std::thread::spawn(move || {
+                while let Ok(event) = browser.recv() {
+                    let _ = tx.blocking_send(event);
                 }
-                Err(_) => {
-                    // timed out after 500ms with no event => keep going until 5s total
+            });
+
+            let start_time = tokio::time::Instant::now();
+
+            // Increase timeout to 10 seconds for better discovery
+            let timeout_duration = Duration::from_secs(10);
+
+            // We'll wait up to timeout_duration total, checking every 0.5s for new events
+            while start_time.elapsed() < timeout_duration {
+                match timeout(Duration::from_millis(500), rx.recv()).await {
+                    Ok(Some(event)) => match event {
+                        ServiceEvent::ServiceFound(name_type, ..) => {
+                            info!("Service found => {name_type}, resolving...");
+                        }
+                        ServiceEvent::ServiceRemoved(name_type, ..) => {
+                            info!("Service removed => {name_type}");
+                        }
+                        ServiceEvent::ServiceResolved(info) => {
+                            let fullname = info.get_fullname().to_string();
+
+                            // Log all TXT records for debugging
+                            debug!("Service resolved: {} on port {}", fullname, info.get_port());
+                            debug!("TXT records for {}:", fullname);
+                            for key in &["OSC_PORT", "osc.port", "osc.udp.port", "_osc._udp.port",
+                                "OSC_IP", "osc.ip", "OSC.IP", "NAME"] {
+                                if let Some(value) = info.get_property_val_str(key) {
+                                    debug!("  {} = {}", key, value);
+                                }
+                            }
+
+                            let service = DiscoveredService::from_service_info(&info);
+                            info!("Resolved service: {}, hostname: {}, port: {}, OSC port: {:?}",
+                                 service.name, service.hostname, service.port, service.osc_port);
+
+                            all_discovered.push(service);
+                        }
+                        ServiceEvent::SearchStarted(_ty) => {
+                            info!("mDNS Search started for {service_type}");
+                        }
+                        ServiceEvent::SearchStopped(_ty) => {
+                            info!("mDNS Search stopped for {service_type}");
+                        }
+                    },
+                    Ok(None) => {
+                        // Sender closed, no more events
+                        break;
+                    }
+                    Err(_) => {
+                        // timed out after 500ms with no event => keep going until timeout
+                    }
                 }
             }
         }
 
-        Ok(discovered)
+        Ok(all_discovered)
     }
 
-    /// Find VRChat OSCQuery service using a more targeted approach
+    // Update the find_vrchat_service method to be more aggressive
     pub async fn find_vrchat_service(&self) -> Result<Option<DiscoveredService>> {
         let services = self.discover_services().await?;
 
-        // VRChat's service typically contains "VRChat" in the name or hostname
+        info!("Found {} total OSC/OSCQuery services", services.len());
+        for (i, svc) in services.iter().enumerate() {
+            info!("Service #{}: {} on port {} (OSC port: {:?})",
+                 i+1, svc.name, svc.port, svc.osc_port);
+        }
+
+        // First, look for services explicitly named VRChat
         for service in &services {
-            // Check for both service name and hostname containing "vrchat" (case insensitive)
             if service.is_vrchat() {
-                debug!("Found VRChat OSCQuery service: {:?}", service);
+                info!("Found VRChat OSCQuery service: {:?}", service);
                 return Ok(Some(service.clone()));
             }
         }
 
-        // If not found with typical naming, check for services on VRChat's common ports
+        // Next, try to find services on 9000/9001 which are VRChat's default ports
         for service in &services {
-            // Check if service is using standard VRChat ports (9000, 9001)
             if service.port == 9000 || service.port == 9001 ||
                 service.osc_port == Some(9000) || service.osc_port == Some(9001) {
-                debug!("Found potential VRChat OSCQuery service on standard port: {:?}", service);
+                info!("Found potential VRChat OSCQuery service on standard port: {:?}", service);
                 return Ok(Some(service.clone()));
             }
         }
 
-        // Extra attempt: Try looking for any OSCQuery service
+        // Last chance - if any service has VRCFT in the name, it's likely the face tracking
+        // which is connected to VRChat
+        for service in &services {
+            if service.name.contains("VRCFT") {
+                info!("Found VRCFaceTracking service: {:?}", service);
+                return Ok(Some(service.clone()));
+            }
+        }
+
+        // If we found any service at all, return the first one as last resort
         if !services.is_empty() {
             warn!("No definitive VRChat OSCQuery service found, using first available OSCQuery service");
             return Ok(Some(services[0].clone()));
         }
 
+        info!("No OSCQuery services found at all");
         Ok(None)
     }
 
@@ -306,6 +359,65 @@ impl OscQueryDiscovery {
                 info!("Unregistered mDNS service: {instance_name}");
             }
         }
+        Ok(())
+    }
+
+    // Add to OscQueryDiscovery
+    pub async fn debug_all_discovered_services(&self) -> Result<()> {
+        info!("Debugging all discoverable mDNS services...");
+
+        // Try all common service types
+        let service_types = [
+            "_oscjson._tcp.local.",
+            "_osc._udp.local.",
+            "_http._tcp.local.",
+            "_vrchat._tcp.local.", // Maybe VRChat uses a custom type?
+        ];
+
+        for &service_type in &service_types {
+            info!("Looking for {} services...", service_type);
+
+            let browser = match self.daemon.browse(service_type) {
+                Ok(b) => b,
+                Err(e) => {
+                    warn!("Could not browse {}: {}", service_type, e);
+                    continue;
+                }
+            };
+
+            let (tx, mut rx) = mpsc::channel::<ServiceEvent>(50);
+
+            std::thread::spawn(move || {
+                while let Ok(event) = browser.recv() {
+                    let _ = tx.blocking_send(event);
+                }
+            });
+
+            let start_time = tokio::time::Instant::now();
+            while start_time.elapsed() < Duration::from_secs(10) {
+                match timeout(Duration::from_millis(500), rx.recv()).await {
+                    Ok(Some(ServiceEvent::ServiceResolved(info))) => {
+                        info!("Found {} service: {}", service_type, info.get_fullname());
+                        info!("  Host: {}, Port: {}", info.get_hostname(), info.get_port());
+                        info!("  Addresses: {:?}", info.get_addresses());
+
+                        // Log all properties
+                        let keys = ["OSC_PORT", "osc.port", "osc.udp.port", "_osc._udp.port",
+                            "OSC_IP", "osc.ip", "OSC.IP", "NAME"];
+                        for key in &keys {
+                            if let Some(value) = info.get_property_val_str(key) {
+                                info!("  Property {}: {}", key, value);
+                            }
+                        }
+                    },
+                    Ok(Some(_)) => {} // Ignore other events
+                    Ok(None) => break, // Channel closed
+                    Err(_) => {} // Timeout - keep waiting
+                }
+            }
+        }
+
+        info!("Service debugging complete");
         Ok(())
     }
 }

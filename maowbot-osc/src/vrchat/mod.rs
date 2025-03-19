@@ -206,6 +206,7 @@ pub fn get_vrchat_avatar_dir() -> Option<PathBuf> {
 ///
 /// This is the primary function for finding VRChat. It uses mDNS to discover
 /// VRChat's OSCQuery service, which is how we find out where to send OSC messages.
+// In vrchat/mod.rs
 pub async fn discover_vrchat() -> Result<Option<DiscoveredService>> {
     // Create a discovery service
     let discovery = match crate::oscquery::discovery::OscQueryDiscovery::new() {
@@ -216,28 +217,36 @@ pub async fn discover_vrchat() -> Result<Option<DiscoveredService>> {
         }
     };
 
+    // Run the debug function if needed
+    if std::env::var("DEBUG_MDNS").is_ok() {
+        if let Err(e) = discovery.debug_all_discovered_services().await {
+            warn!("Error during mDNS debugging: {:?}", e);
+        }
+    }
+
     // Look specifically for VRChat's service
     info!("Searching for VRChat OSCQuery service via mDNS...");
     match discovery.find_vrchat_service().await {
         Ok(Some(service)) => {
-            info!("Found VRChat OSCQuery service: {} on {}:{}",
-                  service.name, service.hostname, service.port);
-            Ok(Some(service))
+            info!("Found VRChat OSCQuery service: {} on {}:{} (OSC port: {:?})",
+                  service.name, service.hostname, service.port, service.osc_port);
+
+            // Double check if this actually looks like VRChat
+            if service.is_vrchat() {
+                Ok(Some(service))
+            } else {
+                warn!("Found service doesn't appear to be VRChat, will try default");
+                // Create a default fallback service
+                let default_service = create_default_vrchat_service();
+                Ok(Some(default_service))
+            }
         },
         Ok(None) => {
             // If not found with mDNS, try direct connection to default ports
             warn!("VRChat OSCQuery service not found via mDNS, trying default connection");
 
-            // Create a default service using VRChat's standard ports
-            let default_service = DiscoveredService {
-                name: "VRChat-Default".to_string(),
-                hostname: "127.0.0.1".to_string(),
-                addr: Some("127.0.0.1".to_string()),
-                port: 9000, // Default HTTP OSCQuery port for some VRChat versions
-                osc_port: Some(9001), // VRChat sends on 9001
-                osc_ip: Some("127.0.0.1".to_string()),
-            };
-
+            // Try connecting directly to known VRChat ports
+            let default_service = create_default_vrchat_service();
             Ok(Some(default_service))
         },
         Err(e) => {
@@ -247,67 +256,70 @@ pub async fn discover_vrchat() -> Result<Option<DiscoveredService>> {
     }
 }
 
+fn create_default_vrchat_service() -> DiscoveredService {
+    // Try common VRChat OSCQuery ports
+    let ports_to_try = [9000, 9001, 8000, 8080];
+
+    // For now, create a default service with standard ports
+    DiscoveredService {
+        name: "VRChat-Default".to_string(),
+        hostname: "127.0.0.1".to_string(),
+        addr: Some("127.0.0.1".to_string()),
+        port: 9000, // We'll try to connect on common ports
+        osc_port: Some(9001), // VRChat sends OSC on 9001 by default
+        osc_ip: Some("127.0.0.1".to_string()),
+    }
+}
+
 // Function to query VRChat's OSCQuery with hostname and port
+// In vrchat/mod.rs
 pub async fn query_vrchat_oscquery(client: &OscQueryClient, host: &str, port: u16) -> Result<Option<(String, u16)>> {
-    // Try to get the host info first to confirm we're talking to VRChat
-    let host_info = match client.query_host_info(host, port).await {
-        Ok(info) => info,
+    info!("Querying VRChat OSCQuery service at {}:{}", host, port);
+
+    // First try host_info
+    match client.query_host_info(host, port).await {
+        Ok(info) => {
+            debug!("Received host info: {:?}", info);
+
+            // Look for OSC_IP and OSC_PORT in the response
+            let osc_ip = info.get("OSC_IP")
+                .and_then(|ip| ip.as_str())
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| "127.0.0.1".to_string());
+
+            let osc_port = info.get("OSC_PORT")
+                .and_then(|port| port.as_u64())
+                .map(|p| p as u16)
+                .unwrap_or(9001); // Default VRChat output port
+
+            info!("Found VRChat OSC info: {}:{}", osc_ip, osc_port);
+            return Ok(Some((osc_ip, osc_port)));
+        }
         Err(e) => {
-            debug!("Failed to query host_info from {}: {}", host, e);
-            // Try the root endpoint instead
+            debug!("Failed to query host_info: {:?}, trying root endpoint", e);
+
+            // Try the root endpoint as a fallback
             match client.query_root(host, port).await {
-                Ok(root) => root,
+                Ok(root) => {
+                    debug!("Received OSC root info: {:?}", root);
+
+                    // Try to extract OSC_PORT from the root response
+                    let osc_port = root.get("OSC_PORT")
+                        .and_then(|p| p.as_u64())
+                        .map(|p| p as u16)
+                        .unwrap_or(9001);
+
+                    info!("Using VRChat OSC port: {}", osc_port);
+                    return Ok(Some(("127.0.0.1".to_string(), osc_port)));
+                }
                 Err(e2) => {
-                    warn!("Failed to query OSCQuery root from {}: {}", host, e2);
-                    // If all fails, return default values
+                    warn!("Failed to query OSCQuery root: {:?}", e2);
+                    // Return default values as a last resort
                     return Ok(Some(("127.0.0.1".to_string(), 9001)));
                 }
             }
         }
-    };
-
-    // Look for OSC_IP and OSC_PORT in the response
-    // First try the direct query keys
-    let osc_ip = host_info.get("OSC_IP")
-        .and_then(|ip| ip.as_str())
-        .map(|s| s.to_string());
-
-    let osc_port = host_info.get("OSC_PORT")
-        .and_then(|port| port.as_u64())
-        .map(|p| p as u16);
-
-    // If we found both, return them
-    if let (Some(ip), Some(port)) = (osc_ip, osc_port) {
-        info!("VRChat OSCQuery info: IP={}, PORT={}", ip, port);
-        return Ok(Some((ip, port)));
     }
-
-    // If we didn't find them, look for them in CONTENTS section (some versions of VRChat structure it differently)
-    if let Some(contents) = host_info.get("CONTENTS") {
-        if let Some(obj) = contents.as_object() {
-            // Try to find OSC_IP and OSC_PORT in the CONTENTS
-            let ip = obj.keys()
-                .find(|k| k.to_uppercase() == "OSC_IP")
-                .and_then(|k| obj.get(k))
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string());
-
-            let port = obj.keys()
-                .find(|k| k.to_uppercase() == "OSC_PORT")
-                .and_then(|k| obj.get(k))
-                .and_then(|v| v.as_u64())
-                .map(|p| p as u16);
-
-            if let (Some(ip), Some(port)) = (ip, port) {
-                info!("VRChat OSCQuery info (from CONTENTS): IP={}, PORT={}", ip, port);
-                return Ok(Some((ip, port)));
-            }
-        }
-    }
-
-    // If we still haven't found them, assume the defaults
-    warn!("Could not find OSC_IP and OSC_PORT in VRChat OSCQuery response, using defaults");
-    Ok(Some(("127.0.0.1".to_string(), 9001)))
 }
 
 // Helper function that works with DiscoveredService
