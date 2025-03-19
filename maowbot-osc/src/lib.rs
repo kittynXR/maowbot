@@ -59,6 +59,9 @@ pub struct OscManagerInner {
 pub struct OscManagerStatus {
     pub is_running: bool,
     pub listening_port: Option<u16>,
+    pub is_oscquery_running: bool,
+    pub oscquery_port: Option<u16>,
+    pub discovered_peers: Vec<String>,
 }
 
 /// Struct to manage receiving OSC messages
@@ -72,10 +75,21 @@ impl OscReceiver {
     pub fn new(port: u16) -> Result<Self> {
         let (tx, rx) = mpsc::unbounded_channel();
 
-        // Create the socket for listening
-        let socket_addr = SocketAddr::from(([127, 0, 0, 1], port));
-        let socket = UdpSocket::bind(socket_addr)
-            .map_err(|e| OscError::IoError(format!("Could not bind to port {}: {}", port, e)))?;
+        // Create the socket for listening - bind to all interfaces
+        let socket_addr = SocketAddr::from(([0, 0, 0, 0], port));
+        tracing::info!("Binding OSC receiver socket to {}", socket_addr);
+
+        let socket = match UdpSocket::bind(socket_addr) {
+            Ok(s) => s,
+            Err(e) => {
+                tracing::error!("Failed to bind to {}: {}", socket_addr, e);
+                // Try alternate binding
+                let local_addr = SocketAddr::from(([127, 0, 0, 1], port));
+                tracing::info!("Trying alternate binding to {}", local_addr);
+                UdpSocket::bind(local_addr)
+                    .map_err(|e2| OscError::IoError(format!("Could not bind to any address: {}, then {}", e, e2)))?
+            }
+        };
 
         socket.set_nonblocking(true)
             .map_err(|e| OscError::IoError(format!("Failed to set nonblocking: {}", e)))?;
@@ -83,16 +97,28 @@ impl OscReceiver {
         // Move ownership of the socket to the spawned task
         let tx_clone = tx.clone();
         let handle = tokio::spawn(async move {
-            let mut buf = [0u8; 1024];
+            // Increase buffer size for larger OSC packets
+            let mut buf = [0u8; 4096]; // Increased from 1024
             tracing::info!("OSC receiver listening on UDP port {}...", port);
 
             loop {
                 // Non-blocking receive
                 match socket.recv_from(&mut buf) {
-                    Ok((size, _addr)) => {
+                    Ok((size, addr)) => {
+                        tracing::debug!("Received OSC packet: {} bytes from {}", size, addr);
                         // Parse packet
                         match rosc::decoder::decode_udp(&buf[..size]) {
                             Ok((_remaining, packet)) => {
+                                // Log received packet for debugging
+                                match &packet {
+                                    OscPacket::Message(msg) => {
+                                        tracing::debug!("OSC Message: {} with {} args", msg.addr, msg.args.len());
+                                    },
+                                    OscPacket::Bundle(bundle) => {
+                                        tracing::debug!("OSC Bundle with {} messages", bundle.content.len());
+                                    }
+                                }
+
                                 let _ = tx_clone.send(packet);
                             }
                             Err(e) => {
@@ -144,11 +170,25 @@ impl MaowOscManager {
     pub async fn get_status(&self) -> Result<OscManagerStatus> {
         // Lock the inner struct here:
         let guard = self.inner.lock().await;
+        let oscq_guard = self.oscquery_server.lock().await;
+
+        // Get discovered peers if available
+        let discovered_peers = if let Some(discovery) = &oscq_guard.discovery {
+            match discovery.discover_peers().await {
+                Ok(peers) => peers,
+                Err(_) => vec![]
+            }
+        } else {
+            vec![]
+        };
 
         // We build a simple status object:
         let status = OscManagerStatus {
             is_running: guard.is_running,
             listening_port: guard.listening_port,
+            is_oscquery_running: oscq_guard.is_running,
+            oscquery_port: Some(oscq_guard.http_port),
+            discovered_peers,
         };
 
         Ok(status)
@@ -161,11 +201,13 @@ impl MaowOscManager {
     /// background task, so the server startup doesn't block for its duration.
     pub async fn start_all(&self) -> Result<()> {
         // 1) Start the OSC server on a free UDP port:
-        let _chosen_port = self.start_server().await?;
+        let chosen_port = self.start_server().await?;
 
         // 2) Start the OSCQuery server:
         {
             let mut oscq = self.oscquery_server.lock().await;
+            // Tell OSCQuery to advertise our chosen port for OSC
+            oscq.set_osc_port(chosen_port);
             oscq.start().await?;
         }
         tracing::info!("OSCQuery server started on port 8080.");
@@ -190,23 +232,26 @@ impl MaowOscManager {
             });
         }
 
-        // 4) Start the OSC receiver on port 9001 (VRChat sends data here)
+        // 4) Start the OSC receiver on the same port we're advertising
+        // Note: We're only starting one receiver, and both OscReceiver and AvatarWatcher will share it
         {
             let mut osc_rcv = self.osc_receiver.lock().await;
             if osc_rcv.is_none() {
-                match OscReceiver::new(9001) {
+                match OscReceiver::new(chosen_port) {
                     Ok(receiver) => {
                         *osc_rcv = Some(receiver);
-                        tracing::info!("OSC receiver started on port 9001 (for VRChat)");
+                        tracing::info!("OSC receiver started on port {} (for VRChat)", chosen_port);
                     }
                     Err(e) => {
                         tracing::error!("Failed to start OSC receiver: {:?}", e);
+                        tracing::error!("This may happen if port {} is already in use", chosen_port);
                     }
                 }
             }
         }
 
         // 5) Initialize and start VRChat avatar watcher if available
+        // The AvatarWatcher will no longer try to bind to 9001 directly
         if let Some(watcher_mutex) = &self.vrchat_watcher {
             let mut watcher = watcher_mutex.lock().await;
             if let Err(e) = watcher.start() {
@@ -271,11 +316,23 @@ impl MaowOscManager {
 
         let mut port_found = None;
         for port in start_port..max_port {
-            let addr = format!("127.0.0.1:{port}");
-            if let Ok(_sock) = UdpSocket::bind(&addr) {
-                // In a real server, we'd keep this socket open and pass it to a rosc listener.
-                port_found = Some(port);
-                break;
+            // Try binding to all interfaces first
+            let addr = format!("0.0.0.0:{port}");
+            match UdpSocket::bind(&addr) {
+                Ok(_sock) => {
+                    port_found = Some(port);
+                    break;
+                },
+                Err(e) => {
+                    tracing::debug!("Failed to bind to {}: {}", addr, e);
+
+                    // Try localhost as fallback
+                    let localhost_addr = format!("127.0.0.1:{port}");
+                    if let Ok(_) = UdpSocket::bind(&localhost_addr) {
+                        port_found = Some(port);
+                        break;
+                    }
+                }
             }
         }
 
@@ -307,12 +364,24 @@ impl MaowOscManager {
     // Common helper for sending a raw OSC packet to VRChat (which listens on 9000 by default).
 
     fn send_osc_packet(&self, packet: OscPacket) -> Result<()> {
-        let address = "127.0.0.1:9000"; // VRChat typically listens on this
+        let address = "127.0.0.1:9000"; // VRChat typically listens here by default
         let buf = rosc::encoder::encode(&packet)
             .map_err(|e| OscError::IoError(format!("Encode error: {e:?}")))?;
 
         let sock = UdpSocket::bind(("127.0.0.1", 0))
             .map_err(|e| OscError::IoError(format!("Bind sock error: {e}")))?;
+
+        // Log what we're sending
+        match &packet {
+            OscPacket::Message(msg) => {
+                tracing::debug!("Sending OSC message: {} with {} args to {}",
+                               msg.addr, msg.args.len(), address);
+            },
+            OscPacket::Bundle(_) => {
+                tracing::debug!("Sending OSC bundle to {}", address);
+            }
+        }
+
         sock.send_to(&buf, address)
             .map_err(|e| OscError::IoError(format!("Send error: {e}")))?;
         Ok(())

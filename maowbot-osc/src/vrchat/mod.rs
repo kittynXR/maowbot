@@ -43,12 +43,58 @@ pub struct VrchatParamEndpoint {
 /// (e.g. `C:\Users\YOU\AppData\LocalLow\VRChat\VRChat\OSC\usr_\Avatars\avtr_\*.json`).
 pub fn parse_vrchat_avatar_config<P: AsRef<Path>>(path: P) -> Result<VrchatAvatarConfig> {
     let p = path.as_ref();
-    let data = fs::read_to_string(p)
-        .map_err(|e| OscError::AvatarConfigError(format!("Could not read file {}: {e}", p.display())))?;
 
-    let cfg: VrchatAvatarConfig = serde_json::from_str(&data)
-        .map_err(|e| OscError::AvatarConfigError(format!("JSON parse error: {e}")))?;
-    Ok(cfg)
+    // Check if file exists
+    if !p.exists() {
+        return Err(OscError::AvatarConfigError(format!("File does not exist: {}", p.display())));
+    }
+
+    // Read file as bytes first to check if it's empty
+    let bytes = match fs::read(p) {
+        Ok(b) => b,
+        Err(e) => {
+            return Err(OscError::AvatarConfigError(format!(
+                "Could not read file {}: {e}",
+                p.display()
+            )));
+        }
+    };
+
+    if bytes.is_empty() {
+        return Err(OscError::AvatarConfigError(format!("File is empty: {}", p.display())));
+    }
+
+    // Try to parse the JSON with more detailed error reporting
+    match serde_json::from_slice::<VrchatAvatarConfig>(&bytes) {
+        Ok(cfg) => Ok(cfg),
+        Err(e) => {
+            // Log the first few bytes as hex for debugging
+            let preview_len = std::cmp::min(40, bytes.len());
+            let preview = &bytes[..preview_len];
+            let preview_text = String::from_utf8_lossy(preview);
+
+            tracing::error!(
+                "JSON parse error for {}: {} (first bytes: '{}')",
+                p.display(), e, preview_text
+            );
+
+            // VRChat sometimes writes empty or partial files, try removing BOM if present
+            if bytes.len() >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF {
+                // Try parsing without the BOM
+                match serde_json::from_slice::<VrchatAvatarConfig>(&bytes[3..]) {
+                    Ok(cfg) => {
+                        tracing::info!("Successfully parsed after removing BOM marker");
+                        return Ok(cfg);
+                    }
+                    Err(_) => {
+                        // Still failed, continue to error
+                    }
+                }
+            }
+
+            Err(OscError::AvatarConfigError(format!("JSON parse error: {}", e)))
+        }
+    }
 }
 
 /// Utility to scan a directory for all `.json` files and parse them as VRChat avatar configs.

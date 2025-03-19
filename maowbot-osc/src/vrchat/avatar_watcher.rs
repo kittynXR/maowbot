@@ -2,7 +2,6 @@
 
 use std::{
     collections::HashMap,
-    net::UdpSocket,
     path::PathBuf,
     sync::Arc,
     thread,
@@ -14,7 +13,6 @@ use notify::{
     Config, Event, RecommendedWatcher, RecursiveMode, Watcher,
 };
 use rosc::{OscPacket, OscType};
-use rosc::decoder::decode_udp;
 use crate::{OscError, Result};
 use crate::vrchat::{parse_vrchat_avatar_config, VrchatAvatarConfig};
 use crate::vrchat::toggles::avatar_toggle_menu::AvatarToggleMenu;
@@ -51,7 +49,8 @@ impl AvatarWatcher {
     }
 
     /// Start watching the folder for JSON changes and spawn an OSC listener for `/avatar/change`.
-    /// This uses a background thread (for file events) and a separate thread for OSC.
+    /// This uses a background thread (for file events).
+    /// The AvatarWatcher no longer tries to create its own OSC socket, but uses the shared one.
     pub fn start(&mut self) -> Result<()> {
         if self.is_running {
             return Ok(());
@@ -77,7 +76,7 @@ impl AvatarWatcher {
                             let _ = watch_send.send(event);
                         }
                         Err(e) => {
-                            eprintln!("[AvatarWatcher] notify error: {:?}", e);
+                            tracing::error!("[AvatarWatcher] notify error: {:?}", e);
                         }
                     }
                 },
@@ -85,13 +84,13 @@ impl AvatarWatcher {
             ) {
                 Ok(w) => w,
                 Err(e) => {
-                    eprintln!("[AvatarWatcher] Failed to create watcher: {:?}", e);
+                    tracing::error!("[AvatarWatcher] Failed to create watcher: {:?}", e);
                     return;
                 }
             };
 
             if let Err(e) = watcher.watch(&folder_clone, RecursiveMode::NonRecursive) {
-                eprintln!("[AvatarWatcher] Watch error: {:?}", e);
+                tracing::error!("[AvatarWatcher] Watch error: {:?}", e);
                 return;
             }
 
@@ -115,54 +114,20 @@ impl AvatarWatcher {
             while let Some(evt) = local_rx.recv().await {
                 match evt {
                     FileChangeEvent::Added(path) => {
-                        println!("++ Added: {}", path.display());
+                        tracing::debug!("File added: {}", path.display());
                         maybe_parse_avatar(&path, &known_map_ptr_files).await;
                     }
                     FileChangeEvent::Modified(path) => {
-                        println!("~~ Modified: {}", path.display());
+                        tracing::debug!("File modified: {}", path.display());
                         maybe_parse_avatar(&path, &known_map_ptr_files).await;
                     }
                     FileChangeEvent::Removed(path) => {
-                        println!("-- Removed: {}", path.display());
+                        tracing::debug!("File removed: {}", path.display());
                         let mut guard = known_map_ptr_files.lock().await;
                         guard.retain(|_k, v| v.path != path);
                     }
                     FileChangeEvent::Other(e) => {
-                        println!("[Watcher] Other event: {:?}", e);
-                    }
-                }
-            }
-        });
-
-        // 4) Start a thread for OSC listening on UDP port 9001
-        let known_map_ptr_osc = known_map_ptr.clone();
-        thread::spawn(move || {
-            let sock = match UdpSocket::bind("127.0.0.1:9001") {
-                Ok(s) => s,
-                Err(e) => {
-                    eprintln!("[AvatarWatcher] Could not bind OSC UDP port 9001: {:?}", e);
-                    return;
-                }
-            };
-            let mut buf = [0u8; 1024];
-            println!("[AvatarWatcher] Listening for OSC at 127.0.0.1:9001 ...");
-            loop {
-                match sock.recv_from(&mut buf) {
-                    Ok((size, _addr)) => {
-                        match decode_udp(&buf[..size]) {
-                            Ok((_remaining, packet)) => {
-                                if let Err(e) = handle_osc_packet(packet, known_map_ptr_osc.clone()) {
-                                    eprintln!("[AvatarWatcher] handle_osc_packet error: {:?}", e);
-                                }
-                            }
-                            Err(e) => {
-                                eprintln!("[AvatarWatcher] decode_udp error: {:?}", e);
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        eprintln!("[AvatarWatcher] recv_from error: {:?}", e);
-                        thread::sleep(Duration::from_secs(1));
+                        tracing::trace!("[Watcher] Other event: {:?}", e);
                     }
                 }
             }
@@ -171,12 +136,59 @@ impl AvatarWatcher {
         Ok(())
     }
 
+    /// Process an OSC packet received from elsewhere (shared socket) looking for avatar changes
+    pub async fn process_osc_packet(&self, packet: &OscPacket) {
+        // Avoid recursion by handling all cases directly
+        match packet {
+            OscPacket::Message(msg) => {
+                if msg.addr == "/avatar/change" {
+                    if let Some(OscType::String(avatar_id)) = msg.args.get(0) {
+                        tracing::info!("Avatar change detected: {}", avatar_id);
+
+                        // Access known_avatars directly
+                        if let Some(known_avatar) = self.known_avatars.get(avatar_id) {
+                            let menu = AvatarToggleMenu::new(&known_avatar.config);
+                            menu.print_menu();
+                        } else {
+                            tracing::warn!("Avatar ID {} not found in our database", avatar_id);
+                        }
+                    }
+                }
+            }
+            OscPacket::Bundle(bundle) => {
+                // Process all messages in the bundle without recursion
+                for inner_packet in &bundle.content {
+                    match inner_packet {
+                        OscPacket::Message(msg) => {
+                            if msg.addr == "/avatar/change" {
+                                if let Some(OscType::String(avatar_id)) = msg.args.get(0) {
+                                    tracing::info!("Avatar change detected (in bundle): {}", avatar_id);
+
+                                    if let Some(known_avatar) = self.known_avatars.get(avatar_id) {
+                                        let menu = AvatarToggleMenu::new(&known_avatar.config);
+                                        menu.print_menu();
+                                    } else {
+                                        tracing::warn!("Avatar ID {} not found in our database", avatar_id);
+                                    }
+                                }
+                            }
+                        },
+                        // If we need to handle deeply nested bundles, we'd need a different approach
+                        OscPacket::Bundle(_) => {
+                            tracing::debug!("Ignoring nested bundle in OSC packet");
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     /// Reload all `.json` files from the folder into `known_avatars`.
     fn reload_all_avatars(&mut self) -> Result<()> {
         self.known_avatars.clear();
 
         if !self.folder.exists() {
-            println!("[AvatarWatcher] Folder not found: {}", self.folder.display());
+            tracing::warn!("VRChat avatar folder not found: {}", self.folder.display());
             return Ok(());
         }
         let entries = std::fs::read_dir(&self.folder)
@@ -186,21 +198,34 @@ impl AvatarWatcher {
             if let Ok(de) = entry {
                 let p = de.path();
                 if p.extension().map(|ext| ext == "json").unwrap_or(false) {
-                    match parse_vrchat_avatar_config(&p) {
-                        Ok(cfg) => {
-                            let av_id = cfg.id.clone();
-                            let known = KnownAvatar { path: p.clone(), config: cfg };
-                            self.known_avatars.insert(av_id, known);
+                    // Use tokio block_in_place to allow for retries
+                    tokio::task::block_in_place(|| {
+                        // Try a few times with delay
+                        for attempt in 1..=3 {
+                            match parse_vrchat_avatar_config(&p) {
+                                Ok(cfg) => {
+                                    let av_id = cfg.id.clone();
+                                    let known = KnownAvatar { path: p.clone(), config: cfg };
+                                    self.known_avatars.insert(av_id, known);
+                                    break;
+                                }
+                                Err(e) => {
+                                    if attempt < 3 {
+                                        tracing::debug!("Attempt {} failed to parse {}: {}. Retrying...",
+                                                attempt, p.display(), e);
+                                        thread::sleep(Duration::from_millis(200));
+                                    } else {
+                                        tracing::warn!("Failed to parse {}: {}", p.display(), e);
+                                    }
+                                }
+                            }
                         }
-                        Err(e) => {
-                            eprintln!("[AvatarWatcher] Failed to parse {}: {}", p.display(), e);
-                        }
-                    }
+                    });
                 }
             }
         }
 
-        println!("[AvatarWatcher] Loaded {} avatar configs from '{}'.",
+        tracing::info!("Loaded {} avatar configs from '{}'.",
                  self.known_avatars.len(),
                  self.folder.display()
         );
@@ -253,37 +278,50 @@ async fn maybe_parse_avatar(path: &PathBuf, known_map_ptr: &Arc<Mutex<HashMap<St
     if path.extension().map(|ext| ext != "json").unwrap_or(true) {
         return;
     }
-    match parse_vrchat_avatar_config(path) {
-        Ok(cfg) => {
-            println!("Parsed avatar config => id='{}', name='{}'", cfg.id, cfg.name);
-            let mut guard = known_map_ptr.lock().await;
-            guard.insert(cfg.id.clone(), KnownAvatar {
-                path: path.clone(),
-                config: cfg,
-            });
-        }
-        Err(e) => {
-            eprintln!("Failed to parse {}: {}", path.display(), e);
+
+    // Implement retry logic with a short delay
+    for attempt in 1..=3 {
+        match parse_vrchat_avatar_config(path) {
+            Ok(cfg) => {
+                tracing::info!("Parsed avatar config => id='{}', name='{}'", cfg.id, cfg.name);
+                let mut guard = known_map_ptr.lock().await;
+                guard.insert(cfg.id.clone(), KnownAvatar {
+                    path: path.clone(),
+                    config: cfg,
+                });
+                return;
+            }
+            Err(e) => {
+                if attempt < 3 {
+                    tracing::debug!("Attempt {} failed to parse {}: {}. Retrying in 200ms...",
+                            attempt, path.display(), e);
+                    tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+                } else {
+                    tracing::warn!("Failed to parse {} after {} attempts: {}", path.display(), attempt, e);
+                }
+            }
         }
     }
 }
 
-/// Handles an OSC packet and looks for `/avatar/change` messages.
-fn handle_osc_packet(packet: OscPacket, known_map_ptr: Arc<Mutex<HashMap<String, KnownAvatar>>>) -> Result<()> {
+/// Static function to handle OSC packets for avatar changes
+pub fn handle_osc_packet(packet: OscPacket, known_map_ptr: Arc<Mutex<HashMap<String, KnownAvatar>>>) -> Result<()> {
     match packet {
         OscPacket::Message(msg) => {
+            tracing::trace!("Received OSC message: {} with {} args", msg.addr, msg.args.len());
+
             if msg.addr == "/avatar/change" {
                 if let Some(arg) = msg.args.get(0) {
                     if let OscType::String(avatar_id_str) = arg {
                         let avatar_id = avatar_id_str.clone();
-                        println!("[AvatarWatcher] DETECTED AVATAR CHANGE => {}", avatar_id);
+                        tracing::info!("DETECTED AVATAR CHANGE => {}", avatar_id);
                         tokio::spawn(async move {
                             let map_lock = known_map_ptr.lock().await;
                             if let Some(kav) = map_lock.get(&avatar_id) {
                                 let menu = AvatarToggleMenu::new(&kav.config);
                                 menu.print_menu();
                             } else {
-                                eprintln!("No local config for avatar_id={}", avatar_id);
+                                tracing::warn!("No local config for avatar_id={}", avatar_id);
                             }
                         });
                     }
@@ -291,6 +329,7 @@ fn handle_osc_packet(packet: OscPacket, known_map_ptr: Arc<Mutex<HashMap<String,
             }
         }
         OscPacket::Bundle(bundle) => {
+            tracing::trace!("Received OSC bundle with {} messages", bundle.content.len());
             for inner in bundle.content {
                 handle_osc_packet(inner, known_map_ptr.clone())?;
             }

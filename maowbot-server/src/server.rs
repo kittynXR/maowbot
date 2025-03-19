@@ -144,6 +144,13 @@ pub async fn run_server(args: Args) -> Result<(), Error> {
         info!("OSC and OSCQuery servers stopped successfully.");
     }
 
+    // Force abort all OSC-related background tasks
+    if let Some(rx) = ctx.osc_manager.take_osc_receiver().await {
+        // Drop the receiver to close the channel
+        drop(rx);
+        info!("OSC receiver channel closed");
+    }
+
     // Cleanup
     info!("Stopping gRPC server...");
     srv_handle.abort();

@@ -3,6 +3,8 @@ use crate::oscquery::discovery::OscQueryDiscovery;
 use warp::Filter;
 use std::net::{SocketAddr, Ipv4Addr};
 use tracing::{info, error};
+use std::collections::HashMap;
+use serde_json::json;
 
 /// An OSCQuery HTTP server that can optionally advertise itself via mDNS.
 /// By default, it listens on a chosen `http_port`. Once started, it serves
@@ -12,6 +14,7 @@ use tracing::{info, error};
 pub struct OscQueryServer {
     pub is_running: bool,
     pub http_port: u16,
+    pub osc_port: u16, // New field to store the OSC port to advertise
     stop_tx: Option<tokio::sync::oneshot::Sender<()>>,
     pub discovery: Option<OscQueryDiscovery>,
 }
@@ -23,14 +26,21 @@ impl OscQueryServer {
         Self {
             is_running: false,
             http_port: port,
+            osc_port: 9002, // Default to 9002 for OSC
             stop_tx: None,
             discovery: None,
         }
     }
 
+    /// Set the OSC port to advertise via OSCQuery
+    pub fn set_osc_port(&mut self, port: u16) {
+        self.osc_port = port;
+    }
+
     pub fn is_running(&self) -> bool {
         self.is_running
     }
+
     /// Start the OSCQuery HTTP server using `warp`. Also attempts to
     /// advertise via mDNS if possible.
     pub async fn start(&mut self) -> Result<()> {
@@ -39,12 +49,102 @@ impl OscQueryServer {
         }
         self.is_running = true;
 
-        // Create a minimal route returning some OSCQuery JSON structure
-        let route = warp::path::end().map(|| {
-            warp::reply::json(&serde_json::json!({
-                "hello": "from MaowBot",
-                "addresses": ["/avatar/parameters/Example"]
-            }))
+        // Create properties including the OSC port to tell VRChat where to send messages
+        let osc_port = self.osc_port; // Store for capture in routes
+
+        // Create a minimal route returning an OSCQuery JSON structure
+        // that correctly advertises our actual listening port
+        let route = warp::path::end().map(move || {
+            let response = json!({
+                "DESCRIPTION": "MaowBot OSC Server",
+                "ACCESS": {
+                    "read": true,
+                    "write": true,
+                    "value": true
+                },
+                "OSC_PORT": osc_port,
+                "EXTENSIONS": {
+                    "ACCESS": true,
+                    "VALUE": true,
+                    "RANGE": true,
+                    "DESCRIPTION": true,
+                    "TAGS": true,
+                    "EXTENDED_TYPE": true,
+                    "UNIT": true,
+                    "CRITICAL": true,
+                    "CLIPMODE": true
+                },
+                "CONTENTS": {
+                    "avatar": {
+                        "FULL_PATH": "/avatar",
+                        "ACCESS": {
+                            "read": true,
+                            "write": true,
+                            "value": true
+                        },
+                        "CONTENTS": {
+                            "parameters": {
+                                "FULL_PATH": "/avatar/parameters",
+                                "ACCESS": {
+                                    "read": true,
+                                    "write": true,
+                                    "value": true
+                                },
+                                "CONTENTS": {
+                                    "Example": {
+                                        "FULL_PATH": "/avatar/parameters/Example",
+                                        "TYPE": "f",
+                                        "ACCESS": {
+                                            "read": true,
+                                            "write": true,
+                                            "value": true
+                                        },
+                                        "VALUE": 0.0
+                                    }
+                                }
+                            },
+                            "change": {
+                                "FULL_PATH": "/avatar/change",
+                                "TYPE": "s",
+                                "ACCESS": {
+                                    "read": true,
+                                    "write": true,
+                                    "value": true
+                                }
+                            }
+                        }
+                    },
+                    "chatbox": {
+                        "FULL_PATH": "/chatbox",
+                        "ACCESS": {
+                            "read": true,
+                            "write": true,
+                            "value": true
+                        },
+                        "CONTENTS": {
+                            "input": {
+                                "FULL_PATH": "/chatbox/input",
+                                "TYPE": "sbb",
+                                "ACCESS": {
+                                    "read": true,
+                                    "write": true,
+                                    "value": true
+                                }
+                            },
+                            "typing": {
+                                "FULL_PATH": "/chatbox/typing",
+                                "TYPE": "b",
+                                "ACCESS": {
+                                    "read": true,
+                                    "write": true,
+                                    "value": true
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+            warp::reply::json(&response)
         });
 
         let (stop_tx, stop_rx) = tokio::sync::oneshot::channel();
@@ -74,10 +174,15 @@ impl OscQueryServer {
                 // We'll store it in our struct, so we can stop it later
                 self.discovery = Some(discovery);
                 if let Some(d) = &self.discovery {
-                    if let Err(e) = d.advertise("MaowBotOSCQuery", self.http_port).await {
+                    // Create properties to advertise our OSC port
+                    let mut properties = HashMap::new();
+                    properties.insert("OSC_PORT".to_string(), self.osc_port.to_string());
+
+                    if let Err(e) = d.advertise_with_properties("MaowBotOSCQuery", self.http_port, properties).await {
                         error!("Failed to advertise mDNS for OSCQuery: {:?}", e);
                     } else {
-                        info!("mDNS advertisement started for OSCQuery on port {}", self.http_port);
+                        info!("mDNS advertisement started for OSCQuery on HTTP port {} / OSC port {}",
+                             self.http_port, self.osc_port);
                     }
                 }
             }

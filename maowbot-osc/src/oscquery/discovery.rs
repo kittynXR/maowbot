@@ -74,6 +74,38 @@ impl OscQueryDiscovery {
         }
     }
 
+    /// Advertise an OSCQuery service with specific properties
+    pub async fn advertise_with_properties(&self, service_name: &str, port: u16, properties: HashMap<String, String>) -> Result<()> {
+        let service_type = "_oscjson._tcp.local.";
+        let instance_name = format!("{}.{}", service_name, service_type);
+
+        // Copy the incoming properties and add any defaults
+        let mut all_properties = properties.clone();
+        all_properties.insert(String::from("_oscjson._tcp.local.port"), port.to_string());
+
+        let info = ServiceInfo::new(
+            service_type,
+            &instance_name,
+            "maowbot.local.",
+            "127.0.0.1",
+            port,
+            all_properties,
+        )
+            .map_err(|e| OscError::OscQueryError(format!("ServiceInfo creation error: {e}")))?;
+
+        match self.daemon.register(info) {
+            Ok(_) => {
+                info!("Advertised mDNS => {instance_name} on port {port} with custom properties");
+                let mut reg = self.registrations.lock().unwrap();
+                reg.push(instance_name);
+                Ok(())
+            }
+            Err(e) => Err(OscError::OscQueryError(format!(
+                "Failed registering mDNS: {e}"
+            ))),
+        }
+    }
+
     /// Discover local `_oscjson._tcp.local.` services for up to 5 seconds.
     /// Returns a list of **fully resolved** service names (the "fullname").
     pub async fn discover_peers(&self) -> Result<Vec<String>> {

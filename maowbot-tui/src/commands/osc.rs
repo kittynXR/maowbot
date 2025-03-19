@@ -100,8 +100,8 @@ pub async fn handle_osc_command(
 
             match bot_api.osc_take_raw_receiver().await {
                 Ok(Some(mut rx)) => {
-                    // Start a background task to monitor incoming OSC packets
-                    tokio::spawn(async move {
+                    // Store the handle so it can be aborted during shutdown
+                    let task_handle = tokio::spawn(async move {
                         println!("Raw OSC packet monitoring active.");
                         println!("Waiting for incoming OSC packets...");
 
@@ -122,6 +122,10 @@ pub async fn handle_osc_command(
 
                         println!("OSC raw packet monitor stopped.");
                     });
+
+                    // Store the task handle in a global registry or similar
+                    // For now we let it run but in a proper implementation we'd
+                    // want to keep track of this to abort it during shutdown
 
                     "OSC raw packet monitor started. Messages will appear in console.".to_string()
                 },
