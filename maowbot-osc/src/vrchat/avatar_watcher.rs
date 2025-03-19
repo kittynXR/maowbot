@@ -33,6 +33,10 @@ pub struct AvatarWatcher {
     changes_tx: mpsc::UnboundedSender<FileChangeEvent>,
     changes_rx: Option<mpsc::UnboundedReceiver<FileChangeEvent>>,
     is_running: bool,
+    // Add fields for shutdown coordination
+    shutdown_tx: Option<std::sync::mpsc::Sender<()>>,
+    file_watcher_thread: Option<std::thread::JoinHandle<()>>,
+    event_processor_task: Option<tokio::task::JoinHandle<()>>,
 }
 
 impl AvatarWatcher {
@@ -45,6 +49,9 @@ impl AvatarWatcher {
             changes_tx: tx,
             changes_rx: Some(rx),
             is_running: false,
+            shutdown_tx: None,
+            file_watcher_thread: None,
+            event_processor_task: None,
         }
     }
 
@@ -63,7 +70,12 @@ impl AvatarWatcher {
         // 2) File watcher in a background thread
         let folder_clone = self.folder.clone();
         let changes_tx = self.changes_tx.clone();
-        thread::spawn(move || {
+
+        // Create a shutdown channel
+        let (shutdown_tx, shutdown_rx) = std::sync::mpsc::channel();
+        self.shutdown_tx = Some(shutdown_tx);
+
+        let file_watcher_thread = thread::spawn(move || {
             // Synchronous side of notify
             let (watch_send, watch_recv) = std::sync::mpsc::channel();
 
@@ -96,21 +108,42 @@ impl AvatarWatcher {
 
             // Relay file events
             loop {
-                match watch_recv.recv() {
+                // Check for shutdown signal
+                if shutdown_rx.try_recv().is_ok() {
+                    tracing::info!("[AvatarWatcher] Received shutdown signal, exiting file watcher thread");
+                    break;
+                }
+
+                match watch_recv.recv_timeout(Duration::from_millis(100)) {
                     Ok(event) => {
                         let change_evt = FileChangeEvent::new(event);
                         let _ = changes_tx.send(change_evt);
                     }
-                    Err(_) => break, // Channel closed
+                    Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                        // Timeout - continue and check shutdown signal
+                        continue;
+                    }
+                    Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                        // Channel closed
+                        break;
+                    }
                 }
             }
+
+            // Explicitly drop the watcher to unregister
+            drop(watcher);
+            tracing::info!("[AvatarWatcher] File watcher thread exited");
         });
+
+        self.file_watcher_thread = Some(file_watcher_thread);
 
         // 3) Start an async task that processes the file events.
         let known_map_ptr = Arc::new(Mutex::new(self.known_avatars.clone()));
         let mut local_rx = self.changes_rx.take().unwrap();
         let known_map_ptr_files = known_map_ptr.clone();
-        tokio::spawn(async move {
+
+        // Store the task handle so we can abort it during shutdown
+        let event_processor_task = tokio::spawn(async move {
             while let Some(evt) = local_rx.recv().await {
                 match evt {
                     FileChangeEvent::Added(path) => {
@@ -131,7 +164,48 @@ impl AvatarWatcher {
                     }
                 }
             }
+            tracing::info!("[AvatarWatcher] Event processor task exited");
         });
+
+        self.event_processor_task = Some(event_processor_task);
+
+        Ok(())
+    }
+
+    /// Stop watching for file changes and clean up resources
+    pub fn stop(&mut self) -> Result<()> {
+        if !self.is_running {
+            return Ok(());
+        }
+
+        tracing::info!("[AvatarWatcher] Stopping avatar watcher...");
+
+        // Signal the background thread to terminate
+        if let Some(tx) = self.shutdown_tx.take() {
+            let _ = tx.send(());
+            tracing::info!("[AvatarWatcher] Sent shutdown signal to file watcher thread");
+        }
+
+        // Abort the event processor task
+        if let Some(handle) = self.event_processor_task.take() {
+            handle.abort();
+            tracing::info!("[AvatarWatcher] Aborted event processor task");
+        }
+
+        // Close the changes_tx channel to signal the event processor to exit
+        // This is a backup in case the task abort doesn't work
+        drop(self.changes_tx.clone());
+
+        // Join the file watcher thread with a timeout
+        if let Some(handle) = self.file_watcher_thread.take() {
+            match handle.join() {
+                Ok(_) => tracing::info!("[AvatarWatcher] File watcher thread joined successfully"),
+                Err(e) => tracing::error!("[AvatarWatcher] Error joining file watcher thread: {:?}", e),
+            }
+        }
+
+        self.is_running = false;
+        tracing::info!("[AvatarWatcher] Avatar watcher stopped");
 
         Ok(())
     }

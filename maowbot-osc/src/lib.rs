@@ -65,15 +65,18 @@ pub struct OscManagerStatus {
 }
 
 /// Struct to manage receiving OSC messages
+/// Struct to manage receiving OSC messages
 pub struct OscReceiver {
     pub receiver_handle: JoinHandle<()>,
     pub incoming_tx: mpsc::UnboundedSender<OscPacket>,
     pub incoming_rx: Option<mpsc::UnboundedReceiver<OscPacket>>,
+    shutdown_tx: Option<tokio::sync::watch::Sender<bool>>,
 }
 
 impl OscReceiver {
     pub fn new(port: u16) -> Result<Self> {
         let (tx, rx) = mpsc::unbounded_channel();
+        let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
 
         // Create the socket for listening - bind to all interfaces
         let socket_addr = SocketAddr::from(([0, 0, 0, 0], port));
@@ -101,52 +104,87 @@ impl OscReceiver {
             let mut buf = [0u8; 4096]; // Increased from 1024
             tracing::info!("OSC receiver listening on UDP port {}...", port);
 
+            let mut shutdown_rx = shutdown_rx;
+
             loop {
-                // Non-blocking receive
-                match socket.recv_from(&mut buf) {
-                    Ok((size, addr)) => {
-                        tracing::debug!("Received OSC packet: {} bytes from {}", size, addr);
-                        // Parse packet
-                        match rosc::decoder::decode_udp(&buf[..size]) {
-                            Ok((_remaining, packet)) => {
-                                // Log received packet for debugging
-                                match &packet {
-                                    OscPacket::Message(msg) => {
-                                        tracing::debug!("OSC Message: {} with {} args", msg.addr, msg.args.len());
-                                    },
-                                    OscPacket::Bundle(bundle) => {
-                                        tracing::debug!("OSC Bundle with {} messages", bundle.content.len());
+                // Check for shutdown signal
+                if *shutdown_rx.borrow() {
+                    tracing::info!("OSC receiver received shutdown signal, exiting");
+                    break;
+                }
+
+                // Non-blocking processing with a small delay
+                tokio::select! {
+                    // Check for shutdown signal change
+                    result = shutdown_rx.changed() => {
+                        if result.is_ok() && *shutdown_rx.borrow() {
+                            tracing::info!("OSC receiver received shutdown signal, exiting");
+                            break;
+                        }
+                    }
+
+                    // Small delay for non-blocking
+                    _ = tokio::time::sleep(tokio::time::Duration::from_millis(10)) => {
+                        // Non-blocking receive
+                        match socket.recv_from(&mut buf) {
+                            Ok((size, addr)) => {
+                                tracing::debug!("Received OSC packet: {} bytes from {}", size, addr);
+                                // Parse packet
+                                match rosc::decoder::decode_udp(&buf[..size]) {
+                                    Ok((_remaining, packet)) => {
+                                        // Log received packet for debugging
+                                        match &packet {
+                                            OscPacket::Message(msg) => {
+                                                tracing::debug!("OSC Message: {} with {} args", msg.addr, msg.args.len());
+                                            },
+                                            OscPacket::Bundle(bundle) => {
+                                                tracing::debug!("OSC Bundle with {} messages", bundle.content.len());
+                                            }
+                                        }
+
+                                        let _ = tx_clone.send(packet);
+                                    }
+                                    Err(e) => {
+                                        tracing::error!("OSC decode error: {:?}", e);
                                     }
                                 }
-
-                                let _ = tx_clone.send(packet);
+                            }
+                            Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                                // No data available, continue
                             }
                             Err(e) => {
-                                tracing::error!("OSC decode error: {:?}", e);
+                                tracing::error!("OSC receiver error: {:?}", e);
+                                tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
                             }
                         }
                     }
-                    Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                        // No data available, sleep briefly
-                        std::thread::sleep(std::time::Duration::from_millis(10));
-                    }
-                    Err(e) => {
-                        tracing::error!("OSC receiver error: {:?}", e);
-                        std::thread::sleep(std::time::Duration::from_secs(1));
-                    }
                 }
             }
+
+            tracing::info!("OSC receiver task exited cleanly");
         });
 
         Ok(Self {
             receiver_handle: handle,
             incoming_tx: tx,
             incoming_rx: Some(rx),
+            shutdown_tx: Some(shutdown_tx),
         })
     }
 
     pub fn take_receiver(&mut self) -> Option<mpsc::UnboundedReceiver<OscPacket>> {
         self.incoming_rx.take()
+    }
+
+    pub fn shutdown(&mut self) {
+        // Send shutdown signal if we have a sender
+        if let Some(tx) = self.shutdown_tx.take() {
+            if let Err(e) = tx.send(true) {
+                tracing::error!("Failed to send shutdown signal to OSC receiver: {:?}", e);
+            } else {
+                tracing::info!("Sent shutdown signal to OSC receiver task");
+            }
+        }
     }
 }
 
@@ -265,6 +303,16 @@ impl MaowOscManager {
     }
 
     pub async fn stop_all(&self) -> Result<()> {
+        // Stop the VRChat avatar watcher first if available
+        if let Some(watcher_mutex) = &self.vrchat_watcher {
+            let mut watcher = watcher_mutex.lock().await;
+            if let Err(e) = watcher.stop() {
+                tracing::error!("Failed to stop VRChat avatar watcher: {:?}", e);
+            } else {
+                tracing::info!("VRChat avatar watcher stopped");
+            }
+        }
+
         // Stop the UDP OSC
         self.stop_server().await?;
 
@@ -277,8 +325,18 @@ impl MaowOscManager {
         // Stop the OSC receiver if running
         {
             let mut osc_rcv = self.osc_receiver.lock().await;
-            if let Some(receiver) = osc_rcv.take() {
+            if let Some(receiver) = osc_rcv.as_mut() {
+                // Send shutdown signal first
+                receiver.shutdown();
+
+                // Give the task a moment to shut down gracefully
+                tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+
+                // Now abort the task to ensure it's gone (belt and suspenders approach)
                 receiver.receiver_handle.abort();
+
+                // Remove the receiver
+                *osc_rcv = None;
                 tracing::info!("OSC receiver stopped");
             }
         }
