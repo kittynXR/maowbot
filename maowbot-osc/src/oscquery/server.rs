@@ -26,7 +26,7 @@ impl OscQueryServer {
         Self {
             is_running: false,
             http_port: port,
-            osc_port: 9002, // Default to 9002 for OSC
+            osc_port: 9001, // Default to 9002 for OSC
             stop_tx: None,
             discovery: None,
         }
@@ -147,6 +147,28 @@ impl OscQueryServer {
             warp::reply::json(&response)
         });
 
+        // Add a path handler for HOST_INFO
+        let host_info_route = warp::path("host_info").map(move || {
+            let response = json!({
+                "NAME": "MaowBot OSC Server",
+                "OSC_IP": "127.0.0.1",
+                "OSC_PORT": osc_port,
+                "OSC_TRANSPORT": "UDP",
+                "EXTENSIONS": {
+                    "ACCESS": true,
+                    "VALUE": true,
+                    "RANGE": true,
+                    "DESCRIPTION": true,
+                    "TAGS": true,
+                    "EXTENDED_TYPE": true,
+                    "UNIT": true,
+                    "CRITICAL": true,
+                    "CLIPMODE": true
+                }
+            });
+            warp::reply::json(&response)
+        });
+
         let (stop_tx, stop_rx) = tokio::sync::oneshot::channel();
         self.stop_tx = Some(stop_tx);
 
@@ -154,8 +176,9 @@ impl OscQueryServer {
         let ip = Ipv4Addr::UNSPECIFIED;
         let addr = SocketAddr::new(ip.into(), self.http_port);
 
-        // Start the warp server with graceful shutdown
-        let (server_addr, server_future) = warp::serve(route)
+        // Combine routes and start the warp server with graceful shutdown
+        let routes = route.or(host_info_route);
+        let (server_addr, server_future) = warp::serve(routes)
             .bind_with_graceful_shutdown(addr, async move {
                 let _ = stop_rx.await;
             });
@@ -177,6 +200,8 @@ impl OscQueryServer {
                     // Create properties to advertise our OSC port
                     let mut properties = HashMap::new();
                     properties.insert("OSC_PORT".to_string(), self.osc_port.to_string());
+                    properties.insert("OSC_TRANSPORT".to_string(), "UDP".to_string());
+                    properties.insert("OSC_IP".to_string(), "127.0.0.1".to_string());
 
                     if let Err(e) = d.advertise_with_properties("MaowBotOSCQuery", self.http_port, properties).await {
                         error!("Failed to advertise mDNS for OSCQuery: {:?}", e);

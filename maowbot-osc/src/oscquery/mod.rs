@@ -6,7 +6,9 @@
 
 pub mod server;
 pub mod discovery;
+pub mod client;
 
 // Re-export items for convenience
 pub use server::OscQueryServer;
 pub use discovery::OscQueryDiscovery;
+pub use client::{OscQueryClient, DiscoveredOscQueryService};

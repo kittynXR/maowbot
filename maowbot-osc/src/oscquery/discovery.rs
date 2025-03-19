@@ -9,13 +9,59 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
 use tokio::time::{timeout, Duration};
-use tracing::{error, info};
+use tracing::{error, info, debug};
 
 /// Manages local mDNS advertisement and scanning for `_oscjson._tcp.local.`
 pub struct OscQueryDiscovery {
     daemon: Arc<ServiceDaemon>,
     /// We track the *instance names* we have registered, so we can unregister them later.
     registrations: Arc<Mutex<Vec<String>>>,
+}
+
+/// Parsed service information including hostname and ports
+/// Parsed service information including hostname and ports
+#[derive(Debug, Clone)]
+pub struct DiscoveredService {
+    pub name: String,
+    pub hostname: String,
+    pub addr: Option<String>,
+    pub port: u16,
+    pub osc_port: Option<u16>,
+    pub osc_ip: Option<String>,
+}
+
+impl DiscoveredService {
+    /// Create from ServiceInfo
+    pub fn from_service_info(info: &ServiceInfo) -> Self {
+        let fullname = info.get_fullname().to_string();
+        let hostname = info.get_hostname().to_string();
+        let port = info.get_port();
+
+        // Try to find the OSC port from TXT records
+        let osc_port_str = info.get_property_val_str("OSC_PORT")
+            .or_else(|| info.get_property_val_str("osc.port"))
+            .or_else(|| info.get_property_val_str("osc.udp.port"))
+            .or_else(|| info.get_property_val_str("_osc._udp.port"));
+
+        let osc_port = osc_port_str.and_then(|s| s.parse::<u16>().ok());
+
+        // Try to get OSC_IP
+        let osc_ip = info.get_property_val_str("OSC_IP")
+            .or_else(|| info.get_property_val_str("osc.ip"))
+            .map(|s| s.to_string());
+
+        // Try to find the first IP address
+        let addr = info.get_addresses().iter().next().map(|ip| ip.to_string());
+
+        Self {
+            name: fullname,
+            hostname,
+            addr,
+            port,
+            osc_port,
+            osc_ip,
+        }
+    }
 }
 
 impl OscQueryDiscovery {
@@ -160,6 +206,71 @@ impl OscQueryDiscovery {
         }
 
         Ok(discovered)
+    }
+
+    /// Discover local `_oscjson._tcp.local.` services with more detailed information
+    /// Returns detailed information about each discovered service
+    pub async fn discover_services(&self) -> Result<Vec<DiscoveredService>> {
+        let service_type = "_oscjson._tcp.local.";
+        let browser = self
+            .daemon
+            .browse(service_type)
+            .map_err(|e| OscError::OscQueryError(format!("Browse error: {e}")))?;
+
+        let (tx, mut rx) = mpsc::channel::<ServiceEvent>(50);
+
+        // We'll capture the browser events in a blocking thread and forward them to `tx`.
+        std::thread::spawn(move || {
+            while let Ok(event) = browser.recv() {
+                let _ = tx.blocking_send(event);
+            }
+        });
+
+        let start_time = tokio::time::Instant::now();
+        let mut discovered = Vec::new();
+
+        // We'll wait up to 5 seconds total, checking every 0.5s for new events
+        while start_time.elapsed() < Duration::from_secs(5) {
+            match timeout(Duration::from_millis(500), rx.recv()).await {
+                Ok(Some(event)) => match event {
+                    // Inside the discover_services method where we handle the ServiceResolved event
+                    ServiceEvent::ServiceResolved(info) => {
+                        let service = DiscoveredService::from_service_info(&info);
+
+                        debug!("Resolved service: {}, hostname: {}, port: {}, OSC port: {:?}",
+                        service.name, service.hostname, service.port, service.osc_port);
+
+                        discovered.push(service);
+                    }
+                    _ => {} // Ignore other events
+                },
+                Ok(None) => {
+                    // Sender closed, no more events
+                    break;
+                }
+                Err(_) => {
+                    // timed out after 500ms with no event => keep going until 5s total
+                }
+            }
+        }
+
+        Ok(discovered)
+    }
+
+    /// Find VRChat OSCQuery service
+    pub async fn find_vrchat_service(&self) -> Result<Option<DiscoveredService>> {
+        let services = self.discover_services().await?;
+
+        // Look for VRChat's service
+        for service in services {
+            // Check if this looks like a VRChat service
+            if service.name.to_lowercase().contains("vrchat") {
+                debug!("Found VRChat service: {:?}", service);
+                return Ok(Some(service));
+            }
+        }
+
+        Ok(None)
     }
 
     /// Unregister all previously advertised services, stopping their mDNS announcements.
