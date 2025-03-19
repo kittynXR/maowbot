@@ -184,7 +184,7 @@ impl AvatarWatcher {
     }
 
     /// Reload all `.json` files from the folder into `known_avatars`.
-    fn reload_all_avatars(&mut self) -> Result<()> {
+    pub(crate) fn reload_all_avatars(&mut self) -> Result<()> {
         self.known_avatars.clear();
 
         if !self.folder.exists() {
@@ -212,7 +212,7 @@ impl AvatarWatcher {
                                 Err(e) => {
                                     if attempt < 3 {
                                         tracing::debug!("Attempt {} failed to parse {}: {}. Retrying...",
-                                                attempt, p.display(), e);
+                                            attempt, p.display(), e);
                                         thread::sleep(Duration::from_millis(200));
                                     } else {
                                         tracing::warn!("Failed to parse {}: {}", p.display(), e);
@@ -226,9 +226,9 @@ impl AvatarWatcher {
         }
 
         tracing::info!("Loaded {} avatar configs from '{}'.",
-                 self.known_avatars.len(),
-                 self.folder.display()
-        );
+             self.known_avatars.len(),
+             self.folder.display()
+    );
         Ok(())
     }
 }

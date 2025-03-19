@@ -435,6 +435,23 @@ impl MaowOscManager {
         self.vrchat_watcher = Some(watcher);
     }
 
+    pub async fn scan_for_avatars(&self) -> Result<()> {
+        if let Some(watcher_mutex) = &self.vrchat_watcher {
+            let mut watcher = watcher_mutex.lock().await;
+            match watcher.reload_all_avatars() {
+                Ok(_) => {
+                    tracing::info!("Successfully scanned and loaded VRChat avatars");
+                    Ok(())
+                },
+                Err(e) => {
+                    tracing::error!("Failed to load VRChat avatars: {:?}", e);
+                    Err(e)
+                }
+            }
+        } else {
+            Err(OscError::Generic("No VRChat avatar watcher is configured".to_string()))
+        }
+    }
     /// Take the OSC packet receiver to monitor all incoming messages
     pub async fn take_osc_receiver(&self) -> Option<mpsc::UnboundedReceiver<OscPacket>> {
         let mut receiver_guard = self.osc_receiver.lock().await;

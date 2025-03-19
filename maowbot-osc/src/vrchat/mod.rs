@@ -64,33 +64,27 @@ pub fn parse_vrchat_avatar_config<P: AsRef<Path>>(path: P) -> Result<VrchatAvata
         return Err(OscError::AvatarConfigError(format!("File is empty: {}", p.display())));
     }
 
+    // Check for BOM and remove it if present
+    let content_without_bom = if bytes.len() >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF {
+        tracing::debug!("BOM detected in {}, removing for parsing", p.display());
+        &bytes[3..]
+    } else {
+        &bytes[..]
+    };
+
     // Try to parse the JSON with more detailed error reporting
-    match serde_json::from_slice::<VrchatAvatarConfig>(&bytes) {
+    match serde_json::from_slice::<VrchatAvatarConfig>(content_without_bom) {
         Ok(cfg) => Ok(cfg),
         Err(e) => {
             // Log the first few bytes as hex for debugging
-            let preview_len = std::cmp::min(40, bytes.len());
-            let preview = &bytes[..preview_len];
+            let preview_len = std::cmp::min(40, content_without_bom.len());
+            let preview = &content_without_bom[..preview_len];
             let preview_text = String::from_utf8_lossy(preview);
 
             tracing::error!(
                 "JSON parse error for {}: {} (first bytes: '{}')",
                 p.display(), e, preview_text
             );
-
-            // VRChat sometimes writes empty or partial files, try removing BOM if present
-            if bytes.len() >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF {
-                // Try parsing without the BOM
-                match serde_json::from_slice::<VrchatAvatarConfig>(&bytes[3..]) {
-                    Ok(cfg) => {
-                        tracing::info!("Successfully parsed after removing BOM marker");
-                        return Ok(cfg);
-                    }
-                    Err(_) => {
-                        // Still failed, continue to error
-                    }
-                }
-            }
 
             Err(OscError::AvatarConfigError(format!("JSON parse error: {}", e)))
         }
