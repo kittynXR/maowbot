@@ -139,6 +139,11 @@ impl AvatarWatcher {
 
         // 3) Start an async task that processes the file events.
         let known_map_ptr = Arc::new(Mutex::new(self.known_avatars.clone()));
+        if self.changes_rx.is_none() {
+            let (tx, rx) = mpsc::unbounded_channel();
+            self.changes_tx = tx;
+            self.changes_rx = Some(rx);
+        }
         let mut local_rx = self.changes_rx.take().unwrap();
         let known_map_ptr_files = known_map_ptr.clone();
 
