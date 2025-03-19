@@ -26,7 +26,7 @@ impl OscQueryServer {
         Self {
             is_running: false,
             http_port: port,
-            osc_port: 9001, // Default to 9002 for OSC
+            osc_port: 9001, // Default to 9001 for OSC (VRChat's default output port)
             stop_tx: None,
             discovery: None,
         }

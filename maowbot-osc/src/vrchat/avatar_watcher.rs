@@ -37,6 +37,8 @@ pub struct AvatarWatcher {
     shutdown_tx: Option<std::sync::mpsc::Sender<()>>,
     file_watcher_thread: Option<std::thread::JoinHandle<()>>,
     event_processor_task: Option<tokio::task::JoinHandle<()>>,
+    // Current avatar ID
+    current_avatar_id: Option<String>,
 }
 
 impl AvatarWatcher {
@@ -52,6 +54,7 @@ impl AvatarWatcher {
             shutdown_tx: None,
             file_watcher_thread: None,
             event_processor_task: None,
+            current_avatar_id: None,
         }
     }
 
@@ -216,7 +219,7 @@ impl AvatarWatcher {
     }
 
     /// Process an OSC packet received from elsewhere (shared socket) looking for avatar changes
-    pub async fn process_osc_packet(&self, packet: &OscPacket) {
+    pub async fn process_osc_packet(&mut self, packet: &OscPacket) {
         // Avoid recursion by handling all cases directly
         match packet {
             OscPacket::Message(msg) => {
@@ -224,12 +227,33 @@ impl AvatarWatcher {
                     if let Some(OscType::String(avatar_id)) = msg.args.get(0) {
                         tracing::info!("Avatar change detected: {}", avatar_id);
 
+                        // Store the current avatar ID
+                        self.current_avatar_id = Some(avatar_id.clone());
+
                         // Access known_avatars directly
                         if let Some(known_avatar) = self.known_avatars.get(avatar_id) {
                             let menu = AvatarToggleMenu::new(&known_avatar.config);
                             menu.print_menu();
                         } else {
                             tracing::warn!("Avatar ID {} not found in our database", avatar_id);
+
+                            // Check if we need to try to load the avatar config
+                            if let Some(avatar_dir) = crate::vrchat::get_vrchat_avatar_dir() {
+                                let avatar_path = avatar_dir.join(format!("avtr_{}.json", avatar_id));
+                                if avatar_path.exists() {
+                                    tracing::info!("Trying to load avatar config from {}", avatar_path.display());
+
+                                    // Parse the avatar config
+                                    if let Ok(config) = parse_vrchat_avatar_config(&avatar_path) {
+                                        let known = KnownAvatar { path: avatar_path, config: config.clone() };
+                                        self.known_avatars.insert(avatar_id.clone(), known);
+
+                                        // Now we can show the menu
+                                        let menu = AvatarToggleMenu::new(&config);
+                                        menu.print_menu();
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -242,6 +266,9 @@ impl AvatarWatcher {
                             if msg.addr == "/avatar/change" {
                                 if let Some(OscType::String(avatar_id)) = msg.args.get(0) {
                                     tracing::info!("Avatar change detected (in bundle): {}", avatar_id);
+
+                                    // Store the current avatar ID
+                                    self.current_avatar_id = Some(avatar_id.clone());
 
                                     if let Some(known_avatar) = self.known_avatars.get(avatar_id) {
                                         let menu = AvatarToggleMenu::new(&known_avatar.config);
@@ -260,6 +287,11 @@ impl AvatarWatcher {
                 }
             }
         }
+    }
+
+    /// Get the current avatar ID, if known
+    pub fn get_current_avatar_id(&self) -> Option<&String> {
+        self.current_avatar_id.as_ref()
     }
 
     /// Reload all `.json` files from the folder into `known_avatars`.

@@ -7,7 +7,7 @@ use serde_json::Value;
 use std::net::SocketAddr;
 use std::collections::HashMap;
 use tokio::time::Duration;
-use tracing::{info, debug, error};
+use tracing::{info, debug, error, warn};
 
 /// Represents a discovered OSCQuery service
 #[derive(Debug, Clone)]
@@ -29,6 +29,12 @@ impl OscQueryClient {
         Self {
             timeout: Duration::from_secs(5),
         }
+    }
+
+    /// Set a custom timeout for HTTP requests
+    pub fn with_timeout(mut self, timeout: Duration) -> Self {
+        self.timeout = timeout;
+        self
     }
 
     /// Query an OSCQuery server for its host info
@@ -72,6 +78,7 @@ impl OscQueryClient {
     }
 
     /// Query specific path from OSCQuery server
+    /// Query specific path from OSCQuery server
     pub async fn query_path(&self, host: &str, port: u16, path: &str) -> Result<Value> {
         // Ensure path starts with a slash
         let path = if !path.starts_with('/') {
@@ -96,6 +103,11 @@ impl OscQueryClient {
 
         debug!("Received OSCQuery path data: {:?}", json);
         Ok(json)
+    }
+
+    /// Attempts to query avatar parameters from VRChat's OSCQuery server
+    pub async fn query_vrchat_parameters(&self, host: &str, port: u16) -> Result<Value> {
+        self.query_path(host, port, "/avatar/parameters").await
     }
 
     /// Parse an OSCQuery service from mDNS discovered data

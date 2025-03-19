@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
 use tokio::time::{timeout, Duration};
-use tracing::{error, info, debug};
+use tracing::{error, info, debug, warn};
 
 /// Manages local mDNS advertisement and scanning for `_oscjson._tcp.local.`
 pub struct OscQueryDiscovery {
@@ -18,7 +18,6 @@ pub struct OscQueryDiscovery {
     registrations: Arc<Mutex<Vec<String>>>,
 }
 
-/// Parsed service information including hostname and ports
 /// Parsed service information including hostname and ports
 #[derive(Debug, Clone)]
 pub struct DiscoveredService {
@@ -37,7 +36,7 @@ impl DiscoveredService {
         let hostname = info.get_hostname().to_string();
         let port = info.get_port();
 
-        // Try to find the OSC port from TXT records
+        // Try to find the OSC port from TXT records - try different potential names that VRChat might use
         let osc_port_str = info.get_property_val_str("OSC_PORT")
             .or_else(|| info.get_property_val_str("osc.port"))
             .or_else(|| info.get_property_val_str("osc.udp.port"))
@@ -45,9 +44,10 @@ impl DiscoveredService {
 
         let osc_port = osc_port_str.and_then(|s| s.parse::<u16>().ok());
 
-        // Try to get OSC_IP
+        // Try to get OSC_IP - try different potential names
         let osc_ip = info.get_property_val_str("OSC_IP")
             .or_else(|| info.get_property_val_str("osc.ip"))
+            .or_else(|| info.get_property_val_str("OSC.IP"))
             .map(|s| s.to_string());
 
         // Try to find the first IP address
@@ -61,6 +61,13 @@ impl DiscoveredService {
             osc_port,
             osc_ip,
         }
+    }
+
+    /// Check if this service is likely to be VRChat
+    pub fn is_vrchat(&self) -> bool {
+        self.name.to_lowercase().contains("vrchat") ||
+            // If the service name doesn't include "vrchat", check the hostname
+            self.hostname.to_lowercase().contains("vrchat")
     }
 }
 
@@ -257,17 +264,33 @@ impl OscQueryDiscovery {
         Ok(discovered)
     }
 
-    /// Find VRChat OSCQuery service
+    /// Find VRChat OSCQuery service using a more targeted approach
     pub async fn find_vrchat_service(&self) -> Result<Option<DiscoveredService>> {
         let services = self.discover_services().await?;
 
-        // Look for VRChat's service
-        for service in services {
-            // Check if this looks like a VRChat service
-            if service.name.to_lowercase().contains("vrchat") {
-                debug!("Found VRChat service: {:?}", service);
-                return Ok(Some(service));
+        // VRChat's service typically contains "VRChat" in the name or hostname
+        for service in &services {
+            // Check for both service name and hostname containing "vrchat" (case insensitive)
+            if service.is_vrchat() {
+                debug!("Found VRChat OSCQuery service: {:?}", service);
+                return Ok(Some(service.clone()));
             }
+        }
+
+        // If not found with typical naming, check for services on VRChat's common ports
+        for service in &services {
+            // Check if service is using standard VRChat ports (9000, 9001)
+            if service.port == 9000 || service.port == 9001 ||
+                service.osc_port == Some(9000) || service.osc_port == Some(9001) {
+                debug!("Found potential VRChat OSCQuery service on standard port: {:?}", service);
+                return Ok(Some(service.clone()));
+            }
+        }
+
+        // Extra attempt: Try looking for any OSCQuery service
+        if !services.is_empty() {
+            warn!("No definitive VRChat OSCQuery service found, using first available OSCQuery service");
+            return Ok(Some(services[0].clone()));
         }
 
         Ok(None)

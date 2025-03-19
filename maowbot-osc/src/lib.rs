@@ -9,7 +9,7 @@ use thiserror::Error;
 use tokio::task::JoinHandle;
 
 use crate::oscquery::{OscQueryServer, OscQueryClient};
-use crate::vrchat::query_vrchat_oscquery;
+use crate::vrchat::{query_vrchat_oscquery, discover_vrchat};
 use rosc::{OscPacket, OscType};
 use tracing::{debug, trace, info, error, warn};
 
@@ -37,8 +37,8 @@ pub type Result<T> = std::result::Result<T, OscError>;
 /// all VRChat toggles/robotic logic.
 ///
 /// For instance, it can:
-/// - Spin up an OSC server
-/// - Run the OSCQuery server
+/// - Spin up an OSC client
+/// - Connect to VRChat's OSCQuery server
 /// - Parse VRChat's avatar JSON
 /// - Maintain a list of toggles
 /// - Send toggles & chatbox messages to VRChat
@@ -46,10 +46,20 @@ pub type Result<T> = std::result::Result<T, OscError>;
 /// This is an example integrated approach.
 pub struct MaowOscManager {
     pub inner: Arc<Mutex<OscManagerInner>>,
-    pub oscquery_server: Arc<Mutex<OscQueryServer>>,
+    pub oscquery_server: Arc<Mutex<OscQueryServer>>, // Used only for advertising our app, not necessary
     pub vrchat_watcher: Option<Arc<Mutex<vrchat::avatar_watcher::AvatarWatcher>>>,
     pub osc_receiver: Arc<Mutex<Option<OscReceiver>>>,
     pub oscquery_client: Arc<OscQueryClient>,
+    pub vrchat_info: Arc<Mutex<Option<VRChatConnectionInfo>>>,
+}
+
+/// Information about VRChat's OSC/OSCQuery endpoints
+#[derive(Debug, Clone)]
+pub struct VRChatConnectionInfo {
+    pub oscquery_host: String,
+    pub oscquery_port: u16,
+    pub osc_send_port: u16,     // VRChat listens on 9000 by default
+    pub osc_receive_port: u16,  // VRChat sends to 9001 by default
 }
 
 pub struct OscManagerInner {
@@ -66,6 +76,8 @@ pub struct OscManagerStatus {
     pub is_oscquery_running: bool,
     pub oscquery_port: Option<u16>,
     pub discovered_peers: Vec<String>,
+    pub vrchat_connected: bool,
+    pub vrchat_info: Option<VRChatConnectionInfo>,
 }
 
 /// Struct to manage receiving OSC messages
@@ -201,7 +213,7 @@ impl MaowOscManager {
             vrchat_osc_port: None,
             vrchat_oscquery_http_port: None,
         };
-        // Suppose we want to run the OSCQuery server on port 8080 for HTTP
+        // Create OSCQuery server on port 8080 for HTTP
         let oscquery_server = OscQueryServer::new(8080);
         let oscquery_client = OscQueryClient::new();
 
@@ -211,6 +223,7 @@ impl MaowOscManager {
             vrchat_watcher: None,
             osc_receiver: Arc::new(Mutex::new(None)),
             oscquery_client: Arc::new(oscquery_client),
+            vrchat_info: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -218,6 +231,7 @@ impl MaowOscManager {
         // Lock the inner struct here:
         let guard = self.inner.lock().await;
         let oscq_guard = self.oscquery_server.lock().await;
+        let vrchat_info_guard = self.vrchat_info.lock().await;
 
         // Get discovered peers if available
         let discovered_peers = if let Some(discovery) = &oscq_guard.discovery {
@@ -236,204 +250,158 @@ impl MaowOscManager {
             is_oscquery_running: oscq_guard.is_running,
             oscquery_port: Some(oscq_guard.http_port),
             discovered_peers,
+            vrchat_connected: vrchat_info_guard.is_some(),
+            vrchat_info: vrchat_info_guard.clone(),
         };
 
         Ok(status)
     }
 
-    /// Starts the OSC server (UDP) and the OSCQuery server (HTTP).
-    /// Initiates mDNS advertisement as well.
-    ///
-    /// **Important**: We now run the mDNS *search* (peer discovery) in a separate
-    /// background task, so the server startup doesn't block for its duration.
+    /// Starts the OSC client and connection to VRChat
+    /// This is the preferred way to start all OSC functionality
     pub async fn start_all(&self) -> Result<()> {
-        // 1) Start the OSC server on a free UDP port:
-        let chosen_port = self.start_server().await?;
+        // 1) Start by discovering VRChat's OSCQuery service
+        info!("Discovering VRChat OSCQuery service...");
+        let vrchat_service = discover_vrchat().await?;
 
-        // 2) Start the OSCQuery server:
-        {
-            let mut oscq = self.oscquery_server.lock().await;
-            // Tell OSCQuery to advertise our chosen port for OSC
-            oscq.set_osc_port(chosen_port);
-            oscq.start().await?;
-        }
-        tracing::info!("OSCQuery server started on port 8080.");
+        if vrchat_service.is_none() {
+            warn!("VRChat OSCQuery service not found. Is VRChat running with OSC enabled?");
+            warn!("Will try to use default VRChat ports (9000/9001)");
 
-        // 3) Discover local OSCQuery peers to find VRChat
-        let vrchat_config = self.discover_vrchat().await?;
-        {
-            let mut inner = self.inner.lock().await;
-            if let Some((_, port)) = vrchat_config {
-                inner.vrchat_osc_port = Some(port);
-                info!("Discovered VRChat's OSC output port: {}", port);
+            // Set default VRChat connection info
+            let default_info = VRChatConnectionInfo {
+                oscquery_host: "127.0.0.1".to_string(),
+                oscquery_port: 0, // We don't know the OSCQuery port
+                osc_send_port: 9000, // VRChat listens here by default
+                osc_receive_port: 9001, // VRChat sends here by default
+            };
+
+            {
+                let mut info_guard = self.vrchat_info.lock().await;
+                *info_guard = Some(default_info.clone());
+            }
+
+            // We'll directly listen on port 9001 to receive data from VRChat
+            {
+                let mut inner = self.inner.lock().await;
+                inner.listening_port = Some(9001);
+                inner.is_running = true;
+                inner.vrchat_osc_port = Some(9001); // VRChat's OSC output port
+            }
+        } else {
+            // We found VRChat's OSCQuery service
+            let service = vrchat_service.unwrap();
+            info!("Found VRChat OSCQuery service at {}:{}",
+                service.hostname, service.port);
+
+            // Query VRChat's OSCQuery to get its OSC port info
+            let query_result = query_vrchat_oscquery(&self.oscquery_client,
+                                                     service.addr.as_deref().unwrap_or(&service.hostname),
+                                                     service.port).await?;
+
+            if let Some((ip, port)) = query_result {
+                info!("VRChat is sending OSC data to {}:{}", ip, port);
+
+                // Store VRChat connection info
+                let vrchat_info = VRChatConnectionInfo {
+                    oscquery_host: service.hostname.clone(),
+                    oscquery_port: service.port,
+                    osc_send_port: 9000, // VRChat always listens on 9000
+                    osc_receive_port: port, // The port VRChat sends to
+                };
+
+                {
+                    let mut info_guard = self.vrchat_info.lock().await;
+                    *info_guard = Some(vrchat_info);
+                }
+
+                // Update our inner state - we'll listen directly on the port VRChat sends to
+                {
+                    let mut inner = self.inner.lock().await;
+                    inner.listening_port = Some(port);
+                    inner.is_running = true;
+                    inner.vrchat_osc_port = Some(port);
+                    inner.vrchat_oscquery_http_port = Some(service.port);
+                }
             } else {
-                info!("VRChat OSCQuery not found, will use default port 9001");
-                inner.vrchat_osc_port = Some(9001); // Default VRChat port if not discovered
+                warn!("Found VRChat's OSCQuery service but couldn't get OSC port info");
+                warn!("Will try to use default VRChat ports (9000/9001)");
+
+                // Set default VRChat connection info
+                let default_info = VRChatConnectionInfo {
+                    oscquery_host: service.hostname.clone(),
+                    oscquery_port: service.port,
+                    osc_send_port: 9000, // VRChat listens here by default
+                    osc_receive_port: 9001, // VRChat sends here by default
+                };
+
+                {
+                    let mut info_guard = self.vrchat_info.lock().await;
+                    *info_guard = Some(default_info);
+                }
+
+                // Update our inner state - use default ports
+                {
+                    let mut inner = self.inner.lock().await;
+                    inner.listening_port = Some(9001);
+                    inner.is_running = true;
+                    inner.vrchat_osc_port = Some(9001);
+                    inner.vrchat_oscquery_http_port = Some(service.port);
+                }
             }
         }
 
-        // 4) Start the OSC receiver on the same port we're advertising
+        // Get our chosen listening port
+        let chosen_port;
+        {
+            let inner = self.inner.lock().await;
+            chosen_port = inner.listening_port.unwrap();
+        }
+
+        // 3) Start the OSC receiver to listen for messages from VRChat
         {
             let mut osc_rcv = self.osc_receiver.lock().await;
             if osc_rcv.is_none() {
                 match OscReceiver::new(chosen_port) {
                     Ok(receiver) => {
                         *osc_rcv = Some(receiver);
-                        tracing::info!("OSC receiver started on port {} (for VRChat)", chosen_port);
+                        info!("OSC receiver started on port {}", chosen_port);
                     }
                     Err(e) => {
-                        tracing::error!("Failed to start OSC receiver: {:?}", e);
-                        tracing::error!("This may happen if port {} is already in use", chosen_port);
+                        error!("Failed to start OSC receiver on port {}: {:?}", chosen_port, e);
+                        return Err(e);
                     }
                 }
             }
         }
 
-        // 5) Initialize and start VRChat avatar watcher if available
+        // 4) Start the avatar watcher if configured
         if let Some(watcher_mutex) = &self.vrchat_watcher {
             let mut watcher = watcher_mutex.lock().await;
             if let Err(e) = watcher.start() {
-                tracing::error!("Failed to start VRChat avatar watcher: {:?}", e);
+                error!("Failed to start VRChat avatar watcher: {:?}", e);
             } else {
-                tracing::info!("VRChat avatar watcher started");
+                info!("VRChat avatar watcher started");
+            }
+        }
+
+        // 5) Start our own OSCQuery server to advertise ourselves (helps with auto-discovery)
+        // 5) Start our own OSCQuery server to advertise ourselves (helps with auto-discovery)
+        {
+            let mut oscq = self.oscquery_server.lock().await;
+            oscq.set_osc_port(chosen_port);
+            if let Err(e) = oscq.start().await {
+                warn!("Failed to start OSCQuery server: {:?}", e);
+            } else {
+                info!("OSCQuery server started on port {} for HTTP and port {} for OSC",
+                     oscq.http_port, chosen_port);
             }
         }
 
         Ok(())
     }
 
-    // New method to discover VRChat's OSCQuery server and get its OSC port
-    async fn discover_vrchat(&self) -> Result<Option<(String, u16)>> {
-        info!("Looking for VRChat's OSCQuery service...");
-
-        // Use a let binding to create a longer-lived reference
-        let oscq_server = self.oscquery_server.lock().await;
-        let discovery_opt = oscq_server.discovery.as_ref();
-
-        // Check if discovery is available
-        let discovery = match discovery_opt {
-            Some(d) => d,
-            None => {
-                warn!("No OSCQuery discovery available, cannot find VRChat");
-                return Ok(None);
-            }
-        };
-
-        // Try to find VRChat's service
-        match discovery.find_vrchat_service().await? {
-            Some(service) => {
-                info!("Found VRChat OSCQuery service: {} on {}:{}",
-                  service.name, service.hostname, service.port);
-
-                // Query VRChat's OSCQuery server to get its OSC port
-                let host = service.addr.as_ref().unwrap_or(&service.hostname);
-                match query_vrchat_oscquery(&self.oscquery_client, host, service.port).await? {
-                    Some((ip, port)) => {
-                        info!("VRChat is sending OSC data to {}:{}", ip, port);
-
-                        // Store VRChat's OSCQuery HTTP port for later use
-                        {
-                            let mut inner = self.inner.lock().await;
-                            inner.vrchat_oscquery_http_port = Some(service.port);
-                        }
-
-                        return Ok(Some((ip, port)));
-                    },
-                    None => {
-                        warn!("Found VRChat OSCQuery service but couldn't get OSC port info");
-                        return Ok(None);
-                    }
-                }
-            },
-            None => {
-                warn!("VRChat OSCQuery service not found");
-                return Ok(None);
-            }
-        }
-    }
-
-    // New method to forward packets from VRChat (9001) to our port
-    pub async fn setup_osc_forwarding(&self) -> Result<()> {
-        let inner = self.inner.lock().await;
-
-        // Get the VRChat output port (where we need to listen)
-        let vrchat_port = match inner.vrchat_osc_port {
-            Some(p) => p,
-            None => {
-                drop(inner); // Release lock before early return
-                return Err(OscError::Generic("VRChat OSC port not yet discovered".to_string()));
-            }
-        };
-
-        // Get our application's listening port
-        let our_port = match inner.listening_port {
-            Some(p) => p,
-            None => {
-                drop(inner); // Release lock before early return
-                return Err(OscError::Generic("Our OSC server is not running".to_string()));
-            }
-        };
-
-        // No need to forward if we're already listening on VRChat's port
-        if vrchat_port == our_port {
-            info!("No forwarding needed - already listening on VRChat's output port ({})", vrchat_port);
-            return Ok(());
-        }
-
-        info!("Setting up OSC forwarding from VRChat port {} to our port {}", vrchat_port, our_port);
-
-        // Create a new UDP socket for VRChat's port
-        let vrchat_sock = match UdpSocket::bind(format!("0.0.0.0:{}", vrchat_port)) {
-            Ok(sock) => sock,
-            Err(e) => {
-                // If we can't bind to VRChat's port, it might be because another app (like VRCFT)
-                // is already using it
-                warn!("Cannot bind to VRChat's port {}: {}. You may need to configure the other application to use a different port.", vrchat_port, e);
-                return Err(OscError::IoError(format!("Failed to bind to VRChat port {}: {}", vrchat_port, e)));
-            }
-        };
-
-        // Make it non-blocking
-        vrchat_sock.set_nonblocking(true)
-            .map_err(|e| OscError::IoError(format!("Failed to set nonblocking on forwarder: {}", e)))?;
-
-        // Create a socket to send to our port
-        let target_addr = format!("127.0.0.1:{}", our_port);
-
-        // Spawn a task to read from VRChat and forward to us
-        let _forward_handle = tokio::spawn(async move {
-            let mut buf = [0u8; 4096];
-            info!("OSC forwarder active: {}→{}", vrchat_port, our_port);
-
-            loop {
-                // Small delay to avoid spinning
-                tokio::time::sleep(tokio::time::Duration::from_millis(5)).await;
-
-                // Try to receive a packet
-                match vrchat_sock.recv_from(&mut buf) {
-                    Ok((size, src)) => {
-                        trace!("Forwarding OSC packet: {} bytes from {}", size, src);
-
-                        // Forward the packet to our port
-                        if let Err(e) = vrchat_sock.send_to(&buf[..size], &target_addr) {
-                            error!("Failed to forward OSC packet to {}: {}", target_addr, e);
-                        }
-                    },
-                    Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                        // No data available, continue
-                        continue;
-                    },
-                    Err(e) => {
-                        error!("OSC forwarder error: {}", e);
-                        tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
-                    }
-                }
-            }
-        });
-
-        Ok(())
-    }
-
+    /// Stop watching for file changes and clean up resources
     pub async fn stop_all(&self) -> Result<()> {
         // Stop the VRChat avatar watcher first if available
         if let Some(watcher_mutex) = &self.vrchat_watcher {
@@ -451,7 +419,9 @@ impl MaowOscManager {
         // Stop the OSCQuery server
         {
             let mut oscq = self.oscquery_server.lock().await;
-            oscq.stop().await?;
+            if oscq.is_running {
+                oscq.stop().await?;
+            }
         }
 
         // Stop the OSC receiver if running
@@ -473,6 +443,12 @@ impl MaowOscManager {
             }
         }
 
+        // Clear VRChat info
+        {
+            let mut vrchat_info = self.vrchat_info.lock().await;
+            *vrchat_info = None;
+        }
+
         Ok(())
     }
 
@@ -492,55 +468,7 @@ impl MaowOscManager {
         }
     }
 
-    /// Attempt to start an OSC server, searching for a free port
-    /// (starting at 9002) if needed.
-    /// Also start the OSCQuery advertisement if desired.
-    pub async fn start_server(&self) -> Result<u16> {
-        let mut guard = self.inner.lock().await;
-        if guard.is_running {
-            return Ok(guard.listening_port.unwrap_or(9001));
-        }
-
-        let start_port = 9002; // Now starting at 9002 since 9001 is used by VRCFT
-        let max_port = 9100; // arbitrary upper bound
-
-        let mut port_found = None;
-        for port in start_port..max_port {
-            // Try binding to all interfaces first
-            let addr = format!("0.0.0.0:{port}");
-            match UdpSocket::bind(&addr) {
-                Ok(_sock) => {
-                    port_found = Some(port);
-                    break;
-                },
-                Err(e) => {
-                    tracing::debug!("Failed to bind to {}: {}", addr, e);
-
-                    // Try localhost as fallback
-                    let localhost_addr = format!("127.0.0.1:{port}");
-                    if let Ok(_) = UdpSocket::bind(&localhost_addr) {
-                        port_found = Some(port);
-                        break;
-                    }
-                }
-            }
-        }
-
-        let chosen_port = match port_found {
-            Some(p) => p,
-            None => return Err(OscError::PortError),
-        };
-
-        guard.listening_port = Some(chosen_port);
-        guard.is_running = true;
-        tracing::info!("OSC server started on port {chosen_port}.");
-
-        // If you want to run your own rosc receiver loop, you could spawn a task here.
-
-        Ok(chosen_port)
-    }
-
-    /// Stop the server, if running
+    /// Wait for the server to stop.
     pub async fn stop_server(&self) -> Result<()> {
         let mut guard = self.inner.lock().await;
         guard.is_running = false;
@@ -554,7 +482,16 @@ impl MaowOscManager {
     // Common helper for sending a raw OSC packet to VRChat (which listens on 9000 by default).
 
     fn send_osc_packet(&self, packet: OscPacket) -> Result<()> {
-        let address = "127.0.0.1:9000"; // VRChat typically listens here by default
+        // Get VRChat's OSC input port from our stored info, or use default 9000
+        let port = match self.vrchat_info.try_lock() {
+            Ok(guard) => match &*guard {
+                Some(info) => info.osc_send_port,
+                None => 9000 // Default if no info
+            },
+            Err(_) => 9000 // Default if lock fails
+        };
+
+        let address = format!("127.0.0.1:{}", port);
         let buf = rosc::encoder::encode(&packet)
             .map_err(|e| OscError::IoError(format!("Encode error: {e:?}")))?;
 
