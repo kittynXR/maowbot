@@ -1,14 +1,9 @@
-//! maowbot-osc/src/oscquery/mod.rs
-//!
-//! Implementation or stubs for OSCQuery (advertising, discovery, introspection).
-//! VRChat's OSCQuery reference:
-//! https://docs.vrchat.com/docs/oscquery
-
-pub mod server;
-pub mod discovery;
+//! Implementation of a pure-Rust OSCQuery approach, replicating the
+//! functionality from Oyasumi's library without any .NET sidecar.
 pub mod client;
+pub mod server;
+pub mod models;
+pub mod mdns;
 
-// Re-export items for convenience
+pub use client::OscQueryClient;
 pub use server::OscQueryServer;
-pub use discovery::OscQueryDiscovery;
-pub use client::{OscQueryClient, DiscoveredOscQueryService};

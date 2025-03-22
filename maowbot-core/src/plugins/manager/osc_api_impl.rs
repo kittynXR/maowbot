@@ -35,7 +35,7 @@ impl OscApi for PluginManager {
 
             // For the OSCQuery side:
             let oscq = mgr.oscquery_server.lock().await;
-            let is_oscquery_running = oscq.is_running();  // using the accessor
+            let is_oscquery_running = oscq.is_running;  // using the accessor
             let port = oscq.http_port;
 
             // Return a user-friendly OscStatus

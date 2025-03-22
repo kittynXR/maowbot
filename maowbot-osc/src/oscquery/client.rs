@@ -1,154 +1,73 @@
-//! maowbot-osc/src/oscquery/client.rs
-//!
-//! Client for OSCQuery protocol to discover and query remote OSCQuery services
+//! Provide a client for discovering VRChat’s or other apps’ OSC/OSCQuery services locally.
+//! Now that we’ve replaced the old mdns-sd approach, we do a quick custom approach.
 
-use crate::{Result, OscError};
-use serde_json::Value;
-use std::net::SocketAddr;
-use std::collections::HashMap;
-use tokio::time::Duration;
-use tracing::{info, debug, error, warn};
+use crate::{OscError, Result};
+use tokio::sync::Mutex;
+use std::sync::Arc;
+use tracing::{debug, info, warn};
 
-/// Represents a discovered OSCQuery service
-#[derive(Debug, Clone)]
-pub struct DiscoveredOscQueryService {
-    pub name: String,
-    pub host: String,
-    pub http_port: u16,
+/// Holds discovered VRChat addresses, if any
+#[derive(Default)]
+pub struct VrchatAddrs {
+    pub osc_host: Option<String>,
     pub osc_port: Option<u16>,
-    pub properties: HashMap<String, String>,
+    pub oscquery_host: Option<String>,
+    pub oscquery_port: Option<u16>,
 }
 
-/// Client for OSCQuery protocol
+/// Our minimal “client” that attempts to find VRChat’s addresses
 pub struct OscQueryClient {
-    pub timeout: Duration,
+    /// We no longer keep a “discovery” object from the old crate. Instead, if we want to implement
+    /// “raw” scanning, we could do so, or we just wait until VRChat queries us.
+    pub vrchat_addrs: Arc<Mutex<VrchatAddrs>>,
+    pub is_initialized: bool,
 }
 
 impl OscQueryClient {
     pub fn new() -> Self {
         Self {
-            timeout: Duration::from_secs(5),
+            vrchat_addrs: Arc::new(Mutex::new(VrchatAddrs::default())),
+            is_initialized: false,
         }
     }
 
-    /// Set a custom timeout for HTTP requests
-    pub fn with_timeout(mut self, timeout: Duration) -> Self {
-        self.timeout = timeout;
-        self
+    pub async fn init(&mut self) -> Result<()> {
+        if self.is_initialized {
+            return Ok(());
+        }
+        // No real scanning in this placeholder. If you wanted to passively wait for VRChat queries,
+        // you might do so in your server code. Or do your own outbound query to 224.0.0.251.
+        self.is_initialized = true;
+        info!("OscQueryClient init() – no direct scanning in the new approach");
+        Ok(())
     }
 
-    /// Query an OSCQuery server for its host info
-    pub async fn query_host_info(&self, host: &str, port: u16) -> Result<Value> {
-        let url = format!("http://{}:{}/host_info", host, port);
-        debug!("Querying OSCQuery host info from {}", url);
-
-        let client = reqwest::Client::builder()
-            .timeout(self.timeout)
-            .build()
-            .map_err(|e| OscError::OscQueryError(format!("Failed to build HTTP client: {}", e)))?;
-
-        let res = client.get(&url)
-            .send()
-            .await
-            .map_err(|e| {
-                // More detailed error message
-                let err_msg = if e.is_timeout() {
-                    format!("Connection timed out after {:?}", self.timeout)
-                } else if e.is_connect() {
-                    format!("Connection failed to {}", url)
-                } else {
-                    format!("{}", e)
-                };
-                OscError::OscQueryError(format!("Failed to query host info: {}", err_msg))
-            })?;
-
-        let json = res.json::<Value>()
-            .await
-            .map_err(|e| OscError::OscQueryError(format!("Failed to parse host info response: {}", e)))?;
-
-        debug!("Received host info: {:?}", json);
-        Ok(json)
-    }
-
-    /// Query the root OSCQuery endpoint for all available OSC addresses
-    pub async fn query_root(&self, host: &str, port: u16) -> Result<Value> {
-        let url = format!("http://{}:{}/", host, port);
-        debug!("Querying OSCQuery root from {}", url);
-
-        let client = reqwest::Client::new();
-        let res = client.get(&url)
-            .timeout(self.timeout)
-            .send()
-            .await
-            .map_err(|e| OscError::OscQueryError(format!("Failed to query root: {}", e)))?;
-
-        let json = res.json::<Value>()
-            .await
-            .map_err(|e| OscError::OscQueryError(format!("Failed to parse root response: {}", e)))?;
-
-        debug!("Received OSCQuery root: {:?}", json);
-        Ok(json)
-    }
-
-    /// Query specific path from OSCQuery server
-    /// Query specific path from OSCQuery server
-    pub async fn query_path(&self, host: &str, port: u16, path: &str) -> Result<Value> {
-        // Ensure path starts with a slash
-        let path = if !path.starts_with('/') {
-            format!("/{}", path)
+    /// Return the host/port for VRChat’s OSC server (where we send data).
+    /// If not found, returns an error.
+    pub async fn get_vrchat_osc_address(&self) -> Result<(String, u16)> {
+        let lock = self.vrchat_addrs.lock().await;
+        if let (Some(h), Some(p)) = (lock.osc_host.clone(), lock.osc_port) {
+            Ok((h, p))
         } else {
-            path.to_string()
-        };
-
-        let url = format!("http://{}:{}{}", host, port, path);
-        debug!("Querying OSCQuery path {} from {}", path, url);
-
-        let client = reqwest::Client::new();
-        let res = client.get(&url)
-            .timeout(self.timeout)
-            .send()
-            .await
-            .map_err(|e| OscError::OscQueryError(format!("Failed to query path {}: {}", path, e)))?;
-
-        let json = res.json::<Value>()
-            .await
-            .map_err(|e| OscError::OscQueryError(format!("Failed to parse path response: {}", e)))?;
-
-        debug!("Received OSCQuery path data: {:?}", json);
-        Ok(json)
-    }
-
-    /// Attempts to query avatar parameters from VRChat's OSCQuery server
-    pub async fn query_vrchat_parameters(&self, host: &str, port: u16) -> Result<Value> {
-        self.query_path(host, port, "/avatar/parameters").await
-    }
-
-    /// Parse an OSCQuery service from mDNS discovered data
-    pub fn parse_service_from_txt_records(&self, service_name: &str, host: &str, port: u16, txt_records: &HashMap<String, String>) -> DiscoveredOscQueryService {
-        let mut osc_port = None;
-
-        // Try different possible keys for OSC port
-        for key in &["OSC_PORT", "osc.port", "osc.udp.port", "_osc._udp.port"] {
-            if let Some(port_str) = txt_records.get(*key) {
-                if let Ok(port_num) = port_str.parse::<u16>() {
-                    osc_port = Some(port_num);
-                    break;
-                }
-            }
-        }
-
-        DiscoveredOscQueryService {
-            name: service_name.to_string(),
-            host: host.to_string(),
-            http_port: port,
-            osc_port,
-            properties: txt_records.clone(),
+            Err(OscError::OscQueryError("VRChat OSC not found".into()))
         }
     }
 
-    /// Determine if a discovered service is VRChat
-    pub fn is_vrchat_service(&self, service: &DiscoveredOscQueryService) -> bool {
-        service.name.to_lowercase().contains("vrchat") ||
-            service.properties.values().any(|v| v.to_lowercase().contains("vrchat"))
+    /// Return the host/port for VRChat’s OSCQuery server (where we do HTTP GET).
+    /// If not found, returns an error.
+    pub async fn get_vrchat_oscquery_address(&self) -> Result<(String, u16)> {
+        let lock = self.vrchat_addrs.lock().await;
+        if let (Some(h), Some(p)) = (lock.oscquery_host.clone(), lock.oscquery_port) {
+            Ok((h, p))
+        } else {
+            Err(OscError::OscQueryError("VRChat OSCQuery not found".into()))
+        }
+    }
+
+    /// A placeholder: we do no real refresh. In principle, you could send queries out using
+    /// your custom raw mDNS code and parse responses to fill out `vrchat_addrs`.
+    pub async fn refresh_vrchat(&self) -> Result<()> {
+        warn!("OscQueryClient refresh_vrchat() – not yet implemented with raw mDNS");
+        Ok(())
     }
 }
