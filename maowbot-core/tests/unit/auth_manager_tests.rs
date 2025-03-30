@@ -8,6 +8,7 @@ use maowbot_core::models::{Platform, PlatformCredential, CredentialType};
 use maowbot_core::Error;
 use async_trait::async_trait;
 use std::collections::HashMap;
+use maowbot_common::models::auth::Platform;
 
 // Example mock
 #[derive(Default)]

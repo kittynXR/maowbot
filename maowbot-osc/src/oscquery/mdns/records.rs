@@ -2,7 +2,7 @@ use super::dns_reader::DnsReader;
 use super::dns_writer::DnsWriter;
 use std::io::Result as IoResult;
 use std::io::Error;
-use tracing::debug; // Added for verbose logging
+use tracing::trace; // Added for verbose logging
 
 /// DNS TYPE constants
 pub const TYPE_A: u16 = 0x0001;
@@ -109,7 +109,7 @@ impl RData {
                 // entire RDATA is a domain name
                 let start = reader.position();
                 let labels = reader.read_domain_labels()?;
-                debug!("Parsed PTR record at offset {}: {:?}", start, labels);
+                trace!("Parsed PTR record at offset {}: {:?}", start, labels);
                 Ok(RData::PTR(labels))
             },
             TYPE_TXT => {
@@ -125,7 +125,7 @@ impl RData {
                     out.push(String::from_utf8_lossy(txt_data).to_string());
                     raw.drain(0..(1 + first));
                 }
-                debug!("Parsed TXT record: {:?}", out);
+                trace!("Parsed TXT record: {:?}", out);
                 Ok(RData::TXT(out))
             },
             TYPE_SRV => {
@@ -133,7 +133,7 @@ impl RData {
                 let weight = reader.read_u16()?;
                 let port = reader.read_u16()?;
                 let target = reader.read_domain_labels()?;
-                debug!("Parsed SRV record: priority: {}, weight: {}, port: {}, target: {:?}", priority, weight, port, target);
+                trace!("Parsed SRV record: priority: {}, weight: {}, port: {}, target: {:?}", priority, weight, port, target);
                 Ok(RData::SRV(priority, weight, port, target))
             },
             _ => {

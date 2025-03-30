@@ -65,7 +65,7 @@ uuid = { version = "^1.12", features = ["v4", "serde"] }
 rand = { version ="^0.9", features = ["os_rng"] }
 rand_core = "^0.9"
 
-aes-gcm = "^0.11.0-pre"
+aes-gcm = "^0.10"
 keyring = { version = "^3.6", features = ["windows-native"] }
 
 async-trait = "^0.1"

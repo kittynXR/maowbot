@@ -501,7 +501,7 @@ fn try_open_incognito(url: &str) -> Result<(), Box<dyn std::error::Error>> {
             .arg(url)
             .spawn();
         match status_chrome {
-            Ok(_) => Ok(()),
+            Ok(_) => Ok::<(), Box<dyn std::error::Error>>(()),
             Err(_) => {
                 std::process::Command::new("chromium")
                     .arg("--incognito")

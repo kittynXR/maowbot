@@ -2,7 +2,7 @@ use std::io::Cursor;
 use std::collections::HashMap;
 use byteorder::{BigEndian, ReadBytesExt};
 use std::io::{Read, Result as IoResult};
-use tracing::debug;
+use tracing::trace;
 
 /// A simplified "big-endian" DNS reader. This parallels the C# `BigReader` code.
 pub struct DnsReader {
@@ -63,11 +63,11 @@ impl DnsReader {
 
                 self.inner.set_position(offset as u64);
                 if let Some(cached) = self.name_cache.get(&(offset as u64)) {
-                    debug!("Using cached labels for pointer at offset {}: {:?}", offset, cached);
+                    trace!("Using cached labels for pointer at offset {}: {:?}", offset, cached);
                     out_labels.extend_from_slice(cached);
                 } else {
                     let sub_labels = self.read_domain_labels()?;
-                    debug!("Read pointer labels at offset {}: {:?}", offset, sub_labels);
+                    trace!("Read pointer labels at offset {}: {:?}", offset, sub_labels);
                     self.name_cache.insert(offset as u64, sub_labels.clone());
                     out_labels.extend(sub_labels);
                 }
@@ -80,7 +80,7 @@ impl DnsReader {
                 let mut buf = vec![0u8; length];
                 self.inner.read_exact(&mut buf)?;
                 let s = String::from_utf8_lossy(&buf).to_string();
-                debug!("Read label: '{}'", s);
+                trace!("Read label: '{}'", s);
                 out_labels.push(s);
             }
 
@@ -91,7 +91,7 @@ impl DnsReader {
         }
 
         self.name_cache.insert(start_pos, out_labels.clone());
-        debug!("Completed reading domain labels starting at {}: {:?}", start_pos, out_labels);
+        trace!("Completed reading domain labels starting at {}: {:?}", start_pos, out_labels);
         Ok(out_labels)
     }
 }

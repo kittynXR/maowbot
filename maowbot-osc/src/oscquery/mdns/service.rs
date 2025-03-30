@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 use std::collections::HashMap;
 use tokio::task::JoinHandle;
 use tokio::sync::watch;
-use tracing::{debug, info, warn, error};
+use tracing::{trace, info, warn, error};
 use crate::OscError;
 use socket2::{Domain, Protocol, Socket, Type};
 const MDNS_MULTICAST_ADDR: Ipv4Addr = Ipv4Addr::new(224, 0, 0, 251);
@@ -71,16 +71,16 @@ impl MdnsService {
             match if_addrs::get_if_addrs() {
                 Ok(ifaces) => {
                     for iface in ifaces {
-                        if let Some(ipv4) = iface.ip().to_owned().to_ipv4() {
+                        if let IpAddr::V4(ipv4) = iface.ip() {
                             // Skip loopback, down, or otherwise "odd" interfaces
                             if ipv4.is_loopback() {
                                 continue;
                             }
                             let r = socket.join_multicast_v4(&MDNS_MULTICAST_ADDR, &ipv4);
                             if let Err(e) = r {
-                                debug!("Failed to join {} on {}: {}", MDNS_MULTICAST_ADDR, ipv4, e);
+                                trace!("Failed to join {} on {}: {}", MDNS_MULTICAST_ADDR, ipv4, e);
                             } else {
-                                debug!("Joined multicast {} on {}", MDNS_MULTICAST_ADDR, ipv4);
+                                trace!("Joined multicast {} on {}", MDNS_MULTICAST_ADDR, ipv4);
                             }
                         }
                     }
@@ -121,7 +121,7 @@ impl MdnsService {
             let mut buf = [0u8; 4096];
             loop {
                 if *stop_rx.borrow() {
-                    debug!("mDNS service shutting down");
+                    trace!("mDNS service shutting down");
                     break;
                 }
                 match socket.recv_from(&mut buf) {
@@ -129,7 +129,7 @@ impl MdnsService {
                         let data = buf[..size].to_vec();
                         // Log the raw ASCII text of the received packet.
                         let ascii = String::from_utf8_lossy(&data);
-                        debug!("Received packet of size {} from {} with ASCII: {}", size, from, ascii);
+                        trace!("Received packet of size {} from {} with ASCII: {}", size, from, ascii);
                         match DnsPacket::parse(crate::oscquery::mdns::dns_reader::DnsReader::new(data)) {
                             Ok(packet) => {
                                 if !packet.is_response {
@@ -137,7 +137,7 @@ impl MdnsService {
                                 }
                             },
                             Err(e) => {
-                                debug!("Failed to parse DNS packet from {}: {}", from, e);
+                                trace!("Failed to parse DNS packet from {}: {}", from, e);
                             }
                         }
                     },
@@ -199,16 +199,16 @@ impl MdnsService {
             let mut buf = [0u8; 4096];
             loop {
                 if *stop_rx.borrow() {
-                    debug!("mDNS query listener shutting down");
+                    trace!("mDNS query listener shutting down");
                     break;
                 }
                 match socket.recv_from(&mut buf) {
                     Ok((size, from)) => {
-                        debug!("Received packet of size {} from {}", size, from);
+                        trace!("Received packet of size {} from {}", size, from);
                         let data = buf[..size].to_vec();
                         // Log the raw ASCII text of the received packet.
                         let ascii = String::from_utf8_lossy(&data);
-                        debug!("Packet ASCII: {}", ascii);
+                        trace!("Packet ASCII: {}", ascii);
                         match DnsPacket::parse(crate::oscquery::mdns::dns_reader::DnsReader::new(data)) {
                             Ok(packet) => {
                                 if packet.is_response {
@@ -220,7 +220,7 @@ impl MdnsService {
                                 }
                             },
                             Err(e) => {
-                                debug!("Failed to parse DNS packet from {}: {}", from, e);
+                                trace!("Failed to parse DNS packet from {}: {}", from, e);
                             }
                         }
                     },
@@ -277,7 +277,7 @@ impl MdnsService {
             let disc = self.discovered.lock().unwrap();
             disc.clone()
         };
-        debug!("Discovered {} services: {:?}", discovered.len(), discovered);
+        trace!("Discovered {} services: {:?}", discovered.len(), discovered);
         let filtered: Vec<AdvertisedService> = discovered
             .into_iter()
             .filter(|svc| {
@@ -323,7 +323,7 @@ fn parse_mdns_response(packet: &DnsPacket, discovered: &Arc<Mutex<Vec<Advertised
                     // Check if this is a VRChat record
                     if full.contains("VRChat-Client") || from.contains("VRChat-Client") {
                         has_vrchat_records = true;
-                        debug!("Found VRChat PTR record: {} -> {}", from, full);
+                        trace!("Found VRChat PTR record: {} -> {}", from, full);
                     }
                     ptr_map.insert(from, full);
                 }
@@ -332,7 +332,7 @@ fn parse_mdns_response(packet: &DnsPacket, discovered: &Arc<Mutex<Vec<Advertised
                     let t_fqdn = target_labels.join(".");
                     if full.contains("VRChat-Client") {
                         has_vrchat_records = true;
-                        debug!("Found VRChat SRV record: {} -> port {} -> {}", full, port, t_fqdn);
+                        trace!("Found VRChat SRV record: {} -> port {} -> {}", full, port, t_fqdn);
                     }
                     srv_map.insert(full, (*port, t_fqdn));
                 }
@@ -340,7 +340,7 @@ fn parse_mdns_response(packet: &DnsPacket, discovered: &Arc<Mutex<Vec<Advertised
                     if ip_bytes.len() == 4 {
                         let ip = Ipv4Addr::new(ip_bytes[0], ip_bytes[1], ip_bytes[2], ip_bytes[3]);
                         let full = ans.labels.join(".");
-                        debug!("Found A record: {} -> {}", full, ip);
+                        trace!("Found A record: {} -> {}", full, ip);
                         a_map.insert(full, ip);
                     }
                 }
@@ -365,7 +365,7 @@ fn parse_mdns_response(packet: &DnsPacket, discovered: &Arc<Mutex<Vec<Advertised
                 port: *port,
                 address: *ip,
             };
-            debug!("Created service entry from A record: {} at {}:{}", instance_name, ip, port);
+            trace!("Created service entry from A record: {} at {}:{}", instance_name, ip, port);
             new_entries.push(adv);
         } else {
             // Try a more flexible match for the A record
@@ -384,7 +384,7 @@ fn parse_mdns_response(packet: &DnsPacket, discovered: &Arc<Mutex<Vec<Advertised
                         port: *port,
                         address: *ip,
                     };
-                    debug!("Created service entry from partial match: {} at {}:{}", instance_name, ip, port);
+                    trace!("Created service entry from partial match: {} at {}:{}", instance_name, ip, port);
                     new_entries.push(adv);
                     found = true;
                     break;
@@ -399,14 +399,14 @@ fn parse_mdns_response(packet: &DnsPacket, discovered: &Arc<Mutex<Vec<Advertised
                     port: *port,
                     address: Ipv4Addr::new(127, 0, 0, 1),
                 };
-                debug!("Created service entry with fallback IP: {} at 127.0.0.1:{}", instance_name, port);
+                trace!("Created service entry with fallback IP: {} at 127.0.0.1:{}", instance_name, port);
                 new_entries.push(adv);
             }
         }
     }
     // If we saw VRChat records but couldn't create service entries yet, try harder
     if has_vrchat_records && new_entries.is_empty() {
-        debug!("Saw VRChat records but couldn't match A records properly; creating entries from SRV only");
+        trace!("Saw VRChat records but couldn't match A records properly; creating entries from SRV only");
         for (srv_name, (port, _)) in &srv_map {
             if srv_name.contains("VRChat-Client") {
                 let instance_name = extract_instance_name(srv_name);
@@ -415,7 +415,7 @@ fn parse_mdns_response(packet: &DnsPacket, discovered: &Arc<Mutex<Vec<Advertised
                     port: *port,
                     address: Ipv4Addr::new(127, 0, 0, 1), // Use localhost since that's typical for VRChat
                 };
-                debug!("Created fallback service entry: {} on 127.0.0.1:{}", instance_name, port);
+                trace!("Created fallback service entry: {} on 127.0.0.1:{}", instance_name, port);
                 new_entries.push(adv);
             }
         }
