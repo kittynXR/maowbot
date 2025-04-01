@@ -42,6 +42,10 @@ pub struct Args {
     #[arg(long, default_value = "false")]
     pub auth: bool,
 
+    /// Nuke the existing database and start fresh (CAUTION: destroys all data)
+    #[arg(long, default_value = "false")]
+    pub nuke_database_and_start_fresh: bool,
+
     /// Logging level: "info", "warn", "debug", "error", or "trace"
     #[arg(long = "log-level", short = 'L', default_value = "info", value_parser = ["info", "warn", "debug", "error", "trace"])]
     pub log_level: String,

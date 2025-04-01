@@ -66,7 +66,7 @@ rand = { version ="^0.9", features = ["os_rng"] }
 rand_core = "^0.9"
 
 aes-gcm = "^0.10"
-keyring = { version = "^3.6", features = ["windows-native"] }
+keyring = { version = "^3.6", features = ["windows-native", "linux-native-sync-persistent"] }
 
 async-trait = "^0.1"
 mockall = "0.13.1"

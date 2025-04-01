@@ -1,20 +1,22 @@
 // File: maowbot-core/tests/unit/cache_tests.rs
 
 use std::collections::HashMap;
+use std::sync::Arc;
 use async_trait::async_trait;
 use chrono::{Utc, Duration};
+use uuid::Uuid;
 use maowbot_core::Error;
 use maowbot_core::cache::{
     ChatCache, CacheConfig, TrimPolicy, CachedMessage
 };
-use maowbot_core::models::user_analysis::UserAnalysis;
-use maowbot_core::repositories::postgres::user_analysis::UserAnalysisRepository;
+use maowbot_common::models::user_analysis::UserAnalysis;
+use maowbot_common::traits::repository_traits::UserAnalysisRepository;
 
 /// A mock implementation of the UserAnalysisRepository trait,
 /// storing data in a simple HashMap keyed by user_id.
 #[derive(Clone, Default)]
 struct MockUserAnalysisRepo {
-    pub data: HashMap<String, UserAnalysis>,
+    pub data: HashMap<Uuid, UserAnalysis>,
 }
 
 #[async_trait]
@@ -23,20 +25,20 @@ impl UserAnalysisRepository for MockUserAnalysisRepo {
         // For a real DB, you'd insert; here, we just store in a local map
         let mut cloned = analysis.clone();
         cloned.updated_at = Utc::now();
-        let user_id = cloned.user_id.clone();
+        let user_id = cloned.user_id;
         let mut me = self.clone();
         me.data.insert(user_id, cloned);
         Ok(())
     }
 
-    async fn get_analysis(&self, user_id: &str) -> Result<Option<UserAnalysis>, Error> {
-        Ok(self.data.get(user_id).cloned())
+    async fn get_analysis(&self, user_id: Uuid) -> Result<Option<UserAnalysis>, Error> {
+        Ok(self.data.get(&user_id).cloned())
     }
 
     async fn update_analysis(&self, analysis: &UserAnalysis) -> Result<(), Error> {
         let mut cloned = analysis.clone();
         cloned.updated_at = Utc::now();
-        let user_id = cloned.user_id.clone();
+        let user_id = cloned.user_id;
         let mut me = self.clone();
         me.data.insert(user_id, cloned);
         Ok(())
@@ -66,20 +68,24 @@ async fn test_add_and_retrieve_messages() -> Result<(), Error> {
     let cache = build_cache(policy);
 
     let now = Utc::now();
+    let user1_id = Uuid::new_v4(); // Generate proper UUID
     let msg1 = CachedMessage {
         platform: "discord".into(),
         channel: "general".into(),
-        user_id: "user1".into(),
+        user_id: user1_id,
+        user_name: "user1".into(),
         text: "Hello from user1".into(),
         timestamp: now,
         token_count: 3,
     };
     cache.add_message(msg1.clone()).await;
 
+    let user2_id = Uuid::new_v4(); // Generate proper UUID
     let msg2 = CachedMessage {
         platform: "discord".into(),
         channel: "general".into(),
-        user_id: "user2".into(),
+        user_id: user2_id,
+        user_name: "user2".into(),
         text: "user2 checking in".into(),
         timestamp: now + Duration::seconds(5),
         token_count: 4,
@@ -112,7 +118,8 @@ async fn test_ring_overwrites_when_full() -> Result<(), Error> {
     let m1 = CachedMessage {
         platform: "test".into(),
         channel: "chan".into(),
-        user_id: "u1".into(),
+        user_id: Uuid::new_v4(),
+        user_name: "u1".into(),
         text: "first".into(),
         timestamp: now,
         token_count: 1,
@@ -120,7 +127,8 @@ async fn test_ring_overwrites_when_full() -> Result<(), Error> {
     let m2 = CachedMessage {
         platform: "test".into(),
         channel: "chan".into(),
-        user_id: "u2".into(),
+        user_id: Uuid::new_v4(),
+        user_name: "u2".into(),
         text: "second".into(),
         timestamp: now + Duration::seconds(5),
         token_count: 1,
@@ -128,7 +136,8 @@ async fn test_ring_overwrites_when_full() -> Result<(), Error> {
     let m3 = CachedMessage {
         platform: "test".into(),
         channel: "chan".into(),
-        user_id: "u3".into(),
+        user_id: Uuid::new_v4(),
+        user_name: "u3".into(),
         text: "third".into(),
         timestamp: now + Duration::seconds(10),
         token_count: 1,
@@ -160,12 +169,15 @@ async fn test_per_user_capacity() -> Result<(), Error> {
     let cache = build_cache(policy);
 
     let now = Utc::now();
+    let user_id = Uuid::new_v4();
+    
     // Add 3 messages for user "abc"
     for i in 0..3 {
         let msg = CachedMessage {
             platform: "test".into(),
             channel: "chan".into(),
-            user_id: "abc".into(),
+            user_id,
+            user_name: "abc".into(),
             text: format!("msg #{}", i),
             timestamp: now + Duration::seconds(i as i64),
             token_count: 1,
@@ -204,7 +216,8 @@ async fn test_age_based_trimming_on_add() -> Result<(), Error> {
     let old_msg = CachedMessage {
         platform: "test".into(),
         channel: "chan".into(),
-        user_id: "olduser".into(),
+        user_id: Uuid::new_v4(),
+        user_name: "olduser".into(),
         text: "too old".into(),
         timestamp: now - Duration::hours(2),
         token_count: 1,
@@ -215,7 +228,8 @@ async fn test_age_based_trimming_on_add() -> Result<(), Error> {
     let new_msg = CachedMessage {
         platform: "test".into(),
         channel: "chan".into(),
-        user_id: "newuser".into(),
+        user_id: Uuid::new_v4(),
+        user_name: "newuser".into(),
         text: "newer message".into(),
         timestamp: now,
         token_count: 1,
@@ -245,7 +259,8 @@ async fn test_token_limit_stops_early() -> Result<(), Error> {
     let m1 = CachedMessage {
         platform: "test".into(),
         channel: "chan".into(),
-        user_id: "u1".into(),
+        user_id: Uuid::new_v4(),
+        user_name: "u1".into(),
         text: "one".into(),
         timestamp: now,
         token_count: 4,
@@ -253,7 +268,8 @@ async fn test_token_limit_stops_early() -> Result<(), Error> {
     let m2 = CachedMessage {
         platform: "test".into(),
         channel: "chan".into(),
-        user_id: "u2".into(),
+        user_id: Uuid::new_v4(),
+        user_name: "u2".into(),
         text: "two".into(),
         timestamp: now + Duration::seconds(10),
         token_count: 3,
@@ -261,7 +277,8 @@ async fn test_token_limit_stops_early() -> Result<(), Error> {
     let m3 = CachedMessage {
         platform: "test".into(),
         channel: "chan".into(),
-        user_id: "u3".into(),
+        user_id: Uuid::new_v4(),
+        user_name: "u3".into(),
         text: "three".into(),
         timestamp: now + Duration::seconds(20),
         token_count: 5,
@@ -291,19 +308,20 @@ async fn test_token_limit_stops_early() -> Result<(), Error> {
 async fn test_trim_spammy_users() -> Result<(), Error> {
     // We'll seed the MockUserAnalysisRepo with a user that has spam_score above the cutoff
     let mut repo = MockUserAnalysisRepo::default();
+    let spammy_id = Uuid::new_v4();
     let spam_user = UserAnalysis {
-        user_analysis_id: "spammy-analysis-id".into(),
-        user_id: "spammy".into(),
+        user_analysis_id: Uuid::new_v4(),
+        user_id: spammy_id,
         spam_score: 9.0,
         intelligibility_score: 0.5,
         quality_score: 0.1,
-        horni_score: 0.0,
+        horni_score: 0.2,
         ai_notes: None,
         moderator_notes: None,
         created_at: Utc::now(),
         updated_at: Utc::now(),
     };
-    repo.data.insert("spammy".into(), spam_user);
+    repo.data.insert(spammy_id, spam_user);
 
     let config = CacheConfig {
         trim_policy: TrimPolicy {
@@ -320,7 +338,8 @@ async fn test_trim_spammy_users() -> Result<(), Error> {
     let spam_msg = CachedMessage {
         platform: "test".into(),
         channel: "chan".into(),
-        user_id: "spammy".into(),
+        user_id: spammy_id,
+        user_name: "spammy".into(),
         text: "buy followers cheap!!!!".into(),
         timestamp: now,
         token_count: 2,
@@ -330,7 +349,8 @@ async fn test_trim_spammy_users() -> Result<(), Error> {
     let normal_msg = CachedMessage {
         platform: "test".into(),
         channel: "chan".into(),
-        user_id: "normal".into(),
+        user_id: Uuid::new_v4(),
+        user_name: "normal".into(),
         text: "normal user message".into(),
         timestamp: now + Duration::seconds(1),
         token_count: 2,

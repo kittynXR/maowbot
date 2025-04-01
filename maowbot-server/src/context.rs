@@ -86,6 +86,30 @@ impl ServerContext {
         let db_url = &args.db_path;
         info!("Using Postgres DB URL: {}", db_url);
         let db = Database::new(db_url).await?;
+        
+        // Check if we should nuke the database and start fresh
+        if args.nuke_database_and_start_fresh {
+            info!("--nuke-database-and-start-fresh flag detected. Dropping all tables...");
+            
+            // Execute DROP commands for all tables
+            sqlx::query(
+                r#"
+                DO $$ DECLARE
+                    r RECORD;
+                BEGIN
+                    FOR r IN (SELECT tablename FROM pg_tables WHERE schemaname = 'public') LOOP
+                        EXECUTE 'DROP TABLE IF EXISTS ' || quote_ident(r.tablename) || ' CASCADE';
+                    END LOOP;
+                END $$;
+                "#
+            )
+            .execute(db.pool())
+            .await?;
+            
+            info!("Database nuked successfully. Rebuilding from scratch...");
+        }
+        
+        // Apply migrations (this will recreate tables if they were dropped)
         db.migrate().await?;
 
         // Possibly create an owner user if users table is empty
@@ -319,32 +343,175 @@ async fn maybe_create_owner_user(db: &Database) -> Result<(), Error> {
     Ok(())
 }
 
+/// Gets a master key from the system keyring or generates a new one.
+/// 
+/// Uses the following strategy:
+/// 1. Try to get/set the key from/to the system keyring (KDE KWallet, GNOME Keyring, or Windows/macOS native)
+/// 2. If that fails, falls back to safely storing the key in a file with secure permissions
 fn get_master_key() -> Result<[u8; 32], Error> {
     let service_name = "maowbot";
     let user_name = "master-key";
-    let entry = Entry::new(service_name, user_name)?;
 
-    match entry.get_password() {
-        Ok(base64_key) => {
-            let key_bytes = base64::decode(&base64_key)
-                .map_err(|e| format!("Failed to decode key: {:?}", e))?;
-            let key_32: [u8; 32] = key_bytes
-                .try_into()
-                .map_err(|_| "Stored key was not 32 bytes")?;
-            println!("Retrieved existing master key from keyring.");
-            Ok(key_32)
-        },
-        Err(_e) => {
-            println!("No existing key found (or error retrieving key). Generating a new 32-byte key...");
+    // On Linux, log which desktop environment is running to help with debugging
+    #[cfg(target_os = "linux")]
+    {
+        let session_type = std::env::var("XDG_SESSION_TYPE").unwrap_or_default();
+        let desktop_env = std::env::var("XDG_CURRENT_DESKTOP").unwrap_or_default();
+        tracing::info!("Detected Linux session: {}, desktop environment: {}", session_type, desktop_env);
+    }
+
+    // Try the OS keyring first
+    let entry_result = Entry::new(service_name, user_name);
+    match entry_result {
+        Ok(entry) => {
+            match entry.get_password() {
+                Ok(base64_key) => {
+                    match decode_key(&base64_key) {
+                        Ok(key) => {
+                            tracing::info!("Retrieved existing master key from system keyring");
+                            return Ok(key);
+                        },
+                        Err(e) => {
+                            tracing::warn!("Found key in keyring but couldn't decode it: {}", e);
+                            // Continue to re-generate key
+                        }
+                    }
+                },
+                Err(e) => {
+                    tracing::info!("Couldn't retrieve key from keyring: {}", e);
+                    // Continue to generate a new key
+                }
+            }
+
+            // Generate a new key
             let mut new_key = [0u8; 32];
             thread_rng().fill(&mut new_key);
             let base64_key = base64::encode(new_key);
-            if let Err(err) = entry.set_password(&base64_key) {
-                println!("Failed to set key in keyring: {:?}", err);
-            } else {
-                println!("Stored new master key in keyring.");
+            
+            // Try to save it to the keyring
+            match entry.set_password(&base64_key) {
+                Ok(_) => {
+                    tracing::info!("Stored new master key in system keyring");
+                    return Ok(new_key);
+                },
+                Err(e) => {
+                    tracing::warn!("Failed to store key in system keyring: {}. Trying fallback storage...", e);
+                    // Continue to fallback storage
+                }
             }
-            Ok(new_key)
+        },
+        Err(e) => {
+            tracing::warn!("Couldn't create keyring entry: {}. Trying fallback storage...", e);
+            // Continue to fallback storage
         }
     }
+
+    // Fallback: Check for a securely stored file
+    // This is a last resort if the OS keyring fails
+    if let Some(key) = try_get_key_from_secure_file()? {
+        return Ok(key);
+    }
+
+    // If we got here, we need to generate a new key and store it in the fallback
+    let mut new_key = [0u8; 32];
+    thread_rng().fill(&mut new_key);
+    let base64_key = base64::encode(new_key);
+    
+    // Store in secure file
+    if let Err(e) = store_key_in_secure_file(&base64_key) {
+        tracing::warn!("Failed to store key in secure file: {}", e);
+        tracing::warn!("WARNING: Using a temporary encryption key that will change on restart!");
+        tracing::warn!("To fix this, please set up a compatible keyring service.");
+    } else {
+        tracing::info!("Stored new master key in secure file (fallback storage)");
+    }
+    
+    Ok(new_key)
+}
+
+/// Decodes a base64 key into a 32-byte array
+fn decode_key(base64_key: &str) -> Result<[u8; 32], Error> {
+    tracing::debug!("Decoding base64 key of length: {}", base64_key.len());
+    
+    let key_bytes = base64::decode(base64_key)
+        .map_err(|e| Error::Parse(format!("Failed to decode key: {:?}", e)))?;
+    
+    let key_len = key_bytes.len();
+    tracing::debug!("Decoded to {} bytes", key_len);
+    
+    // Print first few bytes for debugging (safely)
+    if !key_bytes.is_empty() {
+        let preview = format!("{:02x}{:02x}{:02x}...", 
+            key_bytes[0], 
+            key_bytes.get(1).unwrap_or(&0), 
+            key_bytes.get(2).unwrap_or(&0));
+        tracing::debug!("Key starts with: {}", preview);
+    }
+    
+    key_bytes.try_into()
+        .map_err(|_| Error::Parse(format!("Key was not 32 bytes (got {} bytes)", key_len)))
+}
+
+/// Tries to get the key from a secure file
+fn try_get_key_from_secure_file() -> Result<Option<[u8; 32]>, Error> {
+    let key_file_path = get_secure_key_path()?;
+    
+    if !key_file_path.exists() {
+        return Ok(None);
+    }
+    
+    // Try to read the key file
+    match std::fs::read_to_string(&key_file_path) {
+        Ok(base64_key) => {
+            match decode_key(&base64_key) {
+                Ok(key) => {
+                    tracing::info!("Retrieved master key from secure file: {}", key_file_path.display());
+                    Ok(Some(key))
+                },
+                Err(e) => {
+                    tracing::warn!("Found key file but couldn't decode it: {}", e);
+                    Ok(None)
+                }
+            }
+        },
+        Err(e) => {
+            tracing::warn!("Error reading key file: {}", e);
+            Ok(None)
+        }
+    }
+}
+
+/// Stores the key in a secure file with restrictive permissions
+fn store_key_in_secure_file(base64_key: &str) -> Result<(), Error> {
+    let key_file_path = get_secure_key_path()?;
+    
+    // Ensure parent directory exists
+    if let Some(parent) = key_file_path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| Error::Io(e))?;
+    }
+    
+    // Write the key to the file
+    std::fs::write(&key_file_path, base64_key).map_err(|e| Error::Io(e))?;
+    
+    // Set restrictive permissions on Unix-like systems
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(&key_file_path)
+            .map_err(|e| Error::Io(e))?
+            .permissions();
+        // Only owner can read/write
+        perms.set_mode(0o600);
+        std::fs::set_permissions(&key_file_path, perms)
+            .map_err(|e| Error::Io(e))?;
+    }
+    
+    Ok(())
+}
+
+/// Gets the path to the secure key file
+fn get_secure_key_path() -> Result<std::path::PathBuf, Error> {
+    dirs::config_dir()
+        .map(|dir| dir.join("maowbot").join("master.key"))
+        .ok_or_else(|| Error::Keyring("Could not determine config directory".to_string()))
 }

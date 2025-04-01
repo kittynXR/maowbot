@@ -37,3 +37,4 @@ format = "^0.2"
 base64 = { workspace = true }
 rand = { workspace = true }
 keyring = { workspace = true }
+dirs = { workspace = true }
