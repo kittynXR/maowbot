@@ -51,10 +51,10 @@ pub async fn handle_stream_online(
                 {
                     dc_cred.user_name
                 } else {
-                    "cutecat_chat".to_string()
+                    "unknown_Us3r".to_string()
                 }
             } else {
-                "cutecat_chat".to_string()
+                "unknown_Us3r".to_string()
             };
 
             // If any ping roles are set, format them as Discord role mentions.

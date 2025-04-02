@@ -161,7 +161,7 @@ pub async fn handle_discord_command(args: &[&str], bot_api: &Arc<dyn BotApi>) ->
                 "".to_string()
             };
 
-            match bot_api.send_discord_message("cutecat_chat", server_id, channel_id, &text).await {
+            match bot_api.send_discord_message("vrcgirl", server_id, channel_id, &text).await {
                 Ok(_) => format!("Sent message to channel {channel_id}: '{text}'"),
                 Err(e) => format!("Error sending Discord message => {e}"),
             }
@@ -351,7 +351,7 @@ async fn handle_discord_event_command(args: &[&str], bot_api: &Arc<dyn BotApi>) 
                 g.to_string()
             } else {
                 // Use a default account's single guild if available
-                let single_account_name = "cutecat_chat";
+                let single_account_name = "vrcgirl";
                 match bot_api.list_discord_guilds(single_account_name).await {
                     Ok(guilds) => {
                         if guilds.len() == 1 {
