@@ -61,8 +61,6 @@ pub struct OscManagerStatus {
     pub listening_port: Option<u16>,
     pub is_oscquery_running: bool,
     pub oscquery_port: Option<u16>,
-    /// In the old code, this was the discovered peers from `mdns-sd`.
-    /// We can just return an empty Vec now or remove it entirely.
     pub discovered_peers: Vec<String>,
     pub vrchat_connected: bool,
     pub vrchat_info: Option<VRChatConnectionInfo>,

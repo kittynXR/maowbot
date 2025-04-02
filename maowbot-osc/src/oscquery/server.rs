@@ -247,6 +247,7 @@ impl OscQueryServer {
                 &instance_name,
                 "_oscjson._tcp.local.",
                 self.http_port,
+                // Ipv4Addr::new(10, 11, 11, 123),
                 Ipv4Addr::new(127, 0, 0, 1),
             );
         }
