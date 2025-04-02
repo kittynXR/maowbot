@@ -177,7 +177,8 @@ impl OscQueryServer {
                 &instance_name,
                 "_osc._udp.local.",
                 self.osc_port,
-                Ipv4Addr::new(127, 0, 0, 1),
+                Ipv4Addr::new(10, 11, 11, 123),
+                // Ipv4Addr::new(127, 0, 0, 1),
             );
             // Advertise `_oscjson._tcp.local.` with our HTTP port
             ms.advertise(
@@ -185,6 +186,7 @@ impl OscQueryServer {
                 "_oscjson._tcp.local.",
                 self.http_port,
                 Ipv4Addr::new(127, 0, 0, 1),
+                // Ipv4Addr::new(10, 11, 11, 123),
             );
         }
         if let Some(ms) = &mut self.mdns_service {
@@ -241,7 +243,7 @@ impl OscQueryServer {
     async fn rebuild_root_node(&self) -> Result<()> {
         let methods = self.methods.lock().await.clone();
         let mut root = OSCQueryNode {
-            DESCRIPTION: None,
+            DESCRIPTION: Option::from("root node".to_string()),
             FULL_PATH: "/".to_string(),
             ACCESS: 0,
             CONTENTS: HashMap::new(),
@@ -265,7 +267,7 @@ impl OscQueryServer {
             root.CONTENTS.insert("avatar".to_string(), OSCQueryNode {
                 DESCRIPTION: None,
                 FULL_PATH: "/avatar".to_string(),
-                ACCESS: 0,
+                ACCESS: 2,
                 CONTENTS: avatar_change_contents,
                 TYPE: None,
                 VALUE: vec![],
