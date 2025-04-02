@@ -216,7 +216,7 @@ pub async fn query_vrchat_oscquery(
     port: u16,
     _filter: Option<&str>,
 ) -> Result<Option<(String, u16)>> {
-    let url = format!("http://{}:{}/host_info", host, port);
+    let url = format!("http://{}:{}/HOST_INFO", host, port);
     let response = reqwest::get(&url)
         .await
         .map_err(|e| OscError::OscQueryError(format!("HTTP error: {}", e)))?;
