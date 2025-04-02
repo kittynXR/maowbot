@@ -48,13 +48,24 @@ pub struct OSCMethod {
 }
 
 /// Host info response for /HOST_INFO
+// We replace the old OSCQueryHostInfo with a custom struct that fixes field ordering.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OSCQueryHostInfo {
     pub NAME: String,
+    pub EXTENSIONS: HostExtensions,
     pub OSC_IP: String,
     pub OSC_PORT: u16,
     pub OSC_TRANSPORT: String,
-    pub EXTENSIONS: HashMap<String, bool>,
+}
+
+// A small helper struct so we can preserve extension ordering exactly.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HostExtensions {
+    pub ACCESS: bool,
+    pub CLIPMODE: bool,
+    pub RANGE: bool,
+    pub TYPE: bool,
+    pub VALUE: bool,
 }
 
 /// Node in the OSCQuery “directory” tree

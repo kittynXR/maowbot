@@ -9,9 +9,7 @@ use tokio::sync::Mutex;
 use warp::http::StatusCode;
 use warp::{Filter, Rejection, Reply};
 use tracing::{info, error};
-use crate::oscquery::models::{
-    OSCMethod, OSCMethodAccessType, OSCMethodValueType, OSCQueryHostInfo, OSCQueryNode
-};
+use crate::oscquery::models::{HostExtensions, OSCMethod, OSCMethodAccessType, OSCMethodValueType, OSCQueryHostInfo, OSCQueryNode};
 use crate::{Result, OscError};
 use crate::oscquery::mdns::{MdnsService, AdvertisedService};
 use tokio_util::compat::TokioAsyncWriteCompatExt;
@@ -97,7 +95,7 @@ impl OscQueryServer {
             }
         });
         let me_osc_port = self.osc_port;
-        let route_host_info = warp::path("host_info").and_then(move || async move {
+        let route_host_info = warp::path("HOST_INFO").and_then(move || async move {
             let info = build_host_info(me_osc_port);
             match serde_json::to_string(&info) {
                 Ok(json) => {
@@ -336,15 +334,17 @@ impl OscQueryServer {
     }
 }
 fn build_host_info(osc_port: u16) -> OSCQueryHostInfo {
-    let mut exts = HashMap::new();
-    exts.insert("ACCESS".to_string(), true);
-    exts.insert("VALUE".to_string(), true);
-    exts.insert("DESCRIPTION".to_string(), true);
     OSCQueryHostInfo {
-        NAME: "MaowBot OSC Server".into(),
-        OSC_IP: "127.0.0.1".into(),
+        NAME: "MaowBot OSC Server".to_string(),
+        EXTENSIONS: HostExtensions {
+            ACCESS: true,
+            CLIPMODE: false,
+            RANGE: true,
+            TYPE: true,
+            VALUE: true,
+        },
+        OSC_IP: "127.0.0.1".to_string(),
         OSC_PORT: osc_port,
-        OSC_TRANSPORT: "UDP".into(),
-        EXTENSIONS: exts,
+        OSC_TRANSPORT: "UDP".to_string(),
     }
 }

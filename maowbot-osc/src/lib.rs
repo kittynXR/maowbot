@@ -73,6 +73,8 @@ pub struct OscReceiver {
     pub incoming_tx: mpsc::UnboundedSender<OscPacket>,
     pub incoming_rx: Option<mpsc::UnboundedReceiver<OscPacket>>,
     shutdown_tx: Option<tokio::sync::watch::Sender<bool>>,
+
+    pub bound_port: u16,
 }
 impl OscReceiver {
     /// Bind a UDP socket on the given port. If `port == 0`, we bind an ephemeral port.
@@ -80,27 +82,33 @@ impl OscReceiver {
     pub fn new(port: u16) -> Result<Self> {
         let (tx, rx) = mpsc::unbounded_channel();
         let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+
         let bind_addr = SocketAddr::from(([0, 0, 0, 0], port));
         let socket = UdpSocket::bind(bind_addr)
             .map_err(|e| OscError::IoError(format!("Could not bind: {}", e)))?;
         socket
             .set_nonblocking(true)
             .map_err(|e| OscError::IoError(format!("Failed set_nonblocking: {}", e)))?;
+
         let actual_port = socket
             .local_addr()
             .map_err(|e| OscError::IoError(format!("Could not get local_addr: {}", e)))?
             .port();
+
         tracing::info!("OSC receiver listening on UDP port {actual_port} (requested {port})");
+
         let tx_clone = tx.clone();
         let handle = tokio::spawn(async move {
             let mut buf = [0u8; 4096];
             tracing::info!("OSC receiver task is running...");
             let mut shutdown_rx = shutdown_rx;
+
             loop {
                 if *shutdown_rx.borrow() {
                     tracing::info!("OSC receiver got shutdown signal, exiting");
                     break;
                 }
+
                 tokio::select! {
                     changed = shutdown_rx.changed() => {
                         if changed.is_ok() && *shutdown_rx.borrow() {
@@ -141,14 +149,20 @@ impl OscReceiver {
                     }
                 }
             }
+
             tracing::info!("OSC receiver task exited cleanly");
         });
+
         Ok(Self {
             receiver_handle: handle,
             incoming_tx: tx,
             incoming_rx: Some(rx),
             shutdown_tx: Some(shutdown_tx),
+            bound_port: actual_port, // Store the real port we got.
         })
+    }
+    pub fn port(&self) -> u16 {
+        self.bound_port
     }
     pub fn take_receiver(&mut self) -> Option<mpsc::UnboundedReceiver<OscPacket>> {
         self.incoming_rx.take()
@@ -210,6 +224,7 @@ impl MaowOscManager {
                 "Found VRChat: UDP={} (send), TCP={} (OSCQuery)",
                 info.osc_send_port, info.oscquery_port
             );
+
             // If VRChat's "osc_receive_port" is zero, try /host_info or fallback
             let maybe_port = if info.osc_receive_port == 0 {
                 match query_vrchat_oscquery(
@@ -227,6 +242,7 @@ impl MaowOscManager {
             } else {
                 info.osc_receive_port
             };
+
             VRChatConnectionInfo {
                 oscquery_host: info.oscquery_host,
                 oscquery_port: info.oscquery_port,
@@ -242,43 +258,43 @@ impl MaowOscManager {
                 osc_receive_port: 9001,
             }
         };
+
         {
             let mut vrc_guard = self.vrchat_info.lock().await;
             *vrc_guard = Some(resolved_info.clone());
         }
-        // Start ephemeral OSC receiver for inbound data from VRChat
-        let receiver = OscReceiver::new(0)?;
-        let bound_port = {
-            // We do a separate ephemeral port for demonstration,
-            // but you can just read from receiver if you want:
-            let sock = std::net::UdpSocket::bind("0.0.0.0:0")
-                .map_err(|e| OscError::IoError(e.to_string()))?;
-            sock.local_addr()
-                .map_err(|e| OscError::IoError(e.to_string()))?
-                .port()
-        };
+
+        // 1) Start ephemeral OSC receiver for inbound data from VRChat
+        let receiver = OscReceiver::new(0)?; // 0 => ephemeral
+        let actual_port = receiver.port();
         {
             let mut lock_inner = self.inner.lock().await;
-            lock_inner.listening_port = Some(bound_port);
+            lock_inner.listening_port = Some(actual_port);
             lock_inner.is_running = true;
         }
         {
             let mut guard = self.osc_receiver.lock().await;
             *guard = Some(receiver);
-            info!("OSC receiver started on ephemeral port {}", bound_port);
+            info!("OSC receiver started on ephemeral port {}", actual_port);
         }
-        // Start our OSCQuery HTTP server on ephemeral port as well:
+
+        // 2) Start our OSCQuery HTTP server on ephemeral port
         {
             let mut server = self.oscquery_server.lock().await;
-            server.set_osc_port(bound_port);
+            // We now report the same ephemeral port we actually bound:
+            server.set_osc_port(actual_port);
+
+
             server.start().await?;
             info!(
                 "Local OSCQuery server is running on ephemeral port {}",
                 server.http_port
             );
-            // Now advertise ourselves:
+
+            // 3) Advertise ourselves in mDNS
             server.advertise_as_maow().await?;
         }
+
         Ok(())
     }
     /// Stop watchers, servers, etc.
