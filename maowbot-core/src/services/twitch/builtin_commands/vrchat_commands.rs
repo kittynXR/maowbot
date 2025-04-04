@@ -88,11 +88,22 @@ Published: {} | Last Updated: {}",
     if let Some(desc) = w.description {
         let desc_clean = desc.trim();
         if !desc_clean.is_empty() {
-            let max_len = 450;
+            let max_len = 400; // Reduced from 450 to be safer with multi-byte characters
             let mut remaining = desc_clean;
             let mut first_chunk = true;
             while !remaining.is_empty() {
-                let chunk_size = remaining.len().min(max_len);
+                // Take as many bytes as possible without exceeding max_len
+                let chunk_size = if remaining.len() <= max_len {
+                    remaining.len() 
+                } else {
+                    // Find the last valid char boundary before max_len
+                    let mut size = max_len;
+                    while !remaining.is_char_boundary(size) && size > 0 {
+                        size -= 1;
+                    }
+                    size
+                };
+                
                 let chunk_text = &remaining[..chunk_size];
                 let prefix = if first_chunk {
                     first_chunk = false;
