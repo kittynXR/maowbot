@@ -32,6 +32,11 @@ impl AiApiImpl {
 
 #[async_trait]
 impl AiApi for AiApiImpl {
+    /// Get the AI service for direct operations
+    async fn get_ai_service(&self) -> Result<Option<Arc<dyn std::any::Any + Send + Sync>>, Error> {
+        Ok(self.ai_service.clone().map(|svc| svc as Arc<dyn std::any::Any + Send + Sync>))
+    }
+
     /// Generate a chat completion
     async fn generate_chat(&self, messages: Vec<Value>) -> Result<String, Error> {
         match &self.ai_service {

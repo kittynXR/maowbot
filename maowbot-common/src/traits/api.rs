@@ -310,6 +310,14 @@ pub trait DiscordApi {
 /// Trait for AI functionality
 #[async_trait]
 pub trait AiApi: Send + Sync {
+    /// Get direct access to the AI service
+    /// This is used for more advanced operations like trigger management
+    /// Returns a dyn Any that should be cast to the actual AI service type
+    async fn get_ai_service(&self) -> Result<Option<std::sync::Arc<dyn std::any::Any + Send + Sync>>, Error> {
+        // Default implementation returns None (no service available)
+        Ok(None)
+    }
+    
     /// Generate a chat completion
     async fn generate_chat(&self, messages: Vec<serde_json::Value>) -> Result<String, Error>;
     

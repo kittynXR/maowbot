@@ -32,9 +32,7 @@ CREATE TABLE ai_credentials (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
--- Ensure only one default credential per provider
-CREATE UNIQUE INDEX ai_credentials_provider_default_idx ON ai_credentials (provider_id) 
-    WHERE is_default = true;
+-- No constraints on defaults, will be enforced through application logic
 
 ---------------------------------------------------------------------------
 -- ai_models
@@ -53,9 +51,7 @@ CREATE TABLE ai_models (
 
 -- Ensure model names are unique per provider
 CREATE UNIQUE INDEX ON ai_models (provider_id, LOWER(name));
--- Ensure only one default model per provider
-CREATE UNIQUE INDEX ai_models_provider_default_idx ON ai_models (provider_id) 
-    WHERE is_default = true;
+-- No constraints on defaults, will be enforced through application logic
 
 ---------------------------------------------------------------------------
 -- ai_agents (MCPs)
@@ -137,9 +133,7 @@ CREATE TABLE ai_system_prompts (
 
 -- Ensure prompt names are unique
 CREATE UNIQUE INDEX ON ai_system_prompts (LOWER(name));
--- Only one default system prompt
-CREATE UNIQUE INDEX ai_system_prompts_default_idx ON ai_system_prompts
-    WHERE is_default = true;
+-- No constraints on defaults, will be enforced through application logic
 
 ---------------------------------------------------------------------------
 -- ai_memory
