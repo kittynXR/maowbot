@@ -99,6 +99,12 @@ impl TwitchEventSubPlatform {
                     if need_reconnect {
                         warn!("[TwitchEventSub] 'session_reconnect' triggered -> reconnecting...");
                         self.connection_status = ConnectionStatus::Reconnecting;
+                        // Close the existing connection properly first
+                        if let Err(e) = ws.close(None).await {
+                            warn!("[TwitchEventSub] Error closing websocket: {}", e);
+                        }
+                        // Add a small delay before reconnecting to ensure socket is closed
+                        sleep(Duration::from_secs(1)).await;
                         continue;
                     } else {
                         info!("[TwitchEventSub] WebSocket read loop ended normally. Exiting loop.");
