@@ -14,6 +14,7 @@ pub mod vrchat;
 pub mod analytics;
 pub mod link_request;
 pub mod discord;
+pub mod ai;
 
 pub use user_analysis::UserAnalysis;
 pub use command::{Command, CommandUsage};

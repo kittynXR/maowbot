@@ -9,6 +9,10 @@ use crate::models::discord::{DiscordAccountRecord, DiscordChannelRecord, Discord
 use crate::models::link_request::LinkRequest;
 use crate::models::platform::{Platform, PlatformConfig, PlatformCredential, PlatformIdentity};
 use crate::models::user::{User, UserAuditLogEntry};
+use crate::models::ai::{
+    AiProvider, AiCredential, AiModel, AiTrigger, AiMemory, AiConfiguration, 
+    AiTriggerWithDetails, AiAgent, AiAction, AiSystemPrompt, AiAgentWithDetails
+};
 
 #[async_trait]
 pub trait Repository<T> {
@@ -34,6 +38,110 @@ pub trait PlatformIdentityRepository {
         &self,
         user_id: &str
     ) -> impl std::future::Future<Output = Result<Vec<PlatformIdentity>, Error>> + Send;
+}
+
+/// Repository trait for managing AI providers
+#[async_trait]
+pub trait AiProviderRepository: Send + Sync {
+    async fn create_provider(&self, provider: &AiProvider) -> Result<(), Error>;
+    async fn get_provider(&self, provider_id: Uuid) -> Result<Option<AiProvider>, Error>;
+    async fn get_provider_by_name(&self, name: &str) -> Result<Option<AiProvider>, Error>;
+    async fn list_providers(&self) -> Result<Vec<AiProvider>, Error>;
+    async fn update_provider(&self, provider: &AiProvider) -> Result<(), Error>;
+    async fn delete_provider(&self, provider_id: Uuid) -> Result<(), Error>;
+}
+
+/// Repository trait for managing AI credentials
+#[async_trait]
+pub trait AiCredentialRepository: Send + Sync {
+    async fn create_credential(&self, credential: &AiCredential) -> Result<(), Error>;
+    async fn get_credential(&self, credential_id: Uuid) -> Result<Option<AiCredential>, Error>;
+    async fn list_credentials_for_provider(&self, provider_id: Uuid) -> Result<Vec<AiCredential>, Error>;
+    async fn get_default_credential_for_provider(&self, provider_id: Uuid) -> Result<Option<AiCredential>, Error>;
+    async fn update_credential(&self, credential: &AiCredential) -> Result<(), Error>;
+    async fn set_default_credential(&self, credential_id: Uuid) -> Result<(), Error>;
+    async fn delete_credential(&self, credential_id: Uuid) -> Result<(), Error>;
+}
+
+/// Repository trait for managing AI models
+#[async_trait]
+pub trait AiModelRepository: Send + Sync {
+    async fn create_model(&self, model: &AiModel) -> Result<(), Error>;
+    async fn get_model(&self, model_id: Uuid) -> Result<Option<AiModel>, Error>;
+    async fn get_model_by_name(&self, provider_id: Uuid, name: &str) -> Result<Option<AiModel>, Error>;
+    async fn list_models_for_provider(&self, provider_id: Uuid) -> Result<Vec<AiModel>, Error>;
+    async fn get_default_model_for_provider(&self, provider_id: Uuid) -> Result<Option<AiModel>, Error>;
+    async fn update_model(&self, model: &AiModel) -> Result<(), Error>;
+    async fn set_default_model(&self, model_id: Uuid) -> Result<(), Error>;
+    async fn delete_model(&self, model_id: Uuid) -> Result<(), Error>;
+}
+
+/// Repository trait for managing AI agents (MCPs)
+#[async_trait]
+pub trait AiAgentRepository: Send + Sync {
+    async fn create_agent(&self, agent: &AiAgent) -> Result<(), Error>;
+    async fn get_agent(&self, agent_id: Uuid) -> Result<Option<AiAgent>, Error>;
+    async fn get_agent_by_name(&self, name: &str) -> Result<Option<AiAgent>, Error>;
+    async fn list_agents(&self) -> Result<Vec<AiAgent>, Error>;
+    async fn get_agent_with_details(&self, agent_id: Uuid) -> Result<Option<AiAgentWithDetails>, Error>;
+    async fn update_agent(&self, agent: &AiAgent) -> Result<(), Error>;
+    async fn delete_agent(&self, agent_id: Uuid) -> Result<(), Error>;
+}
+
+/// Repository trait for managing AI actions
+#[async_trait]
+pub trait AiActionRepository: Send + Sync {
+    async fn create_action(&self, action: &AiAction) -> Result<(), Error>;
+    async fn get_action(&self, action_id: Uuid) -> Result<Option<AiAction>, Error>;
+    async fn get_action_by_name(&self, agent_id: Uuid, name: &str) -> Result<Option<AiAction>, Error>;
+    async fn list_actions_for_agent(&self, agent_id: Uuid) -> Result<Vec<AiAction>, Error>;
+    async fn update_action(&self, action: &AiAction) -> Result<(), Error>;
+    async fn delete_action(&self, action_id: Uuid) -> Result<(), Error>;
+}
+
+/// Repository trait for managing AI system prompts
+#[async_trait]
+pub trait AiSystemPromptRepository: Send + Sync {
+    async fn create_prompt(&self, prompt: &AiSystemPrompt) -> Result<(), Error>;
+    async fn get_prompt(&self, prompt_id: Uuid) -> Result<Option<AiSystemPrompt>, Error>;
+    async fn get_prompt_by_name(&self, name: &str) -> Result<Option<AiSystemPrompt>, Error>;
+    async fn get_default_prompt(&self) -> Result<Option<AiSystemPrompt>, Error>;
+    async fn list_prompts(&self) -> Result<Vec<AiSystemPrompt>, Error>;
+    async fn update_prompt(&self, prompt: &AiSystemPrompt) -> Result<(), Error>;
+    async fn set_default_prompt(&self, prompt_id: Uuid) -> Result<(), Error>;
+    async fn delete_prompt(&self, prompt_id: Uuid) -> Result<(), Error>;
+}
+
+/// Repository trait for managing AI triggers
+#[async_trait]
+pub trait AiTriggerRepository: Send + Sync {
+    async fn create_trigger(&self, trigger: &AiTrigger) -> Result<(), Error>;
+    async fn get_trigger(&self, trigger_id: Uuid) -> Result<Option<AiTrigger>, Error>;
+    async fn get_trigger_by_pattern(&self, pattern: &str) -> Result<Option<AiTrigger>, Error>;
+    async fn list_triggers(&self) -> Result<Vec<AiTrigger>, Error>;
+    async fn list_triggers_for_model(&self, model_id: Uuid) -> Result<Vec<AiTrigger>, Error>;
+    async fn list_triggers_for_agent(&self, agent_id: Uuid) -> Result<Vec<AiTrigger>, Error>;
+    async fn list_triggers_with_details(&self) -> Result<Vec<AiTriggerWithDetails>, Error>;
+    async fn update_trigger(&self, trigger: &AiTrigger) -> Result<(), Error>;
+    async fn delete_trigger(&self, trigger_id: Uuid) -> Result<(), Error>;
+}
+
+/// Repository trait for managing AI memory
+#[async_trait]
+pub trait AiMemoryRepository: Send + Sync {
+    async fn create_memory(&self, memory: &AiMemory) -> Result<(), Error>;
+    async fn get_memory(&self, memory_id: Uuid) -> Result<Option<AiMemory>, Error>;
+    async fn list_memories_for_user(&self, user_id: Uuid, limit: i64) -> Result<Vec<AiMemory>, Error>;
+    async fn delete_memory(&self, memory_id: Uuid) -> Result<(), Error>;
+    async fn delete_user_memories(&self, user_id: Uuid) -> Result<(), Error>;
+    async fn delete_old_memories(&self, older_than: DateTime<Utc>) -> Result<i64, Error>;
+}
+
+/// Repository trait for retrieving AI configurations
+#[async_trait]
+pub trait AiConfigurationRepository: Send + Sync {
+    async fn get_default_configuration(&self) -> Result<Option<AiConfiguration>, Error>;
+    async fn get_configuration_for_provider(&self, provider_name: &str) -> Result<Option<AiConfiguration>, Error>;
 }
 
 
