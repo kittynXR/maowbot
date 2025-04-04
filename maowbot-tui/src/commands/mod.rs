@@ -4,6 +4,7 @@ use crate::tui_module::TuiModule;
 use crate::help;
 
 mod account;
+mod ai;
 mod connectivity;
 mod platform;
 mod plugin;
@@ -165,6 +166,11 @@ pub async fn dispatch_async(
         // NEW:
         "discord" => {
             let msg = discord::handle_discord_command(args, bot_api).await;
+            (false, Some(msg))
+        }
+
+        "ai" => {
+            let msg = ai::handle_ai_command(args, bot_api).await;
             (false, Some(msg))
         }
 

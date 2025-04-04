@@ -11,7 +11,7 @@ use std::time::Instant;
 use futures_util::StreamExt;
 use libloading::{Library, Symbol};
 use tokio::sync::{mpsc::UnboundedSender, Mutex as AsyncMutex};
-use tracing::{info, error};
+use tracing::{info, error, debug};
 
 use crate::Error;
 use crate::eventbus::{BotEvent, EventBus};
@@ -26,7 +26,7 @@ use crate::plugins::types::{
 };
 use crate::repositories::postgres::user::{UserRepository};
 use crate::eventbus::db_logger_handle::DbLoggerControl;
-use maowbot_common::traits::repository_traits::{CommandUsageRepository, DiscordRepository, RedeemUsageRepository};
+use maowbot_common::traits::repository_traits::{CommandUsageRepository, CredentialsRepository, RedeemUsageRepository};
 use crate::platforms::manager::PlatformManager;
 use crate::plugins::manager::plugin_api_impl::build_status_response;
 // or you can keep the function local
@@ -40,6 +40,8 @@ use crate::repositories::postgres::analytics::PostgresAnalyticsRepository;
 use crate::repositories::postgres::discord::PostgresDiscordRepository;
 use crate::repositories::postgres::platform_identity::PlatformIdentityRepository;
 use crate::repositories::postgres::user_analysis::PostgresUserAnalysisRepository;
+use crate::plugins::manager::ai_api_impl::AiApiImpl;
+use maowbot_common::traits::api::AiApi;
 
 /// The main manager that loads/stores plugins, spawns connections,
 /// listens to inbound plugin messages, etc.
@@ -84,11 +86,17 @@ pub struct PluginManager {
     pub redeem_service: Arc<RedeemService>,
     pub command_usage_repo: Arc<dyn CommandUsageRepository + Send + Sync>,
     pub redeem_usage_repo: Arc<dyn RedeemUsageRepository + Send + Sync>,
+    pub credentials_repo: Arc<dyn CredentialsRepository + Send + Sync>,
 
     // ---------------------------------------
     // NEW: reference to the main OSC manager
     // ---------------------------------------
     pub osc_manager: Option<Arc<MaowOscManager>>,
+    
+    // ---------------------------------------
+    // NEW: AI API implementation
+    // ---------------------------------------
+    pub ai_api_impl: Option<crate::plugins::manager::ai_api_impl::AiApiImpl>,
 }
 
 impl PluginManager {
@@ -107,6 +115,8 @@ impl PluginManager {
         redeem_service: Arc<RedeemService>,
         cmd_usage_repo: Arc<dyn CommandUsageRepository + Send + Sync>,
         redeem_usage_repo: Arc<dyn RedeemUsageRepository + Send + Sync>,
+        credentials_repo: Arc<dyn CredentialsRepository + Send + Sync>,
+        ai_api_impl: Option<crate::plugins::manager::ai_api_impl::AiApiImpl>,
     ) -> Self {
         let manager = Self {
             plugins: Arc::new(AsyncMutex::new(Vec::new())),
@@ -131,8 +141,10 @@ impl PluginManager {
             redeem_service,
             command_usage_repo: cmd_usage_repo,
             redeem_usage_repo,
+            credentials_repo,
 
             osc_manager: None, // newly added
+            ai_api_impl, // AI service implementation
         };
         manager.load_plugin_states();
         manager
@@ -154,6 +166,11 @@ impl PluginManager {
 
     pub fn set_osc_manager(&mut self, osc_mgr: Arc<MaowOscManager>) {
         self.osc_manager = Some(osc_mgr);
+    }
+    
+    /// Sets the AI API implementation
+    pub fn set_ai_api_impl(&mut self, ai_impl: crate::plugins::manager::ai_api_impl::AiApiImpl) {
+        self.ai_api_impl = Some(ai_impl);
     }
     /// Subscribes the manager to events from the bus, so we can broadcast them to plugins if needed.
     pub async fn subscribe_to_event_bus(&self, bus: Arc<EventBus>) {
@@ -205,13 +222,16 @@ impl PluginManager {
     }
 
     /// Called internally whenever a ChatMessage event arrives. We can broadcast to plugins if they have a chat capability.
+    /// Additionally, we now check if the message should be processed by the AI service
     async fn handle_chat_event(&self, platform: &str, channel: &str, user: &str, text: &str) {
         use maowbot_proto::plugs::{
             PluginStreamResponse,
             plugin_stream_response::Payload as RespPayload,
             ChatMessage, PluginCapability
         };
+        use maowbot_common::models::platform::Platform as PlatformEnum;
 
+        // First, broadcast the message to all plugins
         let msg = PluginStreamResponse {
             payload: Some(RespPayload::ChatMessage(ChatMessage {
                 platform: platform.to_string(),
@@ -221,6 +241,114 @@ impl PluginManager {
             })),
         };
         self.broadcast(msg, Some(PluginCapability::ReceiveChatEvents)).await;
+        
+        // Now check if we should process this with AI
+        if let Some(ai_impl) = &self.ai_api_impl {
+            // First check if the AI would process this message at all
+            // (most messages won't be AI commands)
+            let ai_service = if let Some(svc) = ai_impl.get_ai_service() {
+                svc
+            } else {
+                debug!("No AI service available for processing");
+                return;
+            };
+            
+            // Check if this message would trigger AI processing
+            let should_process = match ai_service.should_process_with_ai(text).await {
+                true => {
+                    debug!("Message '{}' matches AI trigger prefix", text);
+                    true
+                },
+                false => {
+                    // Most messages don't trigger AI, so this isn't worth logging
+                    return;
+                }
+            };
+            
+            // Convert platform string to Platform enum
+            let platform_enum = match platform {
+                "twitch-irc" => PlatformEnum::TwitchIRC,
+                "twitch" => PlatformEnum::Twitch,
+                "discord" => PlatformEnum::Discord,
+                "vrchat" => PlatformEnum::VRChat,
+                "twitch-eventsub" => PlatformEnum::TwitchEventSub,
+                _ => {
+                    error!("Unknown platform: {}", platform);
+                    return;
+                }
+            };
+            
+            // First, try to get the user using the UserService's get_or_create_user method
+            match self.user_service.get_or_create_user(platform, user, Some(user)).await {
+                Ok(user_data) => {
+                    // Process the message with AI
+                    debug!("Found user, checking if message should be processed by AI");
+                    
+                    // Use the AI service to process the message
+                    match ai_impl.process_user_message(user_data.user_id, text).await {
+                        Ok(ai_response) => {
+                            info!("Got AI response: {}", ai_response);
+                            
+                            // Send the response back to the original channel
+                            if platform == "discord" {
+                                // Get Discord bot credentials
+                                match self.credentials_repo.list_credentials_for_platform(&PlatformEnum::Discord).await {
+                                    Ok(creds) => {
+                                        if let Some(bot_cred) = creds.iter().find(|c| c.is_bot) {
+                                            debug!("Using Discord bot account: {}", bot_cred.user_name);
+                                            
+                                            // Send message using the bot's credential
+                                            match self.platform_manager.send_discord_message(
+                                                &bot_cred.user_name,  // Bot account name
+                                                "",  // Guild ID - empty string for fallback search
+                                                channel,  // Channel name or ID
+                                                &ai_response
+                                            ).await {
+                                                Ok(_) => info!("Sent AI response to Discord channel: {}", channel),
+                                                Err(e) => error!("Failed to send AI response via Discord: {:?}", e),
+                                            }
+                                        } else {
+                                            error!("No Discord bot credential found for sending AI response");
+                                        }
+                                    },
+                                    Err(e) => error!("Failed to get Discord credentials: {:?}", e),
+                                }
+                            } else if platform == "twitch" || platform == "twitch-irc" {
+                                // Get Twitch bot credentials
+                                match self.credentials_repo.list_credentials_for_platform(&PlatformEnum::TwitchIRC).await {
+                                    Ok(creds) => {
+                                        if let Some(bot_cred) = creds.iter().find(|c| c.is_bot) {
+                                            debug!("Using Twitch bot account: {}", bot_cred.user_name);
+                                            
+                                            // Send message using the bot's credential
+                                            match self.platform_manager.send_twitch_irc_message(
+                                                &bot_cred.user_name,
+                                                channel,
+                                                &ai_response
+                                            ).await {
+                                                Ok(_) => info!("Sent AI response to Twitch channel: {}", channel),
+                                                Err(e) => error!("Failed to send AI response via Twitch: {:?}", e),
+                                            }
+                                        } else {
+                                            error!("No Twitch bot credential found for sending AI response");
+                                        }
+                                    },
+                                    Err(e) => error!("Failed to get Twitch credentials: {:?}", e),
+                                }
+                            }
+                        },
+                        Err(e) => {
+                            // Either the message shouldn't be processed by AI,
+                            // or there was an error
+                            debug!("Message not processed by AI: {:?}", e);
+                        }
+                    }
+                },
+                Err(e) => {
+                    error!("Error looking up or creating user for AI processing: {:?}", e);
+                }
+            }
+        }
     }
 
     /// Broadcasts a single `PluginStreamResponse` to all loaded plugins that have `required_cap` (if specified).
@@ -641,3 +769,6 @@ impl PluginManager {
         Ok(())
     }
 }
+
+// We're not implementing the AiApi trait for PluginManager directly
+// to avoid lifetime issues. Instead, we'll use an AiApiImpl member.

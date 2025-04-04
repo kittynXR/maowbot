@@ -82,6 +82,14 @@ pub enum Error {
     // <-- ADD THIS NEW VARIANT FOR `rcgen::Error` -->
     #[error("Certificate generation error: {0}")]
     Certificate(#[from] rcgen::Error),
+    
+    // Added for AI module
+    #[error("Internal error: {0}")]
+    Internal(String),
+    
+    // Added for User errors
+    #[error("User error: {0}")]
+    User(String),
 }
 
 impl From<String> for Error {

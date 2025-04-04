@@ -42,6 +42,7 @@ pub struct DiscordMessageEvent {
     pub username: String,
     pub text: String,
     pub user_roles: Vec<String>,
+    pub guild_id: Option<String>,
 }
 
 /// The shard runner reads gateway events and updates the cache.
@@ -150,12 +151,15 @@ async fn shard_runner(
                             .map(|m| m.roles.iter().map(|r| r.to_string()).collect())
                             .unwrap_or_default();
 
+                        let guild_id = ch_obj.guild_id.map(|id| id.to_string());
+                        
                         let _ = tx.send(DiscordMessageEvent {
                             channel: channel_name,
                             user_id: msg.author.id.to_string(),
                             username: msg.author.name.clone(),
                             text: msg.content.clone(),
                             user_roles,
+                            guild_id,
                         });
                     }
                     Event::InteractionCreate(inter_create) => {
@@ -393,6 +397,11 @@ impl DiscordPlatform {
         embed: &maowbot_common::models::discord::DiscordEmbed,
         content: Option<&str>
     ) -> Result<(), Error> {
+        // Channel must be a numeric ID for Discord API
+        if !channel_id_str.chars().all(|c| c.is_ascii_digit()) {
+            return Err(Error::Platform(format!("Channel must be an ID, but got a name: {}", channel_id_str)));
+        }
+        
         let channel_id_u64: u64 = channel_id_str.parse().map_err(|_| {
             Error::Platform(format!("Invalid channel ID: {}", channel_id_str))
         })?;
@@ -521,6 +530,11 @@ impl PlatformIntegration for DiscordPlatform {
 
     /// For 0.16, `.content(...)` is not a `Result`. No `?` needed.
     async fn send_message(&self, channel: &str, message: &str) -> Result<(), Error> {
+        // Channel must be a numeric ID for Discord API
+        if !channel.chars().all(|c| c.is_ascii_digit()) {
+            return Err(Error::Platform(format!("Channel must be an ID, but got a name: {}", channel)));
+        }
+        
         let channel_id_u64: u64 = channel.parse().map_err(|_| {
             Error::Platform(format!("Invalid channel ID: {}", channel))
         })?;

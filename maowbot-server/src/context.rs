@@ -64,6 +64,7 @@ pub struct ServerContext {
     pub osc_manager: Arc<MaowOscManager>,
     pub robo_control: Arc<Mutex<RoboControlSystem>>,
     pub oscquery_server: Arc<Mutex<OscQueryServer>>,
+    pub ai_service: Option<Arc<maowbot_ai::plugins::ai_service::AiService>>,
 }
 
 impl ServerContext {
@@ -215,6 +216,28 @@ impl ServerContext {
             discord_repo.clone(),
         ));
 
+        // Create the AI service
+        let ai_service = match maowbot_ai::plugins::ai_service::AiService::new(
+            user_repo_arc.clone(),
+            creds_repo_arc.clone()
+        ).await {
+            Ok(service) => {
+                info!("AI service initialized successfully");
+                Some(Arc::new(service))
+            },
+            Err(e) => {
+                error!("Failed to initialize AI service: {:?}", e);
+                None
+            }
+        };
+        
+        // Create a real AI API implementation instead of a stub
+        let ai_api_impl = if let Some(ai_svc) = ai_service.clone() {
+            maowbot_core::plugins::manager::ai_api_impl::AiApiImpl::new(ai_svc.clone())
+        } else {
+            maowbot_core::plugins::manager::ai_api_impl::AiApiImpl::new_stub()
+        };
+        
         // 7) Plugin manager
         let mut plugin_manager = PluginManager::new(
             args.plugin_passphrase.clone(),
@@ -229,7 +252,9 @@ impl ServerContext {
             command_service.clone(),
             redeem_service.clone(),
             cmd_usage_repo,
-            redeem_usage_repo
+            redeem_usage_repo,
+            creds_repo_arc.clone(),
+            Some(ai_api_impl.clone())
         );
         // Let plugin manager see the event bus
         plugin_manager.subscribe_to_event_bus(event_bus.clone());
@@ -282,6 +307,7 @@ impl ServerContext {
             osc_manager: osc_manager_arc.clone(),
             robo_control,
             oscquery_server: Arc::clone(&osc_manager_arc.oscquery_server),
+            ai_service,
         })
     }
 

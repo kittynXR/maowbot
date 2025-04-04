@@ -12,6 +12,7 @@ maowbot-core = { path = "../maowbot-core" }
 maowbot-proto = { path = "../maowbot-proto" }
 maowbot-tui = { path = "../maowbot-tui" }
 maowbot_osc = { path = "../maowbot-osc" }
+maowbot-ai = { path = "../maowbot-ai" }
 
 # plus any additional you need
 sqlx = { workspace = true }
@@ -25,10 +26,12 @@ clap = { workspace = true }
 
 anyhow = { workspace = true }
 serde = { workspace = true }
+serde_json = { workspace = true }
 
 tonic = { workspace = true }
 tokio-stream = { workspace = true }
 futures-util = { workspace = true }
+async-trait = { workspace = true }
 rcgen = { workspace = true }
 if-addrs = "^0.13"
 
@@ -38,3 +41,4 @@ base64 = { workspace = true }
 rand = { workspace = true }
 keyring = { workspace = true }
 dirs = { workspace = true }
+rosc = { workspace = true }

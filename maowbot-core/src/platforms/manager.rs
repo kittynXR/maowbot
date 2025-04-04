@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::task::JoinHandle;
-use tracing::{info, error, warn};
+use tracing::{info, error, warn, debug};
 use tokio::sync::Mutex as AsyncMutex;
 use std::sync::Mutex;
 use twilight_cache_inmemory::InMemoryCache;
@@ -212,6 +212,13 @@ impl PlatformManager {
                 loop {
                     match cloned_discord2.next_message_event().await {
                         Some(msg_event) => {
+                            // Include guild_id in metadata if available
+                            let metadata: Vec<String> = if let Some(guild_id) = &msg_event.guild_id {
+                                vec![format!("guild_id:{}", guild_id)]
+                            } else {
+                                Vec::new()
+                            };
+                            
                             if let Err(e) = msg_svc
                                 .process_incoming_message(
                                     "discord",
@@ -219,7 +226,8 @@ impl PlatformManager {
                                     &msg_event.user_id,
                                     Some(&msg_event.username),
                                     &msg_event.user_roles,
-                                    &msg_event.text
+                                    &msg_event.text,
+                                    &metadata
                                 )
                                 .await
                             {
@@ -301,6 +309,7 @@ impl PlatformManager {
                         Some(&display_name),
                         &[],
                         &text,
+                        &[],
                     )
                     .await
                 {
@@ -355,6 +364,7 @@ impl PlatformManager {
                         Some(&display_name),
                         &[],
                         &text,
+                        &[],
                     )
                     .await
                 {
@@ -419,6 +429,7 @@ impl PlatformManager {
                             Some(&display_name),
                             &roles,
                             &text,
+                            &[],
                         )
                         .await
                     {
@@ -606,21 +617,89 @@ impl PlatformManager {
         }
     }
 
+    /// Find Discord channel ID by channel name for given guild
+    pub async fn find_discord_channel_id(
+        &self,
+        account_name: &str,
+        guild_id: &str, 
+        channel_name: &str
+    ) -> Result<Option<String>, Error> {
+        // Try to get cache
+        let cache = self.get_discord_cache(account_name).await?;
+        
+        debug!("Looking for channel '{}' in guild_id: '{}'", channel_name, guild_id);
+        
+        // First search with guild context if available
+        if !guild_id.is_empty() {
+            debug!("Searching for channel with guild context");
+            for channel_ref in cache.iter().channels() {
+                if let Some(name) = &channel_ref.value().name {
+                    if name.eq_ignore_ascii_case(channel_name) {
+                        if let Some(channel_guild_id) = channel_ref.value().guild_id {
+                            // Parse the guild_id
+                            if let Ok(guild_id_u64) = guild_id.parse::<u64>() {
+                                let guild_id_twilight = twilight_model::id::Id::new(guild_id_u64);
+                                if channel_guild_id == guild_id_twilight {
+                                    debug!("Found channel '{}' (ID: {}) in specified guild", 
+                                           name, channel_ref.key());
+                                    return Ok(Some(channel_ref.key().to_string()));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        // If we couldn't find a match with guild context, or guild_id is empty,
+        // try searching across all guilds (less accurate but works as fallback)
+        debug!("Falling back to searching all guilds for channel '{}'", channel_name);
+        for channel_ref in cache.iter().channels() {
+            if let Some(name) = &channel_ref.value().name {
+                if name.eq_ignore_ascii_case(channel_name) {
+                    debug!("Found channel '{}' (ID: {}) in some guild", 
+                           name, channel_ref.key());
+                    return Ok(Some(channel_ref.key().to_string()));
+                }
+            }
+        }
+        
+        debug!("No channel found with name '{}'", channel_name);
+        // No matching channel found
+        Ok(None)
+    }
+    
     pub async fn send_discord_message(
         &self,
         account_name: &str,
-        _server_id: &str,
-        channel_id: &str,
+        server_id: &str,
+        channel_id_or_name: &str,
         text: &str
     ) -> Result<(), Error> {
         let user = self.user_svc.find_user_by_global_username(account_name).await?;
         let key = ("discord".to_string(), user.user_id.to_string());
+        
+        // Check if the channel needs to be resolved from a name to an ID
+        let channel_id = if !channel_id_or_name.chars().all(|c| c.is_ascii_digit()) {
+            // Not all digits, so probably a channel name
+            debug!("Channel '{}' is not numeric, attempting to find ID", channel_id_or_name);
+            
+            if let Some(id) = self.find_discord_channel_id(account_name, server_id, channel_id_or_name).await? {
+                debug!("Resolved channel name '{}' to ID '{}'", channel_id_or_name, id);
+                id
+            } else {
+                return Err(Error::Platform(format!("Could not find Discord channel with name: {}", channel_id_or_name)));
+            }
+        } else {
+            // Already an ID
+            channel_id_or_name.to_string()
+        };
 
         let guard = self.active_runtimes.lock().await;
         if let Some(handle) = guard.get(&key) {
             if let Some(discord_arc) = &handle.discord_instance {
                 let discord_lock = discord_arc;
-                discord_lock.send_message(channel_id, text).await
+                discord_lock.send_message(&channel_id, text).await
             } else {
                 Err(Error::Platform(format!(
                     "No DiscordPlatform instance found for account='{account_name}'"
@@ -635,15 +714,31 @@ impl PlatformManager {
     pub async fn send_discord_embed(
         &self,
         account_name: &str,
-        _server_id: &str, // Not needed for this implementation but kept for API consistency
-        channel_id: &str,
+        server_id: &str,
+        channel_id_or_name: &str,
         embed: &DiscordEmbed,
         content: Option<&str>
     ) -> Result<(), Error> {
+        // Check if the channel needs to be resolved from a name to an ID
+        let channel_id = if !channel_id_or_name.chars().all(|c| c.is_ascii_digit()) {
+            // Not all digits, so probably a channel name
+            debug!("Channel '{}' is not numeric, attempting to find ID for embed", channel_id_or_name);
+            
+            if let Some(id) = self.find_discord_channel_id(account_name, server_id, channel_id_or_name).await? {
+                debug!("Resolved channel name '{}' to ID '{}'", channel_id_or_name, id);
+                id
+            } else {
+                return Err(Error::Platform(format!("Could not find Discord channel with name: {}", channel_id_or_name)));
+            }
+        } else {
+            // Already an ID
+            channel_id_or_name.to_string()
+        };
+        
         // Get the Discord platform for the specified account
         let discord = self.get_discord_instance(account_name).await?;
 
         // Send the embed to the channel
-        discord.send_channel_embed(channel_id, embed, content).await
+        discord.send_channel_embed(&channel_id, embed, content).await
     }
 }

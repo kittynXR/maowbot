@@ -64,6 +64,7 @@ impl MessageService {
         maybe_display_name: Option<&str>,
         roles_list: &[String],
         text: &str,
+        metadata: &[String],
     ) -> Result<(), Error> {
         debug!("process_incoming_message() called for platform='{}', channel='{}'", platform, channel);
 
@@ -169,10 +170,32 @@ impl MessageService {
                     }
                 }
                 else if cmd_platform.eq_ignore_ascii_case("discord") {
-                    // Potentially implement "send_discord_message"
-                    // (We have a helper on platform_manager).
-                    // For now, just log:
-                    info!("(Discord) would send multi-line => {:?}", texts);
+                    // Find a Discord bot credential to respond with
+                    let creds = self.credentials_repo.list_credentials_for_platform(&Platform::Discord).await?;
+                    if let Some(bot_cred) = creds.iter().find(|c| c.is_bot) {
+                        // Extract guild ID from metadata if available
+                        debug!("Discord command response metadata: {:?}", metadata);
+                        let guild_id = metadata.iter()
+                            .find(|m| m.starts_with("guild_id:"))
+                            .map(|m| {
+                                let id = m.trim_start_matches("guild_id:");
+                                debug!("Found guild_id in metadata for command: {}", id);
+                                id
+                            })
+                            .unwrap_or("");
+                        
+                        // Send each line as a separate message
+                        for line in texts {
+                            if let Err(e) = self.platform_manager
+                                .send_discord_message(&bot_cred.user_name, guild_id, &cmd_channel, &line)
+                                .await
+                            {
+                                error!("Failed to send command response via Discord => {:?}", e);
+                            }
+                        }
+                    } else {
+                        error!("No Discord bot credential found for command response");
+                    }
                 } else {
                     // If 'twitch' or 'vrchat' or something else,
                     // handle similarly or no-op

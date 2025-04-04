@@ -6,6 +6,8 @@ edition.workspace = true
 [dependencies]
 maowbot-common = { path = "../maowbot-common" }
 maowbot-core = { path = "../maowbot-core" }
+maowbot-ai = { path = "../maowbot-ai" }
+tracing = { workspace = true }
 tokio = { workspace = true }
 
 reqwest = { workspace = true }

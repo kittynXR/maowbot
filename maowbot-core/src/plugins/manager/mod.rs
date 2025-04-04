@@ -16,6 +16,7 @@ pub mod osc_api_impl;
 pub mod drip_api_impl;
 pub mod bot_config_api_impl;
 pub mod discord_api_impl;
+pub mod ai_api_impl;
 
 // re-export the manager
 pub use core::PluginManager;

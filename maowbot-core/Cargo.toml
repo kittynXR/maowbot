@@ -9,6 +9,7 @@ edition.workspace = true
 maowbot-common = { path = "../maowbot-common" }
 maowbot-proto = { path = "../maowbot-proto" }
 maowbot_osc = { path = "../maowbot-osc" }
+maowbot-ai = { path = "../maowbot-ai" }
 
 
 twitch_api = {  workspace = true }

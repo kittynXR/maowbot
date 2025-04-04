@@ -28,6 +28,7 @@ PluginApi
 + DripApi
 + BotConfigApi
 + DiscordApi
++ AiApi
 {
 }
 
@@ -44,7 +45,8 @@ where
     + OscApi
     + DripApi
     + BotConfigApi
-    + DiscordApi,
+    + DiscordApi
+    + AiApi,
 {
     // marker
 }
@@ -303,4 +305,29 @@ pub trait DiscordApi {
     async fn add_discord_event_role(&self, event_name: &str, role_id: &str) -> Result<(), Error>;
     async fn remove_discord_event_role(&self, event_name: &str, role_id: &str) -> Result<(), Error>;
     async fn list_discord_roles(&self, account_name: &str, guild_id: &str) -> Result<Vec<(String, String)>, Error>;
+}
+
+/// Trait for AI functionality
+#[async_trait]
+pub trait AiApi: Send + Sync {
+    /// Generate a chat completion
+    async fn generate_chat(&self, messages: Vec<serde_json::Value>) -> Result<String, Error>;
+    
+    /// Generate a completion with function calling
+    async fn generate_with_functions(&self, messages: Vec<serde_json::Value>) -> Result<serde_json::Value, Error>;
+    
+    /// Process a user message with context
+    async fn process_user_message(&self, user_id: Uuid, message: &str) -> Result<String, Error>;
+    
+    /// Register a new function
+    async fn register_ai_function(&self, name: &str, description: &str) -> Result<(), Error>;
+    
+    /// Set the system prompt
+    async fn set_system_prompt(&self, prompt: &str) -> Result<(), Error>;
+    
+    /// Configure an AI provider with the given configuration
+    async fn configure_ai_provider(&self, config: serde_json::Value) -> Result<(), Error> {
+        // Default implementation just returns an error
+        Err(Error::Internal("configure_ai_provider not implemented".to_string()))
+    }
 }

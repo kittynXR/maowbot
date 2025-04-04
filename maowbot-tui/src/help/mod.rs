@@ -2,6 +2,7 @@
 //! to display usage or subcommand details for any recognized TUI command.
 
 pub mod help_account;
+pub mod help_ai;
 pub mod help_connectivity;
 pub mod help_member;
 pub mod help_platform;
@@ -74,6 +75,9 @@ fn show_general_help() -> String {
   drip <set|list|fit|props> ...
     Manage VRChat avatar parameters (props, fits, etc.) in the Drip system.
 
+  ai <enable|disable|status|openai|anthropic|chat|addtrigger|removetrigger|listtriggers|systemprompt>
+    Configure and interact with AI providers for the chat bot.
+
   quit
     Shut down the TUI (and the entire bot).
 "#;
@@ -86,6 +90,7 @@ pub fn show_command_help(command: &str) -> String {
 
         // Existing help lookups:
         "account" => help_account::ACCOUNT_HELP_TEXT.to_owned(),
+        "ai" => help_ai::AI_HELP_TEXT.to_owned(),
         "autostart" | "start" | "stop" | "chat" => help_connectivity::CONNECTIVITY_HELP_TEXT.to_owned(),
         "platform" => help_platform::PLATFORM_HELP_TEXT.to_owned(),
         "plug" => help_plugin::PLUGIN_HELP_TEXT.to_owned(),
