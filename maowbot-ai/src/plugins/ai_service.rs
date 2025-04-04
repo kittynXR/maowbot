@@ -184,18 +184,71 @@ impl AiService {
     
     /// Check if a message should trigger AI processing
     pub async fn should_process_with_ai(&self, message: &str) -> bool {
-        if !*self.enabled.read().await {
+        tracing::info!("🔍 AI SERVICE: should_process_with_ai called for message: '{}'", message);
+        
+        // Check if AI is enabled
+        let enabled = *self.enabled.read().await;
+        if !enabled {
+            tracing::info!("🔍 AI SERVICE: AI is disabled, skipping message");
             return false;
         }
+        tracing::info!("🔍 AI SERVICE: AI is enabled, checking triggers");
+        
+        // Normalize the message: trim whitespace and convert to lowercase
+        let normalized_message = message.to_lowercase().trim().to_string();
         
         let prefixes = self.trigger_prefixes.read().await;
+        
+        // DEBUG: Always log prefixes
+        tracing::info!("🔍 AI SERVICE: Current trigger prefixes: {:?}", prefixes);
+        tracing::info!("🔍 AI SERVICE: Checking message: '{}', Normalized: '{}'", 
+                       message, normalized_message);
+        
+        // TESTING OVERRIDE: Accept all messages for testing
+        tracing::info!("🔍 AI SERVICE: TESTING - Temporarily accepting all messages");
+        return true;
+        
+        // Normal trigger matching logic below - temporarily bypassed and unreachable
+        // Uncomment and remove the return above when testing is complete
+        /*
         for prefix in prefixes.iter() {
-            if message.to_lowercase().trim().starts_with(&prefix.to_lowercase()) {
+            let normalized_prefix = prefix.to_lowercase();
+            
+            // Check if message starts with the prefix
+            if normalized_message.starts_with(&normalized_prefix) {
+                tracing::info!("🔍 AI SERVICE: AI trigger matched: '{}'", prefix);
                 return true;
+            }
+            
+            // Also check if the message starts with the prefix with a mention
+            // This handles Discord's <@123456> mentions before the bot name
+            if normalized_message.contains(&normalized_prefix) {
+                let mention_pattern = r"<@!?\d+>";
+                let re = regex::Regex::new(mention_pattern).unwrap_or_else(|_| regex::Regex::new("never match").unwrap());
+                
+                // Check if message contains mentions
+                if re.is_match(&normalized_message) {
+                    // Remove mentions and check again
+                    let without_mentions = re.replace_all(&normalized_message, "").trim().to_string();
+                    tracing::info!("🔍 AI SERVICE: Message with mentions removed: '{}'", without_mentions);
+                    
+                    if without_mentions.starts_with(&normalized_prefix) {
+                        tracing::info!("🔍 AI SERVICE: AI trigger matched after removing mentions: '{}'", prefix);
+                        return true;
+                    }
+                }
             }
         }
         
+        // Check for direct mentions of the bot (platform specific)
+        if normalized_message.contains("<@") && normalized_message.contains("maowbot") {
+            tracing::info!("🔍 AI SERVICE: AI trigger matched via direct mention detection");
+            return true;
+        }
+        
+        tracing::info!("🔍 AI SERVICE: No trigger matched");
         false
+        */
     }
     
     /// Raw processing for common API format
@@ -249,7 +302,28 @@ impl AiService {
     
     /// Process user message directly
     pub async fn process_user_message(&self, user_id: Uuid, message: &str) -> anyhow::Result<String> {
-        self.client.agent_with_memory(user_id.to_string(), message, 10).await
+        tracing::info!("🔍 AI SERVICE: process_user_message called with user_id: {} and message: '{}'", user_id, message);
+        
+        // Check for AI providers
+        let providers = self.client.provider().get_all().await;
+        tracing::info!("🔍 AI SERVICE: Available AI providers: {:?}", providers);
+        if providers.is_empty() {
+            tracing::error!("🔍 AI SERVICE: No AI providers available!");
+            return Err(anyhow!("No AI providers configured"));
+        }
+        
+        // Attempt to process with AI
+        tracing::info!("🔍 AI SERVICE: Calling agent_with_memory");
+        match self.client.agent_with_memory(user_id.to_string(), message, 10).await {
+            Ok(response) => {
+                tracing::info!("🔍 AI SERVICE: Successfully generated response: '{}'", response);
+                Ok(response)
+            },
+            Err(e) => {
+                tracing::error!("🔍 AI SERVICE: Failed to generate response: {:?}", e);
+                Err(e)
+            }
+        }
     }
     
     /// Register a function by name and description 
@@ -362,6 +436,12 @@ impl AiService {
     /// Get the AI client
     pub fn client(&self) -> Arc<AiClient> {
         self.client.clone()
+    }
+    
+    /// Get the list of trigger prefixes
+    pub async fn get_trigger_prefixes(&self) -> anyhow::Result<Vec<String>> {
+        let prefixes = self.trigger_prefixes.read().await;
+        Ok(prefixes.clone())
     }
 }
 

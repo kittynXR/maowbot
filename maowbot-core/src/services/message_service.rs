@@ -113,6 +113,8 @@ impl MessageService {
         }
 
         // 5) Publish chat event
+        info!("💬 MESSAGE SERVICE: Publishing chat event to EventBus - platform: {}, channel: {}, user: {}, text: '{}'", 
+              platform, channel, user.user_id, text);
         let event = BotEvent::ChatMessage {
             platform: platform.to_string(),
             channel: channel.to_string(),
@@ -121,6 +123,7 @@ impl MessageService {
             timestamp: Utc::now(),
         };
         self.event_bus.publish(event).await;
+        info!("💬 MESSAGE SERVICE: Chat event published successfully");
 
         // 6) Check if it's a command
         let is_stream_online = false; // (placeholder or eventsub-based status if needed)

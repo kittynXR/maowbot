@@ -15,4 +15,5 @@ tracing = { workspace = true }
 reqwest = { workspace = true }
 anyhow = { workspace = true }
 chrono = { workspace = true }
+regex = "1.10.2"
 

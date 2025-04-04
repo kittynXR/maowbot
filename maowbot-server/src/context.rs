@@ -223,6 +223,31 @@ impl ServerContext {
         ).await {
             Ok(service) => {
                 info!("AI service initialized successfully");
+                
+                // Configure with a default provider
+                // For OpenAI
+                let mut options = std::collections::HashMap::new();
+                options.insert("system_prompt".to_string(), "You are MaowBot, a helpful AI assistant for Discord and Twitch users.".to_string());
+                
+                let config = maowbot_ai::models::ProviderConfig {
+                    provider_type: "openai".to_string(),
+                    api_key: std::env::var("OPENAI_API_KEY").unwrap_or_else(|_| "demo-key".to_string()),
+                    default_model: "gpt-3.5-turbo".to_string(),
+                    api_base: None,
+                    options,
+                };
+                
+                match service.configure_provider(config).await {
+                    Ok(_) => info!("Configured default AI provider"),
+                    Err(e) => error!("Failed to configure AI provider: {:?}", e),
+                }
+                
+                // Print the trigger prefixes
+                match service.get_trigger_prefixes().await {
+                    Ok(prefixes) => info!("AI service trigger prefixes: {:?}", prefixes),
+                    Err(e) => error!("Failed to get AI trigger prefixes: {:?}", e),
+                }
+                
                 Some(Arc::new(service))
             },
             Err(e) => {
@@ -257,9 +282,12 @@ impl ServerContext {
             Some(ai_api_impl.clone())
         );
         // Let plugin manager see the event bus
-        plugin_manager.subscribe_to_event_bus(event_bus.clone());
         plugin_manager.set_event_bus(event_bus.clone());
         plugin_manager.set_auth_manager(auth_manager_arc.clone());
+        
+        // Subscribe to event bus - critical for AI functionality!
+        info!("Subscribing plugin manager to event bus");
+        plugin_manager.subscribe_to_event_bus(event_bus.clone()).await;
 
         // Attempt to load optional in-process plugin
         if let Some(path) = &args.in_process_plugin {

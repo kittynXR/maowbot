@@ -68,7 +68,25 @@ impl ModelProvider for OpenAIProvider {
             "https://api.openai.com/v1".to_string()
         });
         
-        let formatted_messages: Vec<serde_json::Value> = messages
+        // Check if there's already a system message in the messages
+        let has_system_message = messages.iter().any(|msg| msg.role == "system");
+        
+        // Create a vector to hold all messages, potentially with a system message added
+        let mut all_messages = Vec::new();
+        
+        // Add system message from config if not already present
+        if !has_system_message {
+            // Check if there's a system_prompt in the options
+            if let Some(system_prompt) = self.config.options.get("system_prompt") {
+                all_messages.push(json!({
+                    "role": "system",
+                    "content": system_prompt
+                }));
+            }
+        }
+        
+        // Add the user messages
+        let mut formatted_messages: Vec<serde_json::Value> = messages
             .iter()
             .map(|msg| {
                 json!({
@@ -78,12 +96,16 @@ impl ModelProvider for OpenAIProvider {
             })
             .collect();
         
+        // Combine system message (if added) with other messages
+        all_messages.append(&mut formatted_messages);
+        
+        // Request to OpenAI API
         let response = self.client
             .post(format!("{}/chat/completions", api_base))
             .header("Authorization", format!("Bearer {}", self.config.api_key))
             .json(&json!({
                 "model": self.config.default_model,
-                "messages": formatted_messages,
+                "messages": all_messages,
                 "max_tokens": 1000,
                 "temperature": 0.7,
             }))
@@ -115,7 +137,25 @@ impl ModelProvider for OpenAIProvider {
             "https://api.openai.com/v1".to_string()
         });
         
-        let formatted_messages: Vec<serde_json::Value> = messages
+        // Check if there's already a system message in the messages
+        let has_system_message = messages.iter().any(|msg| msg.role == "system");
+        
+        // Create a vector to hold all messages, potentially with a system message added
+        let mut all_messages = Vec::new();
+        
+        // Add system message from config if not already present
+        if !has_system_message {
+            // Check if there's a system_prompt in the options
+            if let Some(system_prompt) = self.config.options.get("system_prompt") {
+                all_messages.push(json!({
+                    "role": "system",
+                    "content": system_prompt
+                }));
+            }
+        }
+        
+        // Add the user messages
+        let mut formatted_messages: Vec<serde_json::Value> = messages
             .iter()
             .map(|msg| {
                 json!({
@@ -124,6 +164,9 @@ impl ModelProvider for OpenAIProvider {
                 })
             })
             .collect();
+            
+        // Combine system message (if added) with other messages
+        all_messages.append(&mut formatted_messages);
         
         let function_schemas: Vec<FunctionSchema> = functions
             .iter()
@@ -146,7 +189,7 @@ impl ModelProvider for OpenAIProvider {
             .header("Authorization", format!("Bearer {}", self.config.api_key))
             .json(&json!({
                 "model": self.config.default_model,
-                "messages": formatted_messages,
+                "messages": all_messages,
                 "functions": formatted_functions,
                 "function_call": "auto",
                 "max_tokens": 1000,
