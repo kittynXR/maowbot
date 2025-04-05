@@ -781,13 +781,39 @@ pub async fn handle_ai_command(args: &[&str], bot_api: &Arc<dyn BotApi>) -> Stri
             let agent_command = args[1].to_lowercase();
             match agent_command.as_str() {
                 "list" => {
-                    let json_message = json!({
-                        "role": "system",
-                        "content": "List AI agents"
-                    });
-                    
-                    match bot_api.generate_chat(vec![json_message]).await {
-                        Ok(_) => "Configured agents:\n- Maow Assistant".to_string(),
+                    // Get the AI service directly
+                    let service_result = bot_api.get_ai_service().await;
+                    match service_result {
+                        Ok(Some(service_any)) => {
+                            // Downcast to the actual AiService type
+                            if let Some(service) = service_any.downcast_ref::<maowbot_ai::plugins::ai_service::AiService>() {
+                                // Check if agent repository exists
+                                if let Some(agent_repo) = service.get_agent_repo() {
+                                    match agent_repo.list_agents().await {
+                                        Ok(agents) => {
+                                            if agents.is_empty() {
+                                                "No agents configured".to_string()
+                                            } else {
+                                                let mut result = "Configured agents:\n".to_string();
+                                                for agent in agents {
+                                                    result.push_str(&format!("- {}: {}\n", 
+                                                        agent.name, 
+                                                        if agent.enabled { "Enabled" } else { "Disabled" }
+                                                    ));
+                                                }
+                                                result
+                                            }
+                                        },
+                                        Err(e) => format!("Error listing agents: {}", e)
+                                    }
+                                } else {
+                                    "Agent repository is not available".to_string()
+                                }
+                            } else {
+                                "AI service type not recognized".to_string()
+                            }
+                        },
+                        Ok(None) => "AI service is not available".to_string(),
                         Err(e) => format!("Error accessing AI service: {}", e)
                     }
                 },
@@ -1333,13 +1359,39 @@ pub async fn handle_ai_command(args: &[&str], bot_api: &Arc<dyn BotApi>) -> Stri
             let prompt_command = args[1].to_lowercase();
             match prompt_command.as_str() {
                 "list" => {
-                    let json_message = json!({
-                        "role": "system",
-                        "content": "List system prompts"
-                    });
-                    
-                    match bot_api.generate_chat(vec![json_message]).await {
-                        Ok(_) => "System prompts:\n- Default Assistant (default)\n- Twitch Chat Helper".to_string(),
+                    // Get the AI service directly
+                    let service_result = bot_api.get_ai_service().await;
+                    match service_result {
+                        Ok(Some(service_any)) => {
+                            // Downcast to the actual AiService type
+                            if let Some(service) = service_any.downcast_ref::<maowbot_ai::plugins::ai_service::AiService>() {
+                                // Check if prompt repository exists
+                                if let Some(prompt_repo) = service.get_prompt_repo() {
+                                    match prompt_repo.list_prompts().await {
+                                        Ok(prompts) => {
+                                            if prompts.is_empty() {
+                                                "No system prompts configured".to_string()
+                                            } else {
+                                                let mut result = "System prompts:\n".to_string();
+                                                for prompt in prompts {
+                                                    result.push_str(&format!("- {} {}\n", 
+                                                        prompt.name, 
+                                                        if prompt.is_default { "(default)" } else { "" }
+                                                    ));
+                                                }
+                                                result
+                                            }
+                                        },
+                                        Err(e) => format!("Error listing prompts: {}", e)
+                                    }
+                                } else {
+                                    "Prompt repository is not available".to_string()
+                                }
+                            } else {
+                                "AI service type not recognized".to_string()
+                            }
+                        },
+                        Ok(None) => "AI service is not available".to_string(),
                         Err(e) => format!("Error accessing AI service: {}", e)
                     }
                 },

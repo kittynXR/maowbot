@@ -932,6 +932,16 @@ impl AiService {
         self.ai_credential_repo.clone()
     }
     
+    /// Get the agent repository if available
+    pub fn get_agent_repo(&self) -> Option<Arc<dyn AiAgentRepository + Send + Sync>> {
+        self.agent_repo.clone()
+    }
+    
+    /// Get the prompt repository if available
+    pub fn get_prompt_repo(&self) -> Option<Arc<dyn AiSystemPromptRepository + Send + Sync>> {
+        self.prompt_repo.clone()
+    }
+    
     /// Get the model repository if available
     pub fn get_model_repo(&self) -> Option<Arc<dyn AiModelRepository + Send + Sync>> {
         self.model_repo.clone()
