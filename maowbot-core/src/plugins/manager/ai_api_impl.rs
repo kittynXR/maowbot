@@ -26,6 +26,7 @@ impl AiApiImpl {
     
     /// Get a reference to the underlying AiService
     pub fn get_ai_service(&self) -> Option<Arc<AiService>> {
+        tracing::info!("🔍 AI_API_IMPL: get_ai_service called, service present: {}", self.ai_service.is_some());
         self.ai_service.clone()
     }
 }
@@ -34,7 +35,10 @@ impl AiApiImpl {
 impl AiApi for AiApiImpl {
     /// Get the AI service for direct operations
     async fn get_ai_service(&self) -> Result<Option<Arc<dyn std::any::Any + Send + Sync>>, Error> {
-        tracing::info!("AiApiImpl::get_ai_service called, service present: {}", self.ai_service.is_some());
+        tracing::info!("🔍 AI_API_IMPL: AiApi::get_ai_service called, service present: {}", self.ai_service.is_some());
+        if let Some(svc) = &self.ai_service {
+            tracing::info!("🔍 AI_API_IMPL: AI service is enabled: {}", svc.is_enabled().await);
+        }
         Ok(self.ai_service.clone().map(|svc| svc as Arc<dyn std::any::Any + Send + Sync>))
     }
 

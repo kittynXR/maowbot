@@ -220,6 +220,23 @@ impl BotApiWrapper {
 // Implement AiApi trait directly on the wrapper
 #[async_trait]
 impl maowbot_common::traits::api::AiApi for BotApiWrapper {
+    /// Get the AI service for direct operations
+    async fn get_ai_service(&self) -> Result<Option<std::sync::Arc<dyn std::any::Any + Send + Sync>>, maowbot_common::error::Error> {
+        tracing::info!("🔍 BotApiWrapper: AiApi::get_ai_service called");
+        match &self.plugin_manager.ai_api_impl {
+            Some(ai) => {
+                // First get the AiService from the implementation
+                let service = ai.get_ai_service();
+                // Then return it cast as Any
+                Ok(service.map(|svc| svc as std::sync::Arc<dyn std::any::Any + Send + Sync>))
+            },
+            None => {
+                tracing::warn!("🔍 BotApiWrapper: No AI API implementation available");
+                Ok(None)
+            },
+        }
+    }
+
     /// Generate a chat completion
     async fn generate_chat(&self, messages: Vec<Value>) -> Result<String, maowbot_common::error::Error> {
         match &self.plugin_manager.ai_api_impl {

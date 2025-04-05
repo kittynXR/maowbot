@@ -119,10 +119,25 @@ impl AiService {
         prompt_repo: Arc<dyn AiSystemPromptRepository + Send + Sync>,
         config_repo: Arc<dyn AiConfigurationRepository + Send + Sync>,
     ) -> anyhow::Result<Self> {
+        tracing::info!("🔧 AI SERVICE: with_repositories called - setting up AI service with database integration");
+        
         // Create a basic service first
-        let mut service = Self::new(user_repo, cred_repo).await?;
+        tracing::info!("🔧 AI SERVICE: Creating basic service with user_repo and cred_repo");
+        let service = match Self::new(user_repo, cred_repo).await {
+            Ok(svc) => {
+                tracing::info!("🔧 AI SERVICE: Basic service created successfully");
+                svc
+            },
+            Err(e) => {
+                tracing::error!("🔧 AI SERVICE: Failed to create basic service: {:?}", e);
+                return Err(e);
+            }
+        };
+        
+        tracing::info!("🔧 AI SERVICE: Attaching AI repositories");
         
         // Add the repositories
+        let mut service = service;
         service.provider_repo = Some(provider_repo);
         service.ai_credential_repo = Some(ai_credential_repo);
         service.model_repo = Some(model_repo);
@@ -134,10 +149,17 @@ impl AiService {
         service.config_repo = Some(config_repo);
         
         // Initialize from database
+        tracing::info!("🔧 AI SERVICE: Initializing from database");
         if let Err(e) = service.initialize_from_database().await {
-            tracing::error!("Failed to initialize AI service from database: {:?}", e);
+            tracing::error!("🔧 AI SERVICE: Failed to initialize AI service from database: {:?}", e);
             // Continue anyway - we can still function with just the basic service
+        } else {
+            tracing::info!("🔧 AI SERVICE: Database initialization successful");
         }
+        
+        // Log the enabled status 
+        let enabled = *service.enabled.read().await;
+        tracing::info!("🔧 AI SERVICE: Service initialization complete - service enabled: {}", enabled);
         
         Ok(service)
     }
@@ -220,12 +242,16 @@ impl AiService {
     
     /// Initialize data from database
     pub async fn initialize_from_database(&self) -> anyhow::Result<()> {
+        tracing::info!("🔍 AI SERVICE: initialize_from_database called");
+        
         // Load configuration
         if let Some(config_repo) = &self.config_repo {
+            tracing::info!("🔍 AI SERVICE: Loading configuration from config_repo");
             // Get default configuration
             match config_repo.get_default_configuration().await {
                 Ok(Some(config)) => {
-                    info!("Initializing from default config: {}", config.provider.name);
+                    tracing::info!("🔍 AI SERVICE: Found default config: provider={}, model={}", 
+                                 config.provider.name, config.model.name);
                     
                     // Create provider config
                     let provider_config = ProviderConfig {
@@ -237,27 +263,33 @@ impl AiService {
                     };
                     
                     // Configure with this provider
+                    tracing::info!("🔍 AI SERVICE: Configuring provider: {}", provider_config.provider_type);
                     if let Err(e) = self.internal_configure_provider(provider_config).await {
-                        error!("Failed to configure provider from database: {:?}", e);
+                        tracing::error!("🔍 AI SERVICE: Failed to configure provider from database: {:?}", e);
                         // Continue anyway - we'll try other initialization steps
+                    } else {
+                        tracing::info!("🔍 AI SERVICE: Provider configured successfully");
                     }
                 },
                 Ok(None) => {
-                    info!("No default AI configuration found in database");
+                    tracing::info!("🔍 AI SERVICE: No default AI configuration found in database");
                 },
                 Err(e) => {
-                    error!("Error loading default configuration: {:?}", e);
+                    tracing::error!("🔍 AI SERVICE: Error loading default configuration: {:?}", e);
                     // Continue anyway - we'll try other initialization steps
                 }
             }
+        } else {
+            tracing::info!("🔍 AI SERVICE: No config_repo available, skipping configuration loading");
         }
         
         // Load triggers
         if let Some(trigger_repo) = &self.trigger_repo {
+            tracing::info!("🔍 AI SERVICE: Loading triggers from trigger_repo");
             // Load all triggers
             match trigger_repo.list_triggers_with_details().await {
                 Ok(triggers) => {
-                    info!("Loaded {} triggers from database", triggers.len());
+                    tracing::info!("🔍 AI SERVICE: Loaded {} triggers from database", triggers.len());
                     
                     // Only process prefix triggers for now
                     for trigger_details in triggers {
@@ -265,53 +297,82 @@ impl AiService {
                         
                         // Handle prefix triggers
                         if trigger.trigger_type == TriggerType::Prefix.to_string() && trigger.enabled {
-                            info!("Found prefix trigger: {}", trigger.pattern);
+                            tracing::info!("🔍 AI SERVICE: Found prefix trigger: {}", trigger.pattern);
                             // No need to use add_trigger_prefix since we removed that field
                         }
                     }
                 },
                 Err(e) => {
-                    error!("Error loading triggers from database: {:?}", e);
+                    tracing::error!("🔍 AI SERVICE: Error loading triggers from database: {:?}", e);
                     // Continue anyway - we'll complete initialization
                 }
             }
+        } else {
+            tracing::info!("🔍 AI SERVICE: No trigger_repo available, skipping trigger loading");
         }
         
+        tracing::info!("🔍 AI SERVICE: Database initialization complete");
         Ok(())
     }
     
     /// Internal method to configure a provider without persisting to database
     async fn internal_configure_provider(&self, config: ProviderConfig) -> anyhow::Result<()> {
+        tracing::info!("🔧 AI SERVICE: internal_configure_provider called for provider: {}", config.provider_type);
+        
         match config.provider_type.to_lowercase().as_str() {
             "openai" => {
+                tracing::info!("🔧 AI SERVICE: Creating OpenAI provider with model: {}", config.default_model);
+                let masked_key = if config.api_key.len() > 10 {
+                    format!("{}...{}", &config.api_key[0..5], &config.api_key[config.api_key.len()-5..])
+                } else {
+                    "[API key too short to mask]".to_string()
+                };
+                tracing::info!("🔧 AI SERVICE: Using API key: {}", masked_key);
+                
                 let provider = OpenAIProvider::new(config.clone());
+                tracing::info!("🔧 AI SERVICE: Registering provider with AI client");
                 self.client.provider().register(provider).await;
                 
                 // Set this provider as default
                 let default_provider = config.provider_type.clone();
-                info!("Setting default provider to: {}", default_provider);
+                tracing::info!("🔧 AI SERVICE: Setting default provider to: {}", default_provider);
                 
                 // Let's set the enabled flag to true
                 let mut enabled = self.enabled.write().await;
                 *enabled = true;
+                tracing::info!("🔧 AI SERVICE: AI service enabled flag set to true");
                 
                 Ok(())
             },
             "anthropic" => {
+                tracing::info!("🔧 AI SERVICE: Creating Anthropic provider with model: {}", config.default_model);
+                let masked_key = if config.api_key.len() > 10 {
+                    format!("{}...{}", &config.api_key[0..5], &config.api_key[config.api_key.len()-5..])
+                } else {
+                    "[API key too short to mask]".to_string()
+                };
+                tracing::info!("🔧 AI SERVICE: Using API key: {}", masked_key);
+                
                 let provider = AnthropicProvider::new(config.clone());
+                tracing::info!("🔧 AI SERVICE: Registering provider with AI client");
                 self.client.provider().register(provider).await;
                 
                 // Set this provider as default
                 let default_provider = config.provider_type.clone();
-                info!("Setting default provider to: {}", default_provider);
+                tracing::info!("🔧 AI SERVICE: Setting default provider to: {}", default_provider);
                 
                 // Let's set the enabled flag to true
                 let mut enabled = self.enabled.write().await;
                 *enabled = true;
+                tracing::info!("🔧 AI SERVICE: AI service enabled flag set to true");
                 
                 Ok(())
             },
-            _ => Err(anyhow!("Unsupported provider type: {}", config.provider_type)),
+            provider_type => {
+                let error_msg = format!("Unsupported provider type: {}", provider_type);
+                tracing::error!("🔧 AI SERVICE: {}", error_msg);
+                Err(anyhow!(error_msg))
+            },
         }
     }
     

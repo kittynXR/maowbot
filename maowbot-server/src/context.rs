@@ -217,6 +217,7 @@ impl ServerContext {
         ));
 
         // Create the AI repositories
+        info!("🧪 Creating AI repositories...");
         let ai_provider_repo = Arc::new(maowbot_core::repositories::postgres::ai::PostgresAiProviderRepository::new(db.pool().clone()));
         let ai_credential_repo = Arc::new(maowbot_core::repositories::postgres::ai::PostgresAiCredentialRepository::new(db.pool().clone(), encryptor.clone()));
         let ai_model_repo = Arc::new(maowbot_core::repositories::postgres::ai::PostgresAiModelRepository::new(db.pool().clone()));
@@ -226,8 +227,10 @@ impl ServerContext {
         let ai_action_repo = Arc::new(maowbot_core::repositories::postgres::ai::PostgresAiActionRepository::new(db.pool().clone()));
         let ai_prompt_repo = Arc::new(maowbot_core::repositories::postgres::ai::PostgresAiSystemPromptRepository::new(db.pool().clone()));
         let ai_config_repo = Arc::new(maowbot_core::repositories::postgres::ai::PostgresAiConfigurationRepository::new(db.pool().clone(), encryptor.clone()));
+        info!("🧪 AI repositories created successfully");
 
         // Create the AI service with repositories for full database integration
+        info!("🧪 Initializing AI service with repositories...");
         let ai_service = match maowbot_ai::plugins::ai_service::AiService::with_repositories(
             user_repo_arc.clone(),
             creds_repo_arc.clone(),
@@ -242,10 +245,11 @@ impl ServerContext {
             ai_config_repo
         ).await {
             Ok(service) => {
-                info!("AI service initialized successfully with database repositories");
+                info!("🧪 AI service initialized successfully with database repositories");
                 
                 // Configure with a default provider if environment variable exists
                 if let Ok(api_key) = std::env::var("OPENAI_API_KEY") {
+                    info!("🧪 Found OPENAI_API_KEY in environment, configuring default provider");
                     let mut options = std::collections::HashMap::new();
                     options.insert("system_prompt".to_string(), "You are MaowBot, a helpful AI assistant for Discord and Twitch users.".to_string());
                     
@@ -258,31 +262,34 @@ impl ServerContext {
                     };
                     
                     match service.configure_provider(config).await {
-                        Ok(_) => info!("Configured OpenAI provider from environment variable"),
-                        Err(e) => error!("Failed to configure AI provider: {:?}", e),
+                        Ok(_) => info!("🧪 Configured OpenAI provider from environment variable"),
+                        Err(e) => error!("🧪 Failed to configure AI provider: {:?}", e),
                     }
                 } else {
-                    info!("No OPENAI_API_KEY found in environment, skipping default configuration");
+                    info!("🧪 No OPENAI_API_KEY found in environment, skipping default configuration");
                 }
                 
                 // Print the trigger prefixes
                 match service.get_trigger_prefixes().await {
-                    Ok(prefixes) => info!("AI service trigger prefixes: {:?}", prefixes),
-                    Err(e) => error!("Failed to get AI trigger prefixes: {:?}", e),
+                    Ok(prefixes) => info!("🧪 AI service trigger prefixes: {:?}", prefixes),
+                    Err(e) => error!("🧪 Failed to get AI trigger prefixes: {:?}", e),
                 }
                 
+                info!("🧪 Is AI service enabled? {}", service.is_enabled().await);
                 Some(Arc::new(service))
             },
             Err(e) => {
-                error!("Failed to initialize AI service with repositories: {:?}", e);
+                error!("🧪 Failed to initialize AI service with repositories: {:?}", e);
                 None
             }
         };
         
         // Create a real AI API implementation instead of a stub
         let ai_api_impl = if let Some(ai_svc) = ai_service.clone() {
+            info!("🧪 Creating AiApiImpl with real AI service");
             maowbot_core::plugins::manager::ai_api_impl::AiApiImpl::new(ai_svc.clone())
         } else {
+            error!("🧪 AI service not available, creating STUB AiApiImpl");
             maowbot_core::plugins::manager::ai_api_impl::AiApiImpl::new_stub()
         };
         
