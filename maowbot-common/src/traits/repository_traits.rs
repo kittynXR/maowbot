@@ -57,6 +57,8 @@ pub trait AiCredentialRepository: Send + Sync {
     async fn create_credential(&self, credential: &AiCredential) -> Result<(), Error>;
     async fn get_credential(&self, credential_id: Uuid) -> Result<Option<AiCredential>, Error>;
     async fn list_credentials_for_provider(&self, provider_id: Uuid) -> Result<Vec<AiCredential>, Error>;
+    /// List all credentials across all providers
+    async fn list_credentials(&self) -> Result<Vec<AiCredential>, Error>;
     async fn get_default_credential_for_provider(&self, provider_id: Uuid) -> Result<Option<AiCredential>, Error>;
     async fn update_credential(&self, credential: &AiCredential) -> Result<(), Error>;
     async fn set_default_credential(&self, credential_id: Uuid) -> Result<(), Error>;

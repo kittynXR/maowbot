@@ -13,3 +13,4 @@ pub mod redeems;
 pub mod redeem_usage;
 pub mod drip;
 pub mod discord;
+pub mod ai;

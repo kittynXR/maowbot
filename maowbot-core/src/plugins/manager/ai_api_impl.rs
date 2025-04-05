@@ -34,6 +34,7 @@ impl AiApiImpl {
 impl AiApi for AiApiImpl {
     /// Get the AI service for direct operations
     async fn get_ai_service(&self) -> Result<Option<Arc<dyn std::any::Any + Send + Sync>>, Error> {
+        tracing::info!("AiApiImpl::get_ai_service called, service present: {}", self.ai_service.is_some());
         Ok(self.ai_service.clone().map(|svc| svc as Arc<dyn std::any::Any + Send + Sync>))
     }
 

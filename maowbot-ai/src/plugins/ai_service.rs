@@ -119,44 +119,25 @@ impl AiService {
         prompt_repo: Arc<dyn AiSystemPromptRepository + Send + Sync>,
         config_repo: Arc<dyn AiConfigurationRepository + Send + Sync>,
     ) -> anyhow::Result<Self> {
-        // Create provider registry
-        let provider = Arc::new(Provider::new());
+        // Create a basic service first
+        let mut service = Self::new(user_repo, cred_repo).await?;
         
-        // Create memory manager
-        let memory = Arc::new(MemoryManager::new());
-        
-        // Create function registry
-        let functions = Arc::new(FunctionRegistry::new());
-        
-        // Register default functions
-        Self::register_default_functions(&functions).await;
-        
-        // Create AI client
-        let client = Arc::new(AiClient::new(
-            provider.clone(),
-            memory.clone(),
-            functions.clone(),
-            "default",
-        ));
-        
-        let service = Self {
-            client,
-            enabled: RwLock::new(true),
-            user_repo,
-            cred_repo,
-            provider_repo: Some(provider_repo),
-            ai_credential_repo: Some(ai_credential_repo),
-            model_repo: Some(model_repo),
-            trigger_repo: Some(trigger_repo),
-            memory_repo: Some(memory_repo),
-            agent_repo: Some(agent_repo),
-            action_repo: Some(action_repo),
-            prompt_repo: Some(prompt_repo),
-            config_repo: Some(config_repo),
-        };
+        // Add the repositories
+        service.provider_repo = Some(provider_repo);
+        service.ai_credential_repo = Some(ai_credential_repo);
+        service.model_repo = Some(model_repo);
+        service.trigger_repo = Some(trigger_repo);
+        service.memory_repo = Some(memory_repo);
+        service.agent_repo = Some(agent_repo);
+        service.action_repo = Some(action_repo);
+        service.prompt_repo = Some(prompt_repo);
+        service.config_repo = Some(config_repo);
         
         // Initialize from database
-        service.initialize_from_database().await?;
+        if let Err(e) = service.initialize_from_database().await {
+            tracing::error!("Failed to initialize AI service from database: {:?}", e);
+            // Continue anyway - we can still function with just the basic service
+        }
         
         Ok(service)
     }
@@ -239,39 +220,59 @@ impl AiService {
     
     /// Initialize data from database
     pub async fn initialize_from_database(&self) -> anyhow::Result<()> {
+        // Load configuration
         if let Some(config_repo) = &self.config_repo {
             // Get default configuration
-            if let Ok(Some(config)) = config_repo.get_default_configuration().await {
-                info!("Initializing from default config: {}", config.provider.name);
-                
-                // Create provider config
-                let provider_config = ProviderConfig {
-                    provider_type: config.provider.name.clone(),
-                    api_key: config.credential.api_key.clone(),
-                    default_model: config.model.name.clone(),
-                    api_base: config.credential.api_base.clone(),
-                    options: std::collections::HashMap::new(),
-                };
-                
-                // Configure with this provider
-                self.internal_configure_provider(provider_config).await?;
+            match config_repo.get_default_configuration().await {
+                Ok(Some(config)) => {
+                    info!("Initializing from default config: {}", config.provider.name);
+                    
+                    // Create provider config
+                    let provider_config = ProviderConfig {
+                        provider_type: config.provider.name.clone(),
+                        api_key: config.credential.api_key.clone(),
+                        default_model: config.model.name.clone(),
+                        api_base: config.credential.api_base.clone(),
+                        options: std::collections::HashMap::new(),
+                    };
+                    
+                    // Configure with this provider
+                    if let Err(e) = self.internal_configure_provider(provider_config).await {
+                        error!("Failed to configure provider from database: {:?}", e);
+                        // Continue anyway - we'll try other initialization steps
+                    }
+                },
+                Ok(None) => {
+                    info!("No default AI configuration found in database");
+                },
+                Err(e) => {
+                    error!("Error loading default configuration: {:?}", e);
+                    // Continue anyway - we'll try other initialization steps
+                }
             }
         }
         
+        // Load triggers
         if let Some(trigger_repo) = &self.trigger_repo {
             // Load all triggers
-            if let Ok(triggers) = trigger_repo.list_triggers_with_details().await {
-                info!("Loaded {} triggers from database", triggers.len());
-                
-                // Only process prefix triggers for now
-                for trigger_details in triggers {
-                    let trigger = trigger_details.trigger;
+            match trigger_repo.list_triggers_with_details().await {
+                Ok(triggers) => {
+                    info!("Loaded {} triggers from database", triggers.len());
                     
-                    // Handle prefix triggers
-                    if trigger.trigger_type == TriggerType::Prefix.to_string() && trigger.enabled {
-                        info!("Adding prefix trigger: {}", trigger.pattern);
-                        // No need to use add_trigger_prefix since we removed that field
+                    // Only process prefix triggers for now
+                    for trigger_details in triggers {
+                        let trigger = trigger_details.trigger;
+                        
+                        // Handle prefix triggers
+                        if trigger.trigger_type == TriggerType::Prefix.to_string() && trigger.enabled {
+                            info!("Found prefix trigger: {}", trigger.pattern);
+                            // No need to use add_trigger_prefix since we removed that field
+                        }
                     }
+                },
+                Err(e) => {
+                    error!("Error loading triggers from database: {:?}", e);
+                    // Continue anyway - we'll complete initialization
                 }
             }
         }
@@ -858,6 +859,21 @@ impl AiService {
     /// Get the AI client
     pub fn client(&self) -> Arc<AiClient> {
         self.client.clone()
+    }
+    
+    /// Get the provider repository if available
+    pub fn get_provider_repo(&self) -> Option<Arc<dyn AiProviderRepository + Send + Sync>> {
+        self.provider_repo.clone()
+    }
+    
+    /// Get the credential repository if available
+    pub fn get_ai_credential_repo(&self) -> Option<Arc<dyn AiCredentialRepository + Send + Sync>> {
+        self.ai_credential_repo.clone()
+    }
+    
+    /// Get the model repository if available
+    pub fn get_model_repo(&self) -> Option<Arc<dyn AiModelRepository + Send + Sync>> {
+        self.model_repo.clone()
     }
     
     /// Get the list of trigger prefixes from the database

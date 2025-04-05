@@ -2,7 +2,7 @@
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use sqlx::{PgPool, query, query_as};
+use sqlx::{PgPool, query, query_as, Row};
 use sqlx::postgres::PgQueryResult;
 use uuid::Uuid;
 use maowbot_common::error::Error;
@@ -44,14 +44,13 @@ impl AiProviderRepository for PostgresAiProviderRepository {
         .bind(&provider.created_at)
         .bind(&provider.updated_at)
         .execute(&self.pool)
-        .await
-        .map_err(|e| Error::Database(e.to_string()))?;
+        .await?;
 
         Ok(())
     }
 
     async fn get_provider(&self, provider_id: Uuid) -> Result<Option<AiProvider>, Error> {
-        query_as::<_, AiProvider>(
+        Ok(query_as::<_, AiProvider>(
             r#"
             SELECT 
                 provider_id, name, description, enabled, created_at, updated_at
@@ -61,12 +60,11 @@ impl AiProviderRepository for PostgresAiProviderRepository {
         )
         .bind(&provider_id)
         .fetch_optional(&self.pool)
-        .await
-        .map_err(|e| Error::Database(e.to_string()))
+        .await?)
     }
 
     async fn get_provider_by_name(&self, name: &str) -> Result<Option<AiProvider>, Error> {
-        query_as::<_, AiProvider>(
+        Ok(query_as::<_, AiProvider>(
             r#"
             SELECT 
                 provider_id, name, description, enabled, created_at, updated_at
@@ -76,12 +74,11 @@ impl AiProviderRepository for PostgresAiProviderRepository {
         )
         .bind(name)
         .fetch_optional(&self.pool)
-        .await
-        .map_err(|e| Error::Database(e.to_string()))
+        .await?)
     }
 
     async fn list_providers(&self) -> Result<Vec<AiProvider>, Error> {
-        query_as::<_, AiProvider>(
+        Ok(query_as::<_, AiProvider>(
             r#"
             SELECT 
                 provider_id, name, description, enabled, created_at, updated_at
@@ -90,8 +87,7 @@ impl AiProviderRepository for PostgresAiProviderRepository {
             "#,
         )
         .fetch_all(&self.pool)
-        .await
-        .map_err(|e| Error::Database(e.to_string()))
+        .await?)
     }
 
     async fn update_provider(&self, provider: &AiProvider) -> Result<(), Error> {
@@ -112,8 +108,7 @@ impl AiProviderRepository for PostgresAiProviderRepository {
         .bind(&provider.enabled)
         .bind(Utc::now())
         .execute(&self.pool)
-        .await
-        .map_err(|e| Error::Database(e.to_string()))?;
+        .await?;
 
         Ok(())
     }
@@ -127,8 +122,7 @@ impl AiProviderRepository for PostgresAiProviderRepository {
         )
         .bind(&provider_id)
         .execute(&self.pool)
-        .await
-        .map_err(|e| Error::Database(e.to_string()))?;
+        .await?;
 
         Ok(())
     }
@@ -179,8 +173,7 @@ impl AiCredentialRepository for PostgresAiCredentialRepository {
         .bind(&encrypted.created_at)
         .bind(&encrypted.updated_at)
         .execute(&self.pool)
-        .await
-        .map_err(|e| Error::Database(e.to_string()))?;
+        .await?;
 
         Ok(())
     }
@@ -197,8 +190,7 @@ impl AiCredentialRepository for PostgresAiCredentialRepository {
         )
         .bind(&credential_id)
         .fetch_optional(&self.pool)
-        .await
-        .map_err(|e| Error::Database(e.to_string()))?;
+        .await?;
 
         if let Some(cred) = maybe_credential {
             self.decrypt_credentials(&cred).await.map(Some)
@@ -220,8 +212,28 @@ impl AiCredentialRepository for PostgresAiCredentialRepository {
         )
         .bind(&provider_id)
         .fetch_all(&self.pool)
-        .await
-        .map_err(|e| Error::Database(e.to_string()))?;
+        .await?;
+
+        let mut decrypted = Vec::with_capacity(credentials.len());
+        for cred in credentials {
+            decrypted.push(self.decrypt_credentials(&cred).await?);
+        }
+
+        Ok(decrypted)
+    }
+    
+    async fn list_credentials(&self) -> Result<Vec<AiCredential>, Error> {
+        let credentials = query_as::<_, AiCredential>(
+            r#"
+            SELECT 
+                credential_id, provider_id, api_key, api_base, 
+                is_default, additional_data, created_at, updated_at
+            FROM ai_credentials
+            ORDER BY provider_id, created_at DESC
+            "#,
+        )
+        .fetch_all(&self.pool)
+        .await?;
 
         let mut decrypted = Vec::with_capacity(credentials.len());
         for cred in credentials {
@@ -243,8 +255,7 @@ impl AiCredentialRepository for PostgresAiCredentialRepository {
         )
         .bind(&provider_id)
         .fetch_optional(&self.pool)
-        .await
-        .map_err(|e| Error::Database(e.to_string()))?;
+        .await?;
 
         if let Some(cred) = maybe_credential {
             self.decrypt_credentials(&cred).await.map(Some)
@@ -275,15 +286,14 @@ impl AiCredentialRepository for PostgresAiCredentialRepository {
         .bind(&encrypted.additional_data)
         .bind(Utc::now())
         .execute(&self.pool)
-        .await
-        .map_err(|e| Error::Database(e.to_string()))?;
+        .await?;
 
         Ok(())
     }
 
     async fn set_default_credential(&self, credential_id: Uuid) -> Result<(), Error> {
         // Begin transaction
-        let mut tx = self.pool.begin().await.map_err(|e| Error::Database(e.to_string()))?;
+        let mut tx = self.pool.begin().await?;
 
         // Get provider_id for the credential
         let provider_id: Uuid = query(
@@ -295,8 +305,7 @@ impl AiCredentialRepository for PostgresAiCredentialRepository {
         )
         .bind(&credential_id)
         .fetch_one(&mut *tx)
-        .await
-        .map_err(|e| Error::Database(e.to_string()))?
+        .await?
         .get(0);
 
         // Clear existing default for this provider
@@ -310,8 +319,7 @@ impl AiCredentialRepository for PostgresAiCredentialRepository {
         .bind(&provider_id)
         .bind(Utc::now())
         .execute(&mut *tx)
-        .await
-        .map_err(|e| Error::Database(e.to_string()))?;
+        .await?;
 
         // Set new default
         query(
@@ -324,11 +332,10 @@ impl AiCredentialRepository for PostgresAiCredentialRepository {
         .bind(&credential_id)
         .bind(Utc::now())
         .execute(&mut *tx)
-        .await
-        .map_err(|e| Error::Database(e.to_string()))?;
+        .await?;
 
         // Commit transaction
-        tx.commit().await.map_err(|e| Error::Database(e.to_string()))?;
+        tx.commit().await?;
 
         Ok(())
     }
@@ -342,8 +349,7 @@ impl AiCredentialRepository for PostgresAiCredentialRepository {
         )
         .bind(&credential_id)
         .execute(&self.pool)
-        .await
-        .map_err(|e| Error::Database(e.to_string()))?;
+        .await?;
 
         Ok(())
     }
@@ -379,14 +385,13 @@ impl AiModelRepository for PostgresAiModelRepository {
         .bind(&model.created_at)
         .bind(&model.updated_at)
         .execute(&self.pool)
-        .await
-        .map_err(|e| Error::Database(e.to_string()))?;
+        .await?;
 
         Ok(())
     }
 
     async fn get_model(&self, model_id: Uuid) -> Result<Option<AiModel>, Error> {
-        query_as::<_, AiModel>(
+        Ok(query_as::<_, AiModel>(
             r#"
             SELECT 
                 model_id, provider_id, name, description, 
@@ -397,12 +402,11 @@ impl AiModelRepository for PostgresAiModelRepository {
         )
         .bind(&model_id)
         .fetch_optional(&self.pool)
-        .await
-        .map_err(|e| Error::Database(e.to_string()))
+        .await?)
     }
 
     async fn get_model_by_name(&self, provider_id: Uuid, name: &str) -> Result<Option<AiModel>, Error> {
-        query_as::<_, AiModel>(
+        Ok(query_as::<_, AiModel>(
             r#"
             SELECT 
                 model_id, provider_id, name, description, 
@@ -414,12 +418,11 @@ impl AiModelRepository for PostgresAiModelRepository {
         .bind(&provider_id)
         .bind(name)
         .fetch_optional(&self.pool)
-        .await
-        .map_err(|e| Error::Database(e.to_string()))
+        .await?)
     }
 
     async fn list_models_for_provider(&self, provider_id: Uuid) -> Result<Vec<AiModel>, Error> {
-        query_as::<_, AiModel>(
+        Ok(query_as::<_, AiModel>(
             r#"
             SELECT 
                 model_id, provider_id, name, description, 
@@ -431,12 +434,11 @@ impl AiModelRepository for PostgresAiModelRepository {
         )
         .bind(&provider_id)
         .fetch_all(&self.pool)
-        .await
-        .map_err(|e| Error::Database(e.to_string()))
+        .await?)
     }
 
     async fn get_default_model_for_provider(&self, provider_id: Uuid) -> Result<Option<AiModel>, Error> {
-        query_as::<_, AiModel>(
+        Ok(query_as::<_, AiModel>(
             r#"
             SELECT 
                 model_id, provider_id, name, description, 
@@ -447,8 +449,7 @@ impl AiModelRepository for PostgresAiModelRepository {
         )
         .bind(&provider_id)
         .fetch_optional(&self.pool)
-        .await
-        .map_err(|e| Error::Database(e.to_string()))
+        .await?)
     }
 
     async fn update_model(&self, model: &AiModel) -> Result<(), Error> {
@@ -471,15 +472,14 @@ impl AiModelRepository for PostgresAiModelRepository {
         .bind(&model.capabilities)
         .bind(Utc::now())
         .execute(&self.pool)
-        .await
-        .map_err(|e| Error::Database(e.to_string()))?;
+        .await?;
 
         Ok(())
     }
 
     async fn set_default_model(&self, model_id: Uuid) -> Result<(), Error> {
         // Begin transaction
-        let mut tx = self.pool.begin().await.map_err(|e| Error::Database(e.to_string()))?;
+        let mut tx = self.pool.begin().await?;
 
         // Get provider_id for the model
         let provider_id: Uuid = query(
@@ -491,8 +491,7 @@ impl AiModelRepository for PostgresAiModelRepository {
         )
         .bind(&model_id)
         .fetch_one(&mut *tx)
-        .await
-        .map_err(|e| Error::Database(e.to_string()))?
+        .await?
         .get(0);
 
         // Clear existing default for this provider
@@ -506,8 +505,7 @@ impl AiModelRepository for PostgresAiModelRepository {
         .bind(&provider_id)
         .bind(Utc::now())
         .execute(&mut *tx)
-        .await
-        .map_err(|e| Error::Database(e.to_string()))?;
+        .await?;
 
         // Set new default
         query(
@@ -520,11 +518,10 @@ impl AiModelRepository for PostgresAiModelRepository {
         .bind(&model_id)
         .bind(Utc::now())
         .execute(&mut *tx)
-        .await
-        .map_err(|e| Error::Database(e.to_string()))?;
+        .await?;
 
         // Commit transaction
-        tx.commit().await.map_err(|e| Error::Database(e.to_string()))?;
+        tx.commit().await?;
 
         Ok(())
     }
@@ -538,8 +535,7 @@ impl AiModelRepository for PostgresAiModelRepository {
         )
         .bind(&model_id)
         .execute(&self.pool)
-        .await
-        .map_err(|e| Error::Database(e.to_string()))?;
+        .await?;
 
         Ok(())
     }
@@ -581,14 +577,13 @@ impl AiTriggerRepository for PostgresAiTriggerRepository {
         .bind(&trigger.created_at)
         .bind(&trigger.updated_at)
         .execute(&self.pool)
-        .await
-        .map_err(|e| Error::Database(e.to_string()))?;
+        .await?;
 
         Ok(())
     }
 
     async fn get_trigger(&self, trigger_id: Uuid) -> Result<Option<AiTrigger>, Error> {
-        query_as::<_, AiTrigger>(
+        Ok(query_as::<_, AiTrigger>(
             r#"
             SELECT 
                 trigger_id, trigger_type, pattern, model_id, agent_id,
@@ -600,12 +595,11 @@ impl AiTriggerRepository for PostgresAiTriggerRepository {
         )
         .bind(&trigger_id)
         .fetch_optional(&self.pool)
-        .await
-        .map_err(|e| Error::Database(e.to_string()))
+        .await?)
     }
 
     async fn get_trigger_by_pattern(&self, pattern: &str) -> Result<Option<AiTrigger>, Error> {
-        query_as::<_, AiTrigger>(
+        Ok(query_as::<_, AiTrigger>(
             r#"
             SELECT 
                 trigger_id, trigger_type, pattern, model_id, agent_id,
@@ -617,12 +611,11 @@ impl AiTriggerRepository for PostgresAiTriggerRepository {
         )
         .bind(pattern)
         .fetch_optional(&self.pool)
-        .await
-        .map_err(|e| Error::Database(e.to_string()))
+        .await?)
     }
 
     async fn list_triggers(&self) -> Result<Vec<AiTrigger>, Error> {
-        query_as::<_, AiTrigger>(
+        Ok(query_as::<_, AiTrigger>(
             r#"
             SELECT 
                 trigger_id, trigger_type, pattern, model_id, agent_id,
@@ -633,12 +626,11 @@ impl AiTriggerRepository for PostgresAiTriggerRepository {
             "#,
         )
         .fetch_all(&self.pool)
-        .await
-        .map_err(|e| Error::Database(e.to_string()))
+        .await?)
     }
 
     async fn list_triggers_for_model(&self, model_id: Uuid) -> Result<Vec<AiTrigger>, Error> {
-        query_as::<_, AiTrigger>(
+        Ok(query_as::<_, AiTrigger>(
             r#"
             SELECT 
                 trigger_id, trigger_type, pattern, model_id, agent_id,
@@ -651,12 +643,11 @@ impl AiTriggerRepository for PostgresAiTriggerRepository {
         )
         .bind(&model_id)
         .fetch_all(&self.pool)
-        .await
-        .map_err(|e| Error::Database(e.to_string()))
+        .await?)
     }
 
     async fn list_triggers_for_agent(&self, agent_id: Uuid) -> Result<Vec<AiTrigger>, Error> {
-        query_as::<_, AiTrigger>(
+        Ok(query_as::<_, AiTrigger>(
             r#"
             SELECT 
                 trigger_id, trigger_type, pattern, model_id, agent_id,
@@ -669,8 +660,7 @@ impl AiTriggerRepository for PostgresAiTriggerRepository {
         )
         .bind(&agent_id)
         .fetch_all(&self.pool)
-        .await
-        .map_err(|e| Error::Database(e.to_string()))
+        .await?)
     }
 
     async fn list_triggers_with_details(&self) -> Result<Vec<AiTriggerWithDetails>, Error> {
@@ -754,8 +744,7 @@ impl AiTriggerRepository for PostgresAiTriggerRepository {
             "#,
         )
         .fetch_all(&self.pool)
-        .await
-        .map_err(|e| Error::Database(e.to_string()))?;
+        .await?;
 
         let result = joined_triggers.into_iter().map(|jt| {
             let trigger = AiTrigger {
@@ -864,8 +853,7 @@ impl AiTriggerRepository for PostgresAiTriggerRepository {
         .bind(&trigger.enabled)
         .bind(Utc::now())
         .execute(&self.pool)
-        .await
-        .map_err(|e| Error::Database(e.to_string()))?;
+        .await?;
 
         Ok(())
     }
@@ -879,8 +867,7 @@ impl AiTriggerRepository for PostgresAiTriggerRepository {
         )
         .bind(&trigger_id)
         .execute(&self.pool)
-        .await
-        .map_err(|e| Error::Database(e.to_string()))?;
+        .await?;
 
         Ok(())
     }
@@ -914,14 +901,13 @@ impl AiMemoryRepository for PostgresAiMemoryRepository {
         .bind(&memory.timestamp)
         .bind(&memory.metadata)
         .execute(&self.pool)
-        .await
-        .map_err(|e| Error::Database(e.to_string()))?;
+        .await?;
 
         Ok(())
     }
 
     async fn get_memory(&self, memory_id: Uuid) -> Result<Option<AiMemory>, Error> {
-        query_as::<_, AiMemory>(
+        Ok(query_as::<_, AiMemory>(
             r#"
             SELECT 
                 memory_id, user_id, platform, role, content, timestamp, metadata
@@ -931,12 +917,11 @@ impl AiMemoryRepository for PostgresAiMemoryRepository {
         )
         .bind(&memory_id)
         .fetch_optional(&self.pool)
-        .await
-        .map_err(|e| Error::Database(e.to_string()))
+        .await?)
     }
 
     async fn list_memories_for_user(&self, user_id: Uuid, limit: i64) -> Result<Vec<AiMemory>, Error> {
-        query_as::<_, AiMemory>(
+        Ok(query_as::<_, AiMemory>(
             r#"
             SELECT 
                 memory_id, user_id, platform, role, content, timestamp, metadata
@@ -949,8 +934,7 @@ impl AiMemoryRepository for PostgresAiMemoryRepository {
         .bind(&user_id)
         .bind(limit)
         .fetch_all(&self.pool)
-        .await
-        .map_err(|e| Error::Database(e.to_string()))
+        .await?)
     }
 
     async fn delete_memory(&self, memory_id: Uuid) -> Result<(), Error> {
@@ -962,8 +946,7 @@ impl AiMemoryRepository for PostgresAiMemoryRepository {
         )
         .bind(&memory_id)
         .execute(&self.pool)
-        .await
-        .map_err(|e| Error::Database(e.to_string()))?;
+        .await?;
 
         Ok(())
     }
@@ -977,8 +960,7 @@ impl AiMemoryRepository for PostgresAiMemoryRepository {
         )
         .bind(&user_id)
         .execute(&self.pool)
-        .await
-        .map_err(|e| Error::Database(e.to_string()))?;
+        .await?;
 
         Ok(())
     }
@@ -992,8 +974,7 @@ impl AiMemoryRepository for PostgresAiMemoryRepository {
         )
         .bind(&older_than)
         .execute(&self.pool)
-        .await
-        .map_err(|e| Error::Database(e.to_string()))?;
+        .await?;
 
         Ok(result.rows_affected() as i64)
     }
@@ -1030,14 +1011,13 @@ impl AiAgentRepository for PostgresAiAgentRepository {
         .bind(&agent.created_at)
         .bind(&agent.updated_at)
         .execute(&self.pool)
-        .await
-        .map_err(|e| Error::Database(e.to_string()))?;
+        .await?;
 
         Ok(())
     }
 
     async fn get_agent(&self, agent_id: Uuid) -> Result<Option<AiAgent>, Error> {
-        query_as::<_, AiAgent>(
+        Ok(query_as::<_, AiAgent>(
             r#"
             SELECT 
                 agent_id, name, description, model_id, 
@@ -1048,12 +1028,11 @@ impl AiAgentRepository for PostgresAiAgentRepository {
         )
         .bind(&agent_id)
         .fetch_optional(&self.pool)
-        .await
-        .map_err(|e| Error::Database(e.to_string()))
+        .await?)
     }
 
     async fn get_agent_by_name(&self, name: &str) -> Result<Option<AiAgent>, Error> {
-        query_as::<_, AiAgent>(
+        Ok(query_as::<_, AiAgent>(
             r#"
             SELECT 
                 agent_id, name, description, model_id, 
@@ -1064,12 +1043,11 @@ impl AiAgentRepository for PostgresAiAgentRepository {
         )
         .bind(name)
         .fetch_optional(&self.pool)
-        .await
-        .map_err(|e| Error::Database(e.to_string()))
+        .await?)
     }
 
     async fn list_agents(&self) -> Result<Vec<AiAgent>, Error> {
-        query_as::<_, AiAgent>(
+        Ok(query_as::<_, AiAgent>(
             r#"
             SELECT 
                 agent_id, name, description, model_id, 
@@ -1079,8 +1057,7 @@ impl AiAgentRepository for PostgresAiAgentRepository {
             "#,
         )
         .fetch_all(&self.pool)
-        .await
-        .map_err(|e| Error::Database(e.to_string()))
+        .await?)
     }
 
     async fn get_agent_with_details(&self, agent_id: Uuid) -> Result<Option<AiAgentWithDetails>, Error> {
@@ -1100,8 +1077,7 @@ impl AiAgentRepository for PostgresAiAgentRepository {
             )
             .bind(&agent.model_id)
             .fetch_optional(&self.pool)
-            .await
-            .map_err(|e| Error::Database(e.to_string()))?;
+            .await?;
             
             if let Some(model) = maybe_model {
                 // Get the provider info
@@ -1115,8 +1091,7 @@ impl AiAgentRepository for PostgresAiAgentRepository {
                 )
                 .bind(&model.provider_id)
                 .fetch_optional(&self.pool)
-                .await
-                .map_err(|e| Error::Database(e.to_string()))?;
+                .await?;
                 
                 if let Some(provider) = maybe_provider {
                     // Get all actions for this agent
@@ -1132,8 +1107,7 @@ impl AiAgentRepository for PostgresAiAgentRepository {
                     )
                     .bind(&agent.agent_id)
                     .fetch_all(&self.pool)
-                    .await
-                    .map_err(|e| Error::Database(e.to_string()))?;
+                    .await?;
                     
                     return Ok(Some(AiAgentWithDetails {
                         agent,
@@ -1172,8 +1146,7 @@ impl AiAgentRepository for PostgresAiAgentRepository {
         .bind(&agent.enabled)
         .bind(Utc::now())
         .execute(&self.pool)
-        .await
-        .map_err(|e| Error::Database(e.to_string()))?;
+        .await?;
 
         Ok(())
     }
@@ -1187,8 +1160,7 @@ impl AiAgentRepository for PostgresAiAgentRepository {
         )
         .bind(&agent_id)
         .execute(&self.pool)
-        .await
-        .map_err(|e| Error::Database(e.to_string()))?;
+        .await?;
 
         Ok(())
     }
@@ -1228,14 +1200,13 @@ impl AiActionRepository for PostgresAiActionRepository {
         .bind(&action.created_at)
         .bind(&action.updated_at)
         .execute(&self.pool)
-        .await
-        .map_err(|e| Error::Database(e.to_string()))?;
+        .await?;
 
         Ok(())
     }
 
     async fn get_action(&self, action_id: Uuid) -> Result<Option<AiAction>, Error> {
-        query_as::<_, AiAction>(
+        Ok(query_as::<_, AiAction>(
             r#"
             SELECT 
                 action_id, agent_id, name, description, 
@@ -1247,12 +1218,11 @@ impl AiActionRepository for PostgresAiActionRepository {
         )
         .bind(&action_id)
         .fetch_optional(&self.pool)
-        .await
-        .map_err(|e| Error::Database(e.to_string()))
+        .await?)
     }
 
     async fn get_action_by_name(&self, agent_id: Uuid, name: &str) -> Result<Option<AiAction>, Error> {
-        query_as::<_, AiAction>(
+        Ok(query_as::<_, AiAction>(
             r#"
             SELECT 
                 action_id, agent_id, name, description, 
@@ -1265,12 +1235,11 @@ impl AiActionRepository for PostgresAiActionRepository {
         .bind(&agent_id)
         .bind(name)
         .fetch_optional(&self.pool)
-        .await
-        .map_err(|e| Error::Database(e.to_string()))
+        .await?)
     }
 
     async fn list_actions_for_agent(&self, agent_id: Uuid) -> Result<Vec<AiAction>, Error> {
-        query_as::<_, AiAction>(
+        Ok(query_as::<_, AiAction>(
             r#"
             SELECT 
                 action_id, agent_id, name, description, 
@@ -1283,8 +1252,7 @@ impl AiActionRepository for PostgresAiActionRepository {
         )
         .bind(&agent_id)
         .fetch_all(&self.pool)
-        .await
-        .map_err(|e| Error::Database(e.to_string()))
+        .await?)
     }
 
     async fn update_action(&self, action: &AiAction) -> Result<(), Error> {
@@ -1313,8 +1281,7 @@ impl AiActionRepository for PostgresAiActionRepository {
         .bind(&action.enabled)
         .bind(Utc::now())
         .execute(&self.pool)
-        .await
-        .map_err(|e| Error::Database(e.to_string()))?;
+        .await?;
 
         Ok(())
     }
@@ -1328,8 +1295,7 @@ impl AiActionRepository for PostgresAiActionRepository {
         )
         .bind(&action_id)
         .execute(&self.pool)
-        .await
-        .map_err(|e| Error::Database(e.to_string()))?;
+        .await?;
 
         Ok(())
     }
@@ -1364,14 +1330,13 @@ impl AiSystemPromptRepository for PostgresAiSystemPromptRepository {
         .bind(&prompt.created_at)
         .bind(&prompt.updated_at)
         .execute(&self.pool)
-        .await
-        .map_err(|e| Error::Database(e.to_string()))?;
+        .await?;
 
         Ok(())
     }
 
     async fn get_prompt(&self, prompt_id: Uuid) -> Result<Option<AiSystemPrompt>, Error> {
-        query_as::<_, AiSystemPrompt>(
+        Ok(query_as::<_, AiSystemPrompt>(
             r#"
             SELECT 
                 prompt_id, name, content, description, 
@@ -1382,12 +1347,11 @@ impl AiSystemPromptRepository for PostgresAiSystemPromptRepository {
         )
         .bind(&prompt_id)
         .fetch_optional(&self.pool)
-        .await
-        .map_err(|e| Error::Database(e.to_string()))
+        .await?)
     }
 
     async fn get_prompt_by_name(&self, name: &str) -> Result<Option<AiSystemPrompt>, Error> {
-        query_as::<_, AiSystemPrompt>(
+        Ok(query_as::<_, AiSystemPrompt>(
             r#"
             SELECT 
                 prompt_id, name, content, description, 
@@ -1398,12 +1362,11 @@ impl AiSystemPromptRepository for PostgresAiSystemPromptRepository {
         )
         .bind(name)
         .fetch_optional(&self.pool)
-        .await
-        .map_err(|e| Error::Database(e.to_string()))
+        .await?)
     }
 
     async fn get_default_prompt(&self) -> Result<Option<AiSystemPrompt>, Error> {
-        query_as::<_, AiSystemPrompt>(
+        Ok(query_as::<_, AiSystemPrompt>(
             r#"
             SELECT 
                 prompt_id, name, content, description, 
@@ -1413,12 +1376,11 @@ impl AiSystemPromptRepository for PostgresAiSystemPromptRepository {
             "#,
         )
         .fetch_optional(&self.pool)
-        .await
-        .map_err(|e| Error::Database(e.to_string()))
+        .await?)
     }
 
     async fn list_prompts(&self) -> Result<Vec<AiSystemPrompt>, Error> {
-        query_as::<_, AiSystemPrompt>(
+        Ok(query_as::<_, AiSystemPrompt>(
             r#"
             SELECT 
                 prompt_id, name, content, description, 
@@ -1428,8 +1390,7 @@ impl AiSystemPromptRepository for PostgresAiSystemPromptRepository {
             "#,
         )
         .fetch_all(&self.pool)
-        .await
-        .map_err(|e| Error::Database(e.to_string()))
+        .await?)
     }
 
     async fn update_prompt(&self, prompt: &AiSystemPrompt) -> Result<(), Error> {
@@ -1452,15 +1413,14 @@ impl AiSystemPromptRepository for PostgresAiSystemPromptRepository {
         .bind(&prompt.is_default)
         .bind(Utc::now())
         .execute(&self.pool)
-        .await
-        .map_err(|e| Error::Database(e.to_string()))?;
+        .await?;
 
         Ok(())
     }
 
     async fn set_default_prompt(&self, prompt_id: Uuid) -> Result<(), Error> {
         // Begin transaction
-        let mut tx = self.pool.begin().await.map_err(|e| Error::Database(e.to_string()))?;
+        let mut tx = self.pool.begin().await?;
 
         // Clear existing default
         query(
@@ -1472,8 +1432,7 @@ impl AiSystemPromptRepository for PostgresAiSystemPromptRepository {
         )
         .bind(Utc::now())
         .execute(&mut *tx)
-        .await
-        .map_err(|e| Error::Database(e.to_string()))?;
+        .await?;
 
         // Set new default
         query(
@@ -1486,11 +1445,10 @@ impl AiSystemPromptRepository for PostgresAiSystemPromptRepository {
         .bind(&prompt_id)
         .bind(Utc::now())
         .execute(&mut *tx)
-        .await
-        .map_err(|e| Error::Database(e.to_string()))?;
+        .await?;
 
         // Commit transaction
-        tx.commit().await.map_err(|e| Error::Database(e.to_string()))?;
+        tx.commit().await?;
 
         Ok(())
     }
@@ -1504,8 +1462,7 @@ impl AiSystemPromptRepository for PostgresAiSystemPromptRepository {
         )
         .bind(&prompt_id)
         .execute(&self.pool)
-        .await
-        .map_err(|e| Error::Database(e.to_string()))?;
+        .await?;
 
         Ok(())
     }
@@ -1536,8 +1493,7 @@ impl AiConfigurationRepository for PostgresAiConfigurationRepository {
             "#,
         )
         .fetch_optional(&self.pool)
-        .await
-        .map_err(|e| Error::Database(e.to_string()))?;
+        .await?;
 
         if let Some(provider) = maybe_provider {
             // Get default credential for the provider
@@ -1551,8 +1507,7 @@ impl AiConfigurationRepository for PostgresAiConfigurationRepository {
             )
             .bind(&provider.provider_id)
             .fetch_optional(&self.pool)
-            .await
-            .map_err(|e| Error::Database(e.to_string()))?;
+            .await?;
 
             if let Some(credential) = maybe_credential {
                 // Decrypt the credential
@@ -1572,8 +1527,7 @@ impl AiConfigurationRepository for PostgresAiConfigurationRepository {
                 )
                 .bind(&provider.provider_id)
                 .fetch_optional(&self.pool)
-                .await
-                .map_err(|e| Error::Database(e.to_string()))?;
+                .await?;
 
                 if let Some(model) = maybe_model {
                     return Ok(Some(AiConfiguration {
@@ -1599,8 +1553,7 @@ impl AiConfigurationRepository for PostgresAiConfigurationRepository {
         )
         .bind(provider_name)
         .fetch_optional(&self.pool)
-        .await
-        .map_err(|e| Error::Database(e.to_string()))?;
+        .await?;
 
         if let Some(provider) = maybe_provider {
             // Get default credential for the provider
@@ -1614,8 +1567,7 @@ impl AiConfigurationRepository for PostgresAiConfigurationRepository {
             )
             .bind(&provider.provider_id)
             .fetch_optional(&self.pool)
-            .await
-            .map_err(|e| Error::Database(e.to_string()))?;
+            .await?;
 
             if let Some(credential) = maybe_credential {
                 // Decrypt the credential
@@ -1635,8 +1587,7 @@ impl AiConfigurationRepository for PostgresAiConfigurationRepository {
                 )
                 .bind(&provider.provider_id)
                 .fetch_optional(&self.pool)
-                .await
-                .map_err(|e| Error::Database(e.to_string()))?;
+                .await?;
 
                 if let Some(model) = maybe_model {
                     return Ok(Some(AiConfiguration {

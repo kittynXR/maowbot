@@ -26,37 +26,89 @@ pub async fn handle_ai_command(args: &[&str], bot_api: &Arc<dyn BotApi>) -> Stri
              - ai trigger [list|add|update|delete]: Manage trigger patterns\n\
              - ai prompt [list|add|update|delete]: Manage system prompts\n\
              - ai chat <message>: Test chat with AI\n\
-             - ai openai/anthropic: Legacy commands to configure providers".to_string()
+             - ai configure [openai|anthropic]: Configure AI providers".to_string()
         },
         
         "enable" => {
-            info!("AI processing would be enabled");
-            "AI processing enabled".to_string()
+            // Get the AI service and enable it
+            let service_result = bot_api.get_ai_service().await;
+            match service_result {
+                Ok(Some(service_any)) => {
+                    // Downcast to the actual AiService type
+                    if let Some(service) = service_any.downcast_ref::<maowbot_ai::plugins::ai_service::AiService>() {
+                        match service.set_enabled(true).await {
+                            Ok(_) => "AI processing enabled".to_string(),
+                            Err(e) => format!("Error enabling AI: {}", e)
+                        }
+                    } else {
+                        "AI service type not recognized".to_string()
+                    }
+                },
+                Ok(None) => "AI service is not available".to_string(),
+                Err(e) => format!("Error accessing AI service: {}", e)
+            }
         },
         
         "disable" => {
-            info!("AI processing would be disabled");
-            "AI processing disabled".to_string()
+            // Get the AI service and disable it
+            let service_result = bot_api.get_ai_service().await;
+            match service_result {
+                Ok(Some(service_any)) => {
+                    // Downcast to the actual AiService type
+                    if let Some(service) = service_any.downcast_ref::<maowbot_ai::plugins::ai_service::AiService>() {
+                        match service.set_enabled(false).await {
+                            Ok(_) => "AI processing disabled".to_string(),
+                            Err(e) => format!("Error disabling AI: {}", e)
+                        }
+                    } else {
+                        "AI service type not recognized".to_string()
+                    }
+                },
+                Ok(None) => "AI service is not available".to_string(),
+                Err(e) => format!("Error accessing AI service: {}", e)
+            }
         },
         
         "status" => {
-            // Try to get status information from the AI service
-            match bot_api.generate_chat(vec![serde_json::json!({"role": "system", "content": "Test"})]).await {
-                Ok(_) => "AI Status: Enabled and functioning".to_string(),
+            // Get the AI service status directly
+            let service_result = bot_api.get_ai_service().await;
+            match service_result {
+                Ok(Some(service_any)) => {
+                    // Downcast to the actual AiService type
+                    if let Some(service) = service_any.downcast_ref::<maowbot_ai::plugins::ai_service::AiService>() {
+                        match service.is_enabled().await {
+                            true => "AI Status: Enabled and functioning".to_string(),
+                            false => "AI Status: Disabled".to_string()
+                        }
+                    } else {
+                        "AI service type not recognized".to_string()
+                    }
+                },
+                Ok(None) => "AI Status: Service not available".to_string(),
                 Err(e) => format!("AI Status: Error - {}", e)
             }
         },
         
-        "openai" => {
-            if args.len() < 3 {
-                return "Usage: ai openai --api-key <KEY> [--model <MODEL>] [--api-base <URL>]".to_string();
+        "configure" => {
+            if args.len() < 2 {
+                return "Usage: ai configure [openai|anthropic]".to_string();
+            }
+            
+            let provider_type = args[1].to_lowercase();
+            
+            if provider_type != "openai" && provider_type != "anthropic" {
+                return "Supported providers: openai, anthropic".to_string();
+            }
+            
+            if args.len() < 4 || args[2] != "--api-key" {
+                return format!("Usage: ai configure {} --api-key <KEY> [--model <MODEL>] [--api-base <URL>]", provider_type).to_string();
             }
             
             let mut api_key = String::new();
-            let mut model = "gpt-4".to_string();
+            let mut model = if provider_type == "openai" { "gpt-4" } else { "claude-3-opus-20240229" }.to_string();
             let mut api_base = None;
             
-            let mut i = 1;
+            let mut i = 2;
             while i < args.len() {
                 match args[i] {
                     "--api-key" => {
@@ -94,84 +146,20 @@ pub async fn handle_ai_command(args: &[&str], bot_api: &Arc<dyn BotApi>) -> Stri
             }
             
             let config = ProviderConfig {
-                provider_type: "openai".to_string(),
+                provider_type: provider_type.clone(),
                 api_key,
                 default_model: model.clone(),
                 api_base,
                 options: HashMap::new(),
             };
             
-            debug!("Configuring OpenAI with model: {}", config.default_model);
+            debug!("Configuring {} with model: {}", provider_type, config.default_model);
             
             // Configure the provider through the AI API service
             let json_config = serde_json::to_value(&config).unwrap_or_default();
             match bot_api.configure_ai_provider(json_config).await {
-                Ok(_) => format!("OpenAI configured with model: {}", config.default_model),
-                Err(e) => format!("Error configuring OpenAI: {}", e)
-            }
-        },
-        
-        "anthropic" => {
-            if args.len() < 3 {
-                return "Usage: ai anthropic --api-key <KEY> [--model <MODEL>] [--api-base <URL>]".to_string();
-            }
-            
-            let mut api_key = String::new();
-            let mut model = "claude-3-opus-20240229".to_string();
-            let mut api_base = None;
-            
-            let mut i = 1;
-            while i < args.len() {
-                match args[i] {
-                    "--api-key" => {
-                        if i + 1 < args.len() {
-                            api_key = args[i + 1].to_string();
-                            i += 2;
-                        } else {
-                            return "Missing value for --api-key".to_string();
-                        }
-                    },
-                    "--model" => {
-                        if i + 1 < args.len() {
-                            model = args[i + 1].to_string();
-                            i += 2;
-                        } else {
-                            return "Missing value for --model".to_string();
-                        }
-                    },
-                    "--api-base" => {
-                        if i + 1 < args.len() {
-                            api_base = Some(args[i + 1].to_string());
-                            i += 2;
-                        } else {
-                            return "Missing value for --api-base".to_string();
-                        }
-                    },
-                    _ => {
-                        i += 1;
-                    }
-                }
-            }
-            
-            if api_key.is_empty() {
-                return "API key is required".to_string();
-            }
-            
-            let config = ProviderConfig {
-                provider_type: "anthropic".to_string(),
-                api_key,
-                default_model: model.clone(),
-                api_base,
-                options: HashMap::new(),
-            };
-            
-            debug!("Configuring Anthropic with model: {}", config.default_model);
-            
-            // Configure the provider through the AI API service
-            let json_config = serde_json::to_value(&config).unwrap_or_default();
-            match bot_api.configure_ai_provider(json_config).await {
-                Ok(_) => format!("Anthropic configured with model: {}", config.default_model),
-                Err(e) => format!("Error configuring Anthropic: {}", e)
+                Ok(_) => format!("{} configured with model: {}", provider_type, config.default_model),
+                Err(e) => format!("Error configuring {}: {}", provider_type, e)
             }
         },
         
@@ -207,13 +195,49 @@ pub async fn handle_ai_command(args: &[&str], bot_api: &Arc<dyn BotApi>) -> Stri
             let provider_command = args[1].to_lowercase();
             match provider_command.as_str() {
                 "list" => {
-                    let json_message = json!({
-                        "role": "system",
-                        "content": "List AI providers"
-                    });
-                    
-                    match bot_api.generate_chat(vec![json_message]).await {
-                        Ok(_) => "Configured providers:\n- OpenAI\n- Anthropic".to_string(),
+                    // Get the AI service directly
+                    let service_result = bot_api.get_ai_service().await;
+                    match service_result {
+                        Ok(Some(service_any)) => {
+                            // Downcast to the actual AiService type
+                            if let Some(service) = service_any.downcast_ref::<maowbot_ai::plugins::ai_service::AiService>() {
+                                // Check if provider repository exists
+                                if let Some(provider_repo) = service.get_provider_repo() {
+                                    match provider_repo.list_providers().await {
+                                        Ok(providers) => {
+                                            if providers.is_empty() {
+                                                "No providers configured".to_string()
+                                            } else {
+                                                let mut result = "Configured providers:\n".to_string();
+                                                for provider in providers {
+                                                    result.push_str(&format!("- {}: {}\n", 
+                                                        provider.name, 
+                                                        if provider.enabled { "Enabled" } else { "Disabled" }
+                                                    ));
+                                                }
+                                                result
+                                            }
+                                        },
+                                        Err(e) => format!("Error listing providers: {}", e)
+                                    }
+                                } else {
+                                    // Fallback to client providers if repository is not available
+                                    match service.client().provider().get_all().await {
+                                        providers if providers.is_empty() => "No providers configured".to_string(),
+                                        providers => {
+                                            let mut result = "Configured providers:\n".to_string();
+                                            for provider in providers {
+                                                result.push_str(&format!("- {}\n", provider));
+                                            }
+                                            result
+                                        }
+                                    }
+                                }
+                            } else {
+                                "AI service type not recognized".to_string()
+                            }
+                        },
+                        Ok(None) => "AI service is not available".to_string(),
                         Err(e) => format!("Error accessing AI service: {}", e)
                     }
                 },
@@ -327,27 +351,98 @@ pub async fn handle_ai_command(args: &[&str], bot_api: &Arc<dyn BotApi>) -> Stri
             let credential_command = args[1].to_lowercase();
             match credential_command.as_str() {
                 "list" => {
-                    if args.len() > 2 {
-                        let provider = args[2];
-                        let json_message = json!({
-                            "role": "system",
-                            "content": format!("List credentials for provider: {}", provider)
-                        });
-                        
-                        match bot_api.generate_chat(vec![json_message]).await {
-                            Ok(_) => format!("Credentials for provider '{}':\n- Default key: ***\n- Secondary key: ***", provider),
-                            Err(e) => format!("Error accessing AI service: {}", e)
-                        }
-                    } else {
-                        let json_message = json!({
-                            "role": "system",
-                            "content": "List all credentials"
-                        });
-                        
-                        match bot_api.generate_chat(vec![json_message]).await {
-                            Ok(_) => "All credentials:\n- OpenAI: Default key: ***\n- Anthropic: Default key: ***".to_string(),
-                            Err(e) => format!("Error accessing AI service: {}", e)
-                        }
+                    // Get the AI service directly
+                    let service_result = bot_api.get_ai_service().await;
+                    match service_result {
+                        Ok(Some(service_any)) => {
+                            // Downcast to the actual AiService type
+                            if let Some(service) = service_any.downcast_ref::<maowbot_ai::plugins::ai_service::AiService>() {
+                                // Check if credential repository exists
+                                if let Some(credential_repo) = service.get_ai_credential_repo() {
+                                    // Filter by provider if specified
+                                    if args.len() > 2 {
+                                        let provider_name = args[2];
+                                        // First get the provider ID
+                                        if let Some(provider_repo) = service.get_provider_repo() {
+                                            match provider_repo.get_provider_by_name(provider_name).await {
+                                                Ok(Some(provider)) => {
+                                                    // Get credentials for this provider
+                                                    match credential_repo.list_credentials_for_provider(provider.provider_id).await {
+                                                        Ok(credentials) => {
+                                                            if credentials.is_empty() {
+                                                                format!("No credentials found for provider '{}'", provider_name)
+                                                            } else {
+                                                                let mut result = format!("Credentials for provider '{}':\n", provider_name);
+                                                                for cred in credentials {
+                                                                    let masked_key = "***".to_string() + &cred.api_key[cred.api_key.len().saturating_sub(4)..];
+                                                                    result.push_str(&format!("- {}: {} {}\n", 
+                                                                        cred.credential_id,
+                                                                        masked_key,
+                                                                        if cred.is_default { "(default)" } else { "" }
+                                                                    ));
+                                                                }
+                                                                result
+                                                            }
+                                                        },
+                                                        Err(e) => format!("Error listing credentials: {}", e)
+                                                    }
+                                                },
+                                                Ok(None) => format!("Provider not found: {}", provider_name),
+                                                Err(e) => format!("Error finding provider: {}", e)
+                                            }
+                                        } else {
+                                            "Provider repository is not available".to_string()
+                                        }
+                                    } else {
+                                        // List all credentials
+                                        match credential_repo.list_credentials().await {
+                                            Ok(credentials) => {
+                                                if credentials.is_empty() {
+                                                    "No credentials configured".to_string()
+                                                } else {
+                                                    let mut result = "All credentials:\n".to_string();
+                                                    // Organize by provider
+                                                    let mut by_provider: HashMap<Uuid, Vec<_>> = HashMap::new();
+                                                    for cred in credentials {
+                                                        by_provider.entry(cred.provider_id).or_default().push(cred);
+                                                    }
+                                                    
+                                                    for (provider_id, creds) in by_provider {
+                                                        // Get provider name if possible
+                                                        let provider_name = if let Some(provider_repo) = service.get_provider_repo() {
+                                                            match provider_repo.get_provider(provider_id).await {
+                                                                Ok(Some(provider)) => provider.name,
+                                                                _ => format!("Provider {}", provider_id)
+                                                            }
+                                                        } else {
+                                                            format!("Provider {}", provider_id)
+                                                        };
+                                                        
+                                                        result.push_str(&format!("{}:\n", provider_name));
+                                                        for cred in creds {
+                                                            let masked_key = "***".to_string() + &cred.api_key[cred.api_key.len().saturating_sub(4)..];
+                                                            result.push_str(&format!("  - {}: {} {}\n", 
+                                                                cred.credential_id,
+                                                                masked_key,
+                                                                if cred.is_default { "(default)" } else { "" }
+                                                            ));
+                                                        }
+                                                    }
+                                                    result
+                                                }
+                                            },
+                                            Err(e) => format!("Error listing credentials: {}", e)
+                                        }
+                                    }
+                                } else {
+                                    "Credential repository is not available".to_string()
+                                }
+                            } else {
+                                "AI service type not recognized".to_string()
+                            }
+                        },
+                        Ok(None) => "AI service is not available".to_string(),
+                        Err(e) => format!("Error accessing AI service: {}", e)
                     }
                 },
                 "add" => {
@@ -1425,85 +1520,7 @@ pub async fn handle_ai_command(args: &[&str], bot_api: &Arc<dyn BotApi>) -> Stri
             }
         },
         
-        "addtrigger" => {
-            if args.len() < 2 {
-                return "Usage: ai addtrigger <PREFIX>".to_string();
-            }
-            
-            let prefix = args[1];
-            debug!("Adding trigger prefix: {}", prefix);
-            
-            // Get the AI service and add the trigger
-            let service_result = bot_api.get_ai_service().await;
-            match service_result {
-                Ok(Some(service_any)) => {
-                    // Downcast to the actual AiService type
-                    if let Some(service) = service_any.downcast_ref::<maowbot_ai::plugins::ai_service::AiService>() {
-                        match service.add_trigger_prefix(prefix).await {
-                            Ok(_) => format!("Added trigger prefix: {}", prefix),
-                            Err(e) => format!("Error adding trigger prefix: {}", e)
-                        }
-                    } else {
-                        "AI service type not recognized".to_string()
-                    }
-                },
-                Ok(None) => "AI service is not available".to_string(),
-                Err(e) => format!("Error accessing AI service: {}", e)
-            }
-        },
-        
-        "removetrigger" => {
-            if args.len() < 2 {
-                return "Usage: ai removetrigger <PREFIX>".to_string();
-            }
-            
-            let prefix = args[1];
-            debug!("Removing trigger prefix: {}", prefix);
-            
-            // Get the AI service and remove the trigger
-            let service_result = bot_api.get_ai_service().await;
-            match service_result {
-                Ok(Some(service_any)) => {
-                    // Downcast to the actual AiService type
-                    if let Some(service) = service_any.downcast_ref::<maowbot_ai::plugins::ai_service::AiService>() {
-                        match service.remove_trigger_prefix(prefix).await {
-                            Ok(_) => format!("Removed trigger prefix: {}", prefix),
-                            Err(e) => format!("Error removing trigger prefix: {}", e)
-                        }
-                    } else {
-                        "AI service type not recognized".to_string()
-                    }
-                },
-                Ok(None) => "AI service is not available".to_string(),
-                Err(e) => format!("Error accessing AI service: {}", e)
-            }
-        },
-        
-        "listtriggers" => {
-            // Get the AI service and list all triggers
-            let service_result = bot_api.get_ai_service().await;
-            match service_result {
-                Ok(Some(service_any)) => {
-                    // Downcast to the actual AiService type
-                    if let Some(service) = service_any.downcast_ref::<maowbot_ai::plugins::ai_service::AiService>() {
-                        match service.get_trigger_prefixes().await {
-                            Ok(prefixes) => {
-                                let mut result = "Configured triggers:\n".to_string();
-                                for prefix in prefixes {
-                                    result.push_str(&format!("- Prefix: {}\n", prefix));
-                                }
-                                result
-                            },
-                            Err(e) => format!("Error listing triggers: {}", e)
-                        }
-                    } else {
-                        "AI service type not recognized".to_string()
-                    }
-                },
-                Ok(None) => "AI service is not available".to_string(),
-                Err(e) => format!("Error accessing AI service: {}", e)
-            }
-        },
+        // Legacy trigger commands removed - use "ai trigger" instead
         
         _ => {
             format!("Unknown AI subcommand: {}", subcommand)

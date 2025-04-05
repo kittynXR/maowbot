@@ -118,7 +118,7 @@ impl ServerContext {
 
         // 3) Build core repos
         let encryptor = Encryptor::new(&get_master_key()?)?;
-        let creds_repo_arc = Arc::new(PostgresCredentialsRepository::new(db.pool().clone(), encryptor));
+        let creds_repo_arc = Arc::new(PostgresCredentialsRepository::new(db.pool().clone(), encryptor.clone()));
         let platform_config_repo = Arc::new(PostgresPlatformConfigRepository::new(db.pool().clone()));
         let bot_config_repo: Arc<dyn BotConfigRepository + Send + Sync> = Arc::new(
             PostgresBotConfigRepository::new(db.pool().clone())
@@ -216,30 +216,53 @@ impl ServerContext {
             discord_repo.clone(),
         ));
 
-        // Create the AI service
-        let ai_service = match maowbot_ai::plugins::ai_service::AiService::new(
+        // Create the AI repositories
+        let ai_provider_repo = Arc::new(maowbot_core::repositories::postgres::ai::PostgresAiProviderRepository::new(db.pool().clone()));
+        let ai_credential_repo = Arc::new(maowbot_core::repositories::postgres::ai::PostgresAiCredentialRepository::new(db.pool().clone(), encryptor.clone()));
+        let ai_model_repo = Arc::new(maowbot_core::repositories::postgres::ai::PostgresAiModelRepository::new(db.pool().clone()));
+        let ai_trigger_repo = Arc::new(maowbot_core::repositories::postgres::ai::PostgresAiTriggerRepository::new(db.pool().clone()));
+        let ai_memory_repo = Arc::new(maowbot_core::repositories::postgres::ai::PostgresAiMemoryRepository::new(db.pool().clone()));
+        let ai_agent_repo = Arc::new(maowbot_core::repositories::postgres::ai::PostgresAiAgentRepository::new(db.pool().clone()));
+        let ai_action_repo = Arc::new(maowbot_core::repositories::postgres::ai::PostgresAiActionRepository::new(db.pool().clone()));
+        let ai_prompt_repo = Arc::new(maowbot_core::repositories::postgres::ai::PostgresAiSystemPromptRepository::new(db.pool().clone()));
+        let ai_config_repo = Arc::new(maowbot_core::repositories::postgres::ai::PostgresAiConfigurationRepository::new(db.pool().clone(), encryptor.clone()));
+
+        // Create the AI service with repositories for full database integration
+        let ai_service = match maowbot_ai::plugins::ai_service::AiService::with_repositories(
             user_repo_arc.clone(),
-            creds_repo_arc.clone()
+            creds_repo_arc.clone(),
+            ai_provider_repo,
+            ai_credential_repo,
+            ai_model_repo,
+            ai_trigger_repo,
+            ai_memory_repo,
+            ai_agent_repo,
+            ai_action_repo,
+            ai_prompt_repo,
+            ai_config_repo
         ).await {
             Ok(service) => {
-                info!("AI service initialized successfully");
+                info!("AI service initialized successfully with database repositories");
                 
-                // Configure with a default provider
-                // For OpenAI
-                let mut options = std::collections::HashMap::new();
-                options.insert("system_prompt".to_string(), "You are MaowBot, a helpful AI assistant for Discord and Twitch users.".to_string());
-                
-                let config = maowbot_ai::models::ProviderConfig {
-                    provider_type: "openai".to_string(),
-                    api_key: std::env::var("OPENAI_API_KEY").unwrap_or_else(|_| "demo-key".to_string()),
-                    default_model: "gpt-3.5-turbo".to_string(),
-                    api_base: None,
-                    options,
-                };
-                
-                match service.configure_provider(config).await {
-                    Ok(_) => info!("Configured default AI provider"),
-                    Err(e) => error!("Failed to configure AI provider: {:?}", e),
+                // Configure with a default provider if environment variable exists
+                if let Ok(api_key) = std::env::var("OPENAI_API_KEY") {
+                    let mut options = std::collections::HashMap::new();
+                    options.insert("system_prompt".to_string(), "You are MaowBot, a helpful AI assistant for Discord and Twitch users.".to_string());
+                    
+                    let config = maowbot_ai::models::ProviderConfig {
+                        provider_type: "openai".to_string(),
+                        api_key,
+                        default_model: "gpt-4o".to_string(),
+                        api_base: None,
+                        options,
+                    };
+                    
+                    match service.configure_provider(config).await {
+                        Ok(_) => info!("Configured OpenAI provider from environment variable"),
+                        Err(e) => error!("Failed to configure AI provider: {:?}", e),
+                    }
+                } else {
+                    info!("No OPENAI_API_KEY found in environment, skipping default configuration");
                 }
                 
                 // Print the trigger prefixes
@@ -251,7 +274,7 @@ impl ServerContext {
                 Some(Arc::new(service))
             },
             Err(e) => {
-                error!("Failed to initialize AI service: {:?}", e);
+                error!("Failed to initialize AI service with repositories: {:?}", e);
                 None
             }
         };
