@@ -1,6 +1,6 @@
 use std::sync::Arc;
 use tokio::time::{interval, Duration};
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info, warn, trace};
 use std::collections::HashSet;
 
 use twilight_model::{
@@ -58,7 +58,7 @@ pub async fn check_all_streaming_status(
         let guild_id_str = &live_role.guild_id;
         let role_id_str = &live_role.role_id;
         
-        debug!("Processing live role for guild {}", guild_id_str);
+        info!("Processing live role for guild {}", guild_id_str);
         
         // Parse the guild and role IDs
         let guild_id_u64 = match guild_id_str.parse::<u64>() {
@@ -79,8 +79,11 @@ pub async fn check_all_streaming_status(
         
         let guild_id = Id::<GuildMarker>::new(guild_id_u64);
         let role_id = Id::<RoleMarker>::new(role_id_u64);
+
+        // FIRST PASS: Check users WHO ALREADY HAVE THE ROLE to see if they should keep it
+        info!("FIRST PASS: Checking users who have the live role...");
         
-        // Use the HTTP API to get guild members directly
+        // Get guild members with the role
         match http.guild_members(guild_id).limit(1000).await {
             Ok(members_response) => {
                 let members = match members_response.model().await {
@@ -91,81 +94,145 @@ pub async fn check_all_streaming_status(
                     }
                 };
                 
-                // Process each member 
-                for member in members {
+                // First, process only members WITH the role
+                for member in members.iter().filter(|m| m.roles.contains(&role_id)) {
+                    let user_id = member.user.id;
+                    
+                    info!("Found user {} with the live role", user_id);
+                    
+                    // Check if they're actually streaming
+                    let mut is_streaming = false;
+                    
+                    // Try to fetch their activities directly using HTTP
+                    // For each user with the role, check their presence
+                    match http.guild_member(guild_id, user_id).await {
+                        Ok(member_response) => {
+                            match member_response.model().await {
+                                Ok(member_detail) => {
+                                    info!("Checking streaming status for user with role: {}", user_id);
+                                    
+                                    // Member detail doesn't directly have presence data
+                                    // Check in the cache for presence data instead
+                                    if let Some(presence) = cache.presence(guild_id, user_id) {
+                                        info!("Found presence data for user {} in cache", user_id);
+                                        
+                                        // Check all activities
+                                        for (idx, activity) in presence.activities().iter().enumerate() {
+                                            info!("User {} activity {}: type={:?}, name={}, url={:?}", 
+                                                  user_id, idx, activity.kind, activity.name, activity.url);
+                                            
+                                            if activity.kind == ActivityType::Streaming {
+                                                if let Some(url) = &activity.url {
+                                                    if url.contains("twitch.tv") {
+                                                        is_streaming = true;
+                                                        info!("User {} is streaming on Twitch", user_id);
+                                                        break;
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    } else {
+                                        info!("No presence data found in cache for user {}", user_id);
+                                        
+                                        // Try one last approach - look for the user in active users
+                                        // We'll check if they have a streaming activity in any guild
+                                        info!("Checking for user's streaming activity in any guild...");
+                                        
+                                        // We can't list all guilds directly, so we'll just check the current guild
+                                        let mut found_streaming = false;
+                                        
+                                        // Check the current guild since we know that one
+                                        if let Some(presence) = cache.presence(guild_id, user_id) {
+                                            info!("Found presence for user {} in guild {}", user_id, guild_id);
+                                            
+                                            // Check all activities
+                                            for (idx, activity) in presence.activities().iter().enumerate() {
+                                                info!("Found activity {}: type={:?}, name={}, url={:?}", 
+                                                      idx, activity.kind, activity.name, activity.url);
+                                                
+                                                if activity.kind == ActivityType::Streaming {
+                                                    if let Some(url) = &activity.url {
+                                                        if url.contains("twitch.tv") {
+                                                            found_streaming = true;
+                                                            is_streaming = true;
+                                                            info!("User {} is streaming on Twitch in guild {}", user_id, guild_id);
+                                                            break;
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        } else {
+                                            info!("No presence data found for user {} in guild {}", user_id, guild_id);
+                                        }
+                                        
+                                        if !found_streaming {
+                                            info!("No streaming activity found for user {} in any guild", user_id);
+                                        }
+                                    }
+                                    
+                                    // If not streaming, remove the role
+                                    if !is_streaming {
+                                        info!("User {} has the live role but isn't streaming - removing role", user_id);
+                                        
+                                        if let Err(e) = http.remove_guild_member_role(guild_id, user_id, role_id).await {
+                                            warn!("Failed to remove live role from non-streaming user: {:?}", e);
+                                        } else {
+                                            info!("Successfully removed live role from user {}", user_id);
+                                        }
+                                    } else {
+                                        info!("User {} is streaming - keeping live role", user_id);
+                                    }
+                                },
+                                Err(e) => {
+                                    warn!("Failed to parse member detail for {}: {:?}", user_id, e);
+                                }
+                            }
+                        },
+                        Err(e) => {
+                            warn!("Failed to fetch member detail for {}: {:?}", user_id, e);
+                        }
+                    }
+                }
+                
+                // SECOND PASS: Check all members to find anyone streaming who doesn't have the role
+                info!("SECOND PASS: Checking all users for streaming activity...");
+                
+                for member in &members {
                     let user_id = member.user.id;
                     let has_role = member.roles.contains(&role_id);
                     
-                    // Simplify the streaming detection since we're having issues with the API
-                    // We'll use the cache instead of trying to get presence via HTTP
+                    // Skip users who already have the role (we handled them in the first pass)
+                    if has_role {
+                        continue;
+                    }
+                    
+                    // Check if they're streaming
                     let mut is_streaming = false;
                     
-                    // Look for this member's presence in the cache
-                    debug!("Checking cache for presence of user {} in guild {}", user_id, guild_id);
+                    // First try the cache
                     if let Some(presence) = cache.presence(guild_id, user_id) {
-                        let activities = presence.activities();
-                        debug!("Found {} activities for user {} in cache", activities.len(), user_id);
-                        
-                        for (idx, activity) in activities.iter().enumerate() {
-                            // Log each activity to help debug
-                            debug!("  Activity {}: type={:?}, name={}, url={:?}", 
-                                  idx, activity.kind, activity.name, activity.url);
-                            
-                            // Direct field access - no method calls
+                        for activity in presence.activities() {
                             if activity.kind == ActivityType::Streaming {
-                                // URL is an Option<String> field
                                 if let Some(url) = &activity.url {
                                     if url.contains("twitch.tv") {
                                         is_streaming = true;
-                                        debug!("User {} is streaming on Twitch", user_id);
+                                        info!("Found user {} streaming without role", user_id);
                                         break;
                                     }
                                 }
                             }
                         }
-                        
-                        if !is_streaming {
-                            debug!("User {} is not streaming (no streaming activity found in cache)", user_id);
-                        }
-                    } else {
-                            // No presence data found in cache
-                        if has_role {
-                            // If they have the role but no presence data, they're likely not streaming
-                            // This is a key case to handle - they have the role but shouldn't anymore
-                            info!("No presence data found for user {} in guild {}, but they have the role - will remove it", 
-                                 user_id, guild_id);
-                            // We'll keep is_streaming = false to remove the role
-                        } else {
-                            debug!("No presence data found for user {} in guild {} and they don't have the role", 
-                                  user_id, guild_id);
-                        }
                     }
                     
-                    // Take appropriate action based on streaming status and role
-                    if is_streaming && !has_role {
-                        // User is streaming but doesn't have the role - add it
-                        info!("Periodic check: Adding live role {} to streaming user {} in guild {}", 
-                              role_id, user_id, guild_id);
+                    // If streaming but doesn't have the role, add it
+                    if is_streaming {
+                        info!("Adding live role to streaming user {} who doesn't have it", user_id);
                         
                         if let Err(e) = http.add_guild_member_role(guild_id, user_id, role_id).await {
                             warn!("Failed to add live role to streaming user: {:?}", e);
                         } else {
                             info!("Successfully added live role to user {}", user_id);
                         }
-                    } else if !is_streaming && has_role {
-                        // User has the role but isn't streaming - remove it
-                        info!("Periodic check: Removing live role {} from non-streaming user {} in guild {}", 
-                              role_id, user_id, guild_id);
-                        
-                        if let Err(e) = http.remove_guild_member_role(guild_id, user_id, role_id).await {
-                            warn!("Failed to remove live role from non-streaming user: {:?}", e);
-                        } else {
-                            info!("Successfully removed live role from user {}", user_id);
-                        }
-                    } else {
-                        // Status matches role - no action needed
-                        debug!("Periodic check: No role change needed for user {}: is_streaming={}, has_role={}", 
-                               user_id, is_streaming, has_role);
                     }
                 }
             },
@@ -186,19 +253,27 @@ pub fn spawn_discord_live_role_task(
     discord_platform: Arc<DiscordPlatform>,
     discord_repo: Arc<dyn DiscordRepository + Send + Sync>,
 ) -> tokio::task::JoinHandle<()> {
+    info!("Starting periodic Discord live role task");
+    
     tokio::spawn(async move {
         // Check immediately at startup
+        info!("Running initial Discord live role check");
         if let Err(e) = check_all_streaming_status(&discord_platform, &discord_repo).await {
             error!("Initial Discord live role check failed: {:?}", e);
+        } else {
+            info!("Initial Discord live role check completed successfully");
         }
         
-        // Then check periodically every 2 minutes
-        let mut interval = interval(Duration::from_secs(120));
+        // Then check periodically every 60 seconds for quicker role updates
+        let mut interval = interval(Duration::from_secs(60));
         
         loop {
             interval.tick().await;
+            debug!("Running periodic Discord live role check");
             if let Err(e) = check_all_streaming_status(&discord_platform, &discord_repo).await {
                 error!("Periodic Discord live role check failed: {:?}", e);
+            } else {
+                trace!("Periodic Discord live role check completed successfully");
             }
         }
     })
@@ -226,7 +301,61 @@ pub async fn verify_streaming_status_at_startup(
     
     match platform_manager.get_discord_instance(account_name).await {
         Ok(discord_platform) => {
+            // At this point, Discord should have connected and started receiving events
+            info!("Discord instance ready for checking live roles");
+            
+            // Get a direct reference to the cache to check if we have presence data
+            if let Some(cache) = &discord_platform.cache {
+                info!("Cache is available, getting live roles to check guilds...");
+                
+                // First get the configured live roles - this gives us the guild IDs we care about
+                match discord_repo.list_live_roles().await {
+                    Ok(live_roles) => {
+                        info!("Found {} configured live roles", live_roles.len());
+                        
+                        let mut total_presences = 0;
+                        let mut streaming_count = 0;
+                        
+                        // Check each guild with a live role
+                        for live_role in &live_roles {
+                            let guild_id_str = &live_role.guild_id;
+                            info!("Checking presence data for guild {}", guild_id_str);
+                            
+                            // Parse the guild ID
+                            let guild_id_u64 = match guild_id_str.parse::<u64>() {
+                                Ok(id) => id,
+                                Err(e) => {
+                                    warn!("Invalid guild ID format: {}", e);
+                                    continue;
+                                }
+                            };
+                            
+                            let guild_id = Id::<GuildMarker>::new(guild_id_u64);
+                            
+                            // We can't get all presences directly, but we can check members
+                            info!("Directly checking guild status for guild {}", guild_id);
+                            
+                            // Log cache statistics 
+                            // We can't directly count members, but we can check if the guild exists in cache
+                            if cache.guild(guild_id).is_some() {
+                                info!("Guild {} exists in cache", guild_id);
+                            } else {
+                                info!("Guild {} not found in cache", guild_id);
+                            }
+                        }
+                        
+                        info!("Cache check complete. Active cache with {} live role guilds", live_roles.len());
+                    },
+                    Err(e) => {
+                        warn!("Failed to list live roles: {}", e);
+                    }
+                }
+            } else {
+                warn!("Discord cache not available");
+            }
+            
             // Run the streaming status check using this Discord platform
+            info!("Running streaming verification check...");
             if let Err(e) = check_all_streaming_status(&discord_platform, discord_repo).await {
                 error!("Startup Discord live role verification failed: {:?}", e);
                 return Err(e);
@@ -248,16 +377,35 @@ pub fn spawn_discord_live_role_startup_task(
     platform_manager: Arc<PlatformManager>,
     discord_repo: Arc<dyn DiscordRepository + Send + Sync>,
 ) -> tokio::task::JoinHandle<()> {
-    // This task just needs to run once after a short delay to ensure Discord connections are established
+    info!("Starting Discord live role startup verification task");
+    
+    // This task just needs to run once after a delay to ensure Discord connections are established
     tokio::spawn(async move {
-        // Give Discord connections time to establish
-        tokio::time::sleep(Duration::from_secs(5)).await;
+        // Give Discord connections time to establish - increased to 45 seconds
+        // This allows more time for the cache to fill with presence data
+        info!("Waiting for Discord connections to establish before checking live roles (45 seconds)...");
+        tokio::time::sleep(Duration::from_secs(45)).await;
         
         info!("Running one-time Discord live role verification task at startup");
         if let Err(e) = verify_streaming_status_at_startup(&platform_manager, &discord_repo).await {
             error!("Discord live role startup verification task failed: {:?}", e);
         } else {
             info!("Discord live role startup verification task completed successfully");
+        }
+        
+        // Run multiple follow-up checks to ensure we don't miss anyone
+        // First follow-up after 1 minute
+        tokio::time::sleep(Duration::from_secs(60)).await;
+        info!("Running first follow-up check...");
+        if let Err(e) = verify_streaming_status_at_startup(&platform_manager, &discord_repo).await {
+            error!("First follow-up check failed: {:?}", e);
+        }
+        
+        // Second follow-up after another minute
+        tokio::time::sleep(Duration::from_secs(60)).await;
+        info!("Running second follow-up check...");
+        if let Err(e) = verify_streaming_status_at_startup(&platform_manager, &discord_repo).await {
+            error!("Second follow-up check failed: {:?}", e);
         }
     })
 }

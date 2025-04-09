@@ -179,6 +179,16 @@ async fn shard_runner(
                         }
                     }
                     Event::PresenceUpdate(presence_update) => {
+                        // Log all presence updates for debugging
+                        info!("Received presence update for user {} in guild {}", 
+                              presence_update.user.id(), presence_update.guild_id);
+                        
+                        // Log all activities
+                        for (idx, activity) in presence_update.activities.iter().enumerate() {
+                            info!("Activity {}: type={:?}, name={}, url={:?}",
+                                  idx, activity.kind, activity.name, activity.url);
+                        }
+                        
                         // Handle presence update for live role
                         if let Some(repo) = &discord_repo {
                             let guild_id = presence_update.guild_id.to_string();
@@ -188,9 +198,23 @@ async fn shard_runner(
                             match repo.get_live_role(&guild_id).await {
                                 Ok(Some(live_role)) => {
                                     // First check if there was a change in streaming status
+                                    debug!("Detected presence update for user {} in guild {}", user_id, guild_id);
+                                    
+                                    // Log all activities for debugging
+                                    for (idx, activity) in presence_update.activities.iter().enumerate() {
+                                        debug!("Activity {}: type={:?}, name={}, url={:?}",
+                                              idx, activity.kind, activity.name, activity.url);
+                                    }
+                                    
                                     let is_streaming = presence_update.activities.iter().any(|activity| {
-                                        activity.kind == ActivityType::Streaming && 
-                                        activity.url.as_ref().map_or(false, |url| url.contains("twitch.tv"))
+                                        let streaming = activity.kind == ActivityType::Streaming && 
+                                            activity.url.as_ref().map_or(false, |url| url.contains("twitch.tv"));
+                                        
+                                        if streaming {
+                                            debug!("Found Twitch streaming activity for user {}", user_id);
+                                        }
+                                        
+                                        streaming
                                     });
                                     
                                     // Convert string IDs to u64 and create Twilight IDs
@@ -219,31 +243,41 @@ async fn shard_runner(
                                     
                                     // Check if the member has the role using the cache
                                     let has_role = if let Some(member) = cache.member(guild_id, user_id) {
-                                        member.roles().iter().any(|&r| r == role_id)
+                                        // Log roles for debugging
+                                        info!("User {} has {} roles in cache", user_id, member.roles().len());
+                                        let has_live_role = member.roles().iter().any(|&r| r == role_id);
+                                        info!("User {} has live role: {}", user_id, has_live_role);
+                                        has_live_role
                                     } else {
+                                        info!("User {} not found in member cache for guild {}", user_id, guild_id);
                                         false
                                     };
                                     
                                     // Only perform action if there's a status change
                                     if is_streaming && !has_role {
                                         // User is streaming but doesn't have the role - add it
-                                        debug!("User {} started streaming on Twitch, adding live role {}", 
+                                        info!("PRESENCE UPDATE: User {} started streaming on Twitch, adding live role {}", 
                                             user_id, live_role.role_id);
                                         
                                         if let Err(e) = http.add_guild_member_role(guild_id, user_id, role_id).await {
                                             warn!("Failed to add live role to user: {}", e);
+                                        } else {
+                                            info!("Successfully added live role to streaming user {}", user_id);
                                         }
                                     } else if !is_streaming && has_role {
                                         // User has stopped streaming and has the role - remove it
-                                        debug!("User {} stopped streaming on Twitch, removing live role {}", 
+                                        info!("PRESENCE UPDATE: User {} stopped streaming on Twitch, removing live role {}", 
                                             user_id, live_role.role_id);
                                         
                                         if let Err(e) = http.remove_guild_member_role(guild_id, user_id, role_id).await {
                                             warn!("Failed to remove live role from user: {}", e);
+                                        } else {
+                                            info!("Successfully removed live role from non-streaming user {}", user_id);
                                         }
                                     } else {
                                         // No change in streaming status or role state matches status
-                                        trace!("No change in streaming status for user {}", user_id);
+                                        debug!("No role change needed for user {}: is_streaming={}, has_role={}", 
+                                               user_id, is_streaming, has_role);
                                     }
                                 }
                                 Ok(None) => {
@@ -541,10 +575,20 @@ impl PlatformIntegration for DiscordPlatform {
         );
         self.http = Some(http_client.clone());
 
-        // Build the in-memory cache as an Arc, including ROLE resource type
+        // Build the in-memory cache as an Arc, ensuring we capture PRESENCE data as well as roles
         let cache = InMemoryCache::builder()
-            .resource_types(ResourceType::GUILD | ResourceType::CHANNEL | ResourceType::MESSAGE | ResourceType::ROLE)
+            .resource_types(
+                ResourceType::GUILD | 
+                ResourceType::CHANNEL | 
+                ResourceType::MESSAGE | 
+                ResourceType::ROLE | 
+                ResourceType::MEMBER | 
+                ResourceType::VOICE_STATE | 
+                ResourceType::PRESENCE
+            )
             .build();
+            
+        info!("Configuring Discord cache with resource types: GUILD | CHANNEL | MESSAGE | ROLE | MEMBER | VOICE_STATE | PRESENCE");
         let arc_cache = Arc::new(cache);
         self.cache = Some(arc_cache.clone());
 
@@ -555,11 +599,14 @@ impl PlatformIntegration for DiscordPlatform {
             }
         }
 
-        // Create recommended shards
+        // Create recommended shards with explicit intent for presence updates
         let config = Config::new(
             self.token.clone(),
-            Intents::GUILDS | Intents::GUILD_MESSAGES | Intents::MESSAGE_CONTENT | Intents::GUILD_PRESENCES,
+            Intents::GUILDS | Intents::GUILD_MESSAGES | Intents::MESSAGE_CONTENT | 
+            Intents::GUILD_PRESENCES | Intents::GUILD_MEMBERS | Intents::GUILD_VOICE_STATES,
         );
+        
+        info!("Configuring Discord gateway with intents: GUILDS | GUILD_MESSAGES | MESSAGE_CONTENT | GUILD_PRESENCES | GUILD_MEMBERS | GUILD_VOICE_STATES");
 
         let shards = gateway::create_recommended(&http_client, config, |_, b| b.build())
             .await
