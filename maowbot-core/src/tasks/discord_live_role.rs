@@ -288,86 +288,108 @@ pub async fn verify_streaming_status_at_startup(
 ) -> Result<(), Error> {
     info!("Performing startup verification of Discord live roles...");
     
-    // Find the first active Discord account to use for role management
-    let accounts = find_active_discord_account(platform_manager).await?;
+    // First try to find a Discord instance directly from active runtimes
+    let mut discord_platform_opt = None;
     
-    if accounts.is_empty() {
-        warn!("No active Discord accounts found for live role management at startup");
-        return Ok(());
+    {
+        let runtimes = platform_manager.active_runtimes.lock().await;
+        for ((platform, _), handle) in runtimes.iter() {
+            if platform == "discord" && handle.discord_instance.is_some() {
+                discord_platform_opt = handle.discord_instance.clone();
+                break;
+            }
+        }
     }
     
-    // Use the first available Discord account
-    let account_name = &accounts[0];
-    
-    match platform_manager.get_discord_instance(account_name).await {
-        Ok(discord_platform) => {
-            // At this point, Discord should have connected and started receiving events
-            info!("Discord instance ready for checking live roles");
-            
-            // Get a direct reference to the cache to check if we have presence data
-            if let Some(cache) = &discord_platform.cache {
-                info!("Cache is available, getting live roles to check guilds...");
-                
-                // First get the configured live roles - this gives us the guild IDs we care about
-                match discord_repo.list_live_roles().await {
-                    Ok(live_roles) => {
-                        info!("Found {} configured live roles", live_roles.len());
-                        
-                        let mut total_presences = 0;
-                        let mut streaming_count = 0;
-                        
-                        // Check each guild with a live role
-                        for live_role in &live_roles {
-                            let guild_id_str = &live_role.guild_id;
-                            info!("Checking presence data for guild {}", guild_id_str);
-                            
-                            // Parse the guild ID
-                            let guild_id_u64 = match guild_id_str.parse::<u64>() {
-                                Ok(id) => id,
-                                Err(e) => {
-                                    warn!("Invalid guild ID format: {}", e);
-                                    continue;
-                                }
-                            };
-                            
-                            let guild_id = Id::<GuildMarker>::new(guild_id_u64);
-                            
-                            // We can't get all presences directly, but we can check members
-                            info!("Directly checking guild status for guild {}", guild_id);
-                            
-                            // Log cache statistics 
-                            // We can't directly count members, but we can check if the guild exists in cache
-                            if cache.guild(guild_id).is_some() {
-                                info!("Guild {} exists in cache", guild_id);
-                            } else {
-                                info!("Guild {} not found in cache", guild_id);
-                            }
-                        }
-                        
-                        info!("Cache check complete. Active cache with {} live role guilds", live_roles.len());
-                    },
-                    Err(e) => {
-                        warn!("Failed to list live roles: {}", e);
-                    }
-                }
-            } else {
-                warn!("Discord cache not available");
-            }
-            
-            // Run the streaming status check using this Discord platform
-            info!("Running streaming verification check...");
-            if let Err(e) = check_all_streaming_status(&discord_platform, discord_repo).await {
-                error!("Startup Discord live role verification failed: {:?}", e);
-                return Err(e);
-            }
-            
-            info!("Startup verification of Discord live roles completed successfully");
-            Ok(())
-        },
-        Err(e) => {
-            warn!("Could not get Discord instance for account '{}' at startup: {}", account_name, e);
-            Err(Error::Platform(format!("Could not get Discord instance for startup verification: {}", e)))
+    // If we didn't find an active Discord instance directly, try the traditional way
+    if discord_platform_opt.is_none() {
+        // Try to find accounts via credentials as fallback
+        let accounts = find_active_discord_account(platform_manager).await?;
+        
+        if accounts.is_empty() {
+            warn!("No active Discord accounts found for live role management at startup");
+            return Ok(());
         }
+        
+        // Use the first available Discord account
+        let account_name = &accounts[0];
+        
+        match platform_manager.get_discord_instance(account_name).await {
+            Ok(discord) => discord_platform_opt = Some(discord),
+            Err(e) => {
+                warn!("Could not get Discord instance for account '{}' at startup: {}", account_name, e);
+                return Err(Error::Platform(format!("Could not get Discord instance for startup verification: {}", e)));
+            }
+        }
+    }
+    
+    // Now proceed with the Discord instance we found
+    if let Some(discord_platform) = discord_platform_opt {
+        // At this point, Discord should have connected and started receiving events
+        info!("Discord instance ready for checking live roles");
+        
+        // Get a direct reference to the cache to check if we have presence data
+        if let Some(cache) = &discord_platform.cache {
+            info!("Cache is available, getting live roles to check guilds...");
+            
+            // First get the configured live roles - this gives us the guild IDs we care about
+            match discord_repo.list_live_roles().await {
+                Ok(live_roles) => {
+                    info!("Found {} configured live roles", live_roles.len());
+                    
+                    let mut total_presences = 0;
+                    let mut streaming_count = 0;
+                    
+                    // Check each guild with a live role
+                    for live_role in &live_roles {
+                        let guild_id_str = &live_role.guild_id;
+                        info!("Checking presence data for guild {}", guild_id_str);
+                        
+                        // Parse the guild ID
+                        let guild_id_u64 = match guild_id_str.parse::<u64>() {
+                            Ok(id) => id,
+                            Err(e) => {
+                                warn!("Invalid guild ID format: {}", e);
+                                continue;
+                            }
+                        };
+                        
+                        let guild_id = Id::<GuildMarker>::new(guild_id_u64);
+                        
+                        // We can't get all presences directly, but we can check members
+                        info!("Directly checking guild status for guild {}", guild_id);
+                        
+                        // Log cache statistics 
+                        // We can't directly count members, but we can check if the guild exists in cache
+                        if cache.guild(guild_id).is_some() {
+                            info!("Guild {} exists in cache", guild_id);
+                        } else {
+                            info!("Guild {} not found in cache", guild_id);
+                        }
+                    }
+                    
+                    info!("Cache check complete. Active cache with {} live role guilds", live_roles.len());
+                },
+                Err(e) => {
+                    warn!("Failed to list live roles: {}", e);
+                }
+            }
+        } else {
+            warn!("Discord cache not available");
+        }
+        
+        // Run the streaming status check using this Discord platform
+        info!("Running streaming verification check...");
+        if let Err(e) = check_all_streaming_status(&discord_platform, discord_repo).await {
+            error!("Startup Discord live role verification failed: {:?}", e);
+            return Err(e);
+        }
+        
+        info!("Startup verification of Discord live roles completed successfully");
+        Ok(())
+    } else {
+        warn!("No Discord instances available for live role verification at startup");
+        Ok(())
     }
 }
 
@@ -416,21 +438,42 @@ async fn find_active_discord_account(
 ) -> Result<Vec<String>, Error> {
     let mut active_accounts = Vec::new();
     
-    // Check autostart config for Discord accounts
-    let creds_repo = &platform_manager.credentials_repo;
-    
-    // First try to get credentials for Discord platform
-    let discord_creds = match creds_repo.list_credentials_for_platform(&Platform::Discord).await {
-        Ok(creds) => creds,
-        Err(e) => {
-            warn!("Failed to get Discord credentials: {}", e);
-            return Ok(Vec::new());
+    // First check directly in active runtimes
+    let runtimes = platform_manager.active_runtimes.lock().await;
+    for ((platform, user_id), handle) in runtimes.iter() {
+        if platform == "discord" && handle.discord_instance.is_some() {
+            // Get the username for this user_id
+            let creds_repo = &platform_manager.credentials_repo;
+            if let Ok(cred) = creds_repo.get_credentials(&Platform::Discord, uuid::Uuid::parse_str(user_id).unwrap_or_default()).await {
+                if let Some(credential) = cred {
+                    active_accounts.push(credential.user_name);
+                    continue;
+                }
+            }
+            
+            // Fallback: just use the user_id as the account name if we have a discord instance
+            active_accounts.push(user_id.clone());
         }
-    };
+    }
     
-    // For each credential, add the username to our list
-    for cred in discord_creds {
-        active_accounts.push(cred.user_name);
+    // If we didn't find any active instances, fall back to checking credentials
+    if active_accounts.is_empty() {
+        // Check autostart config for Discord accounts
+        let creds_repo = &platform_manager.credentials_repo;
+        
+        // Try to get credentials for Discord platform
+        let discord_creds = match creds_repo.list_credentials_for_platform(&Platform::Discord).await {
+            Ok(creds) => creds,
+            Err(e) => {
+                warn!("Failed to get Discord credentials: {}", e);
+                return Ok(Vec::new());
+            }
+        };
+        
+        // For each credential, add the username to our list
+        for cred in discord_creds {
+            active_accounts.push(cred.user_name);
+        }
     }
     
     Ok(active_accounts)

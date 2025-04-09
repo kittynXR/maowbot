@@ -93,19 +93,13 @@ pub async fn run_server(args: Args) -> Result<(), Error> {
             // Check active runtimes for Discord platforms
             let runtimes = ctx.platform_manager.active_runtimes.try_lock();
             if let Ok(guard) = runtimes {
-                // Find first Discord instance in active runtimes
-                let discord_account = guard.iter()
+                // Find first Discord instance directly from the runtime handle
+                let discord_instance = guard.iter()
                     .find(|((platform, _), _)| platform == "discord")
-                    .map(|((_, account), _)| account.clone());
+                    .and_then(|((_platform, _account), handle)| handle.discord_instance.clone());
                 
-                if let Some(account_name) = discord_account {
-                    match ctx.platform_manager.get_discord_instance(&account_name).await {
-                        Ok(discord) => Some(discord),
-                        Err(e) => {
-                            error!("Failed to get Discord instance for live role periodic task: {:?}", e);
-                            None
-                        }
-                    }
+                if let Some(discord) = discord_instance {
+                    Some(discord)
                 } else {
                     error!("No Discord instances available for live role periodic task");
                     None
