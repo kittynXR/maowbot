@@ -180,12 +180,12 @@ async fn shard_runner(
                     }
                     Event::PresenceUpdate(presence_update) => {
                         // Log all presence updates for debugging
-                        info!("Received presence update for user {} in guild {}", 
+                        trace!("Received presence update for user {} in guild {}",
                               presence_update.user.id(), presence_update.guild_id);
                         
                         // Log all activities
                         for (idx, activity) in presence_update.activities.iter().enumerate() {
-                            info!("Activity {}: type={:?}, name={}, url={:?}",
+                            trace!("Activity {}: type={:?}, name={}, url={:?}",
                                   idx, activity.kind, activity.name, activity.url);
                         }
                         
@@ -198,11 +198,11 @@ async fn shard_runner(
                             match repo.get_live_role(&guild_id).await {
                                 Ok(Some(live_role)) => {
                                     // First check if there was a change in streaming status
-                                    debug!("Detected presence update for user {} in guild {}", user_id, guild_id);
+                                    trace!("Detected presence update for user {} in guild {}", user_id, guild_id);
                                     
                                     // Log all activities for debugging
                                     for (idx, activity) in presence_update.activities.iter().enumerate() {
-                                        debug!("Activity {}: type={:?}, name={}, url={:?}",
+                                        trace!("Activity {}: type={:?}, name={}, url={:?}",
                                               idx, activity.kind, activity.name, activity.url);
                                     }
                                     
@@ -244,12 +244,12 @@ async fn shard_runner(
                                     // Check if the member has the role using the cache
                                     let has_role = if let Some(member) = cache.member(guild_id, user_id) {
                                         // Log roles for debugging
-                                        info!("User {} has {} roles in cache", user_id, member.roles().len());
+                                        trace!("User {} has {} roles in cache", user_id, member.roles().len());
                                         let has_live_role = member.roles().iter().any(|&r| r == role_id);
-                                        info!("User {} has live role: {}", user_id, has_live_role);
+                                        trace!("User {} has live role: {}", user_id, has_live_role);
                                         has_live_role
                                     } else {
-                                        info!("User {} not found in member cache for guild {}", user_id, guild_id);
+                                        trace!("User {} not found in member cache for guild {}", user_id, guild_id);
                                         false
                                     };
                                     
@@ -276,7 +276,7 @@ async fn shard_runner(
                                         }
                                     } else {
                                         // No change in streaming status or role state matches status
-                                        debug!("No role change needed for user {}: is_streaming={}, has_role={}", 
+                                        trace!("No role change needed for user {}: is_streaming={}, has_role={}",
                                                user_id, is_streaming, has_role);
                                     }
                                 }
