@@ -1,3 +1,3 @@
-// Remove all tests for now - they need significant refactoring
+// Many tests are temporarily disabled - they need significant refactoring
 // pub mod integration;
-// pub mod unit;
+//pub mod unit;

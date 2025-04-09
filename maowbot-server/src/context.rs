@@ -178,11 +178,15 @@ impl ServerContext {
             bot_config_repo.clone(),
         ));
 
+        // Create a Discord repository
+        let discord_repo = Arc::new(maowbot_core::repositories::postgres::discord::PostgresDiscordRepository::new(db.pool().clone()));
+        
         // Platform manager
         let platform_manager = Arc::new(PlatformManager::new(
             user_service.clone(),
             event_bus.clone(),
             creds_repo_arc.clone(),
+            discord_repo.clone(), // Pass Discord repository to PlatformManager
         ));
 
         // Message service

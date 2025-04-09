@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::net::SocketAddr;
 use std::time::Duration;
 use tokio::time;
-use tracing::{info, error};
+use tracing::{info, error, warn};
 use tonic::transport::{Server, Identity, ServerTlsConfig};
 use std::fs;
 use std::path::Path;
@@ -31,6 +31,7 @@ use maowbot_core::tasks::biweekly_maintenance::{
 use maowbot_core::tasks::credential_refresh::refresh_all_refreshable_credentials;
 use maowbot_core::tasks::autostart::run_autostart;
 use maowbot_core::tasks::redeem_sync;
+use maowbot_core::tasks::discord_live_role;
 use maowbot_tui::TuiModule;
 
 pub async fn run_server(args: Args) -> Result<(), Error> {
@@ -76,6 +77,58 @@ pub async fn run_server(args: Args) -> Result<(), Error> {
     if let Err(e) = run_autostart(bot_api.as_ref(), bot_api.clone()).await {
         error!("Autostart error => {:?}", e);
     }
+    
+    // 4.5) Spawn Discord live role verification task after autostart
+    // This task will check all users for streaming status and update roles at startup
+    let _discord_live_role_startup_task = maowbot_core::tasks::discord_live_role::spawn_discord_live_role_startup_task(
+        ctx.platform_manager.clone(),
+        ctx.plugin_manager.discord_repo.clone()
+    );
+    
+    // 4.6) Spawn periodic Discord live role check task
+    // This task will regularly check and update streaming status
+    let _discord_live_role_periodic_task = {
+        // Find first active Discord account for periodic checks
+        let discord_platform = {
+            // Check active runtimes for Discord platforms
+            let runtimes = ctx.platform_manager.active_runtimes.try_lock();
+            if let Ok(guard) = runtimes {
+                // Find first Discord instance in active runtimes
+                let discord_account = guard.iter()
+                    .find(|((platform, _), _)| platform == "discord")
+                    .map(|((_, account), _)| account.clone());
+                
+                if let Some(account_name) = discord_account {
+                    match ctx.platform_manager.get_discord_instance(&account_name).await {
+                        Ok(discord) => Some(discord),
+                        Err(e) => {
+                            error!("Failed to get Discord instance for live role periodic task: {:?}", e);
+                            None
+                        }
+                    }
+                } else {
+                    error!("No Discord instances available for live role periodic task");
+                    None
+                }
+            } else {
+                error!("Failed to lock active runtimes for live role periodic task");
+                None
+            }
+        };
+        
+        if let Some(discord) = discord_platform {
+            // If we found an active Discord platform, spawn the periodic task
+            maowbot_core::tasks::discord_live_role::spawn_discord_live_role_task(
+                discord,
+                ctx.plugin_manager.discord_repo.clone()
+            )
+        } else {
+            // Otherwise, create a dummy task that just logs and exits
+            tokio::spawn(async move {
+                warn!("Discord live role periodic task not started - no Discord instances available");
+            })
+        }
+    };
     
     // 5) If TUI was requested
     if args.tui {
@@ -793,5 +846,30 @@ impl maowbot_common::traits::api::DiscordApi for BotApiWrapper {
     
     async fn list_discord_roles(&self, account_name: &str, guild_id: &str) -> Result<Vec<(String, String)>, maowbot_common::error::Error> {
         self.plugin_manager.list_discord_roles(account_name, guild_id).await
+    }
+    
+    // New Discord Live Role methods
+    async fn set_discord_live_role(&self, guild_id: &str, role_id: &str) -> Result<(), maowbot_common::error::Error> {
+        self.plugin_manager.set_discord_live_role(guild_id, role_id).await
+    }
+    
+    async fn get_discord_live_role(&self, guild_id: &str) -> Result<Option<maowbot_common::models::discord::DiscordLiveRoleRecord>, maowbot_common::error::Error> {
+        self.plugin_manager.get_discord_live_role(guild_id).await
+    }
+    
+    async fn delete_discord_live_role(&self, guild_id: &str) -> Result<(), maowbot_common::error::Error> {
+        self.plugin_manager.delete_discord_live_role(guild_id).await
+    }
+    
+    async fn list_discord_live_roles(&self) -> Result<Vec<maowbot_common::models::discord::DiscordLiveRoleRecord>, maowbot_common::error::Error> {
+        self.plugin_manager.list_discord_live_roles().await
+    }
+    
+    async fn add_role_to_discord_user(&self, account_name: &str, guild_id: &str, user_id: &str, role_id: &str) -> Result<(), maowbot_common::error::Error> {
+        self.plugin_manager.add_role_to_discord_user(account_name, guild_id, user_id, role_id).await
+    }
+    
+    async fn remove_role_from_discord_user(&self, account_name: &str, guild_id: &str, user_id: &str, role_id: &str) -> Result<(), maowbot_common::error::Error> {
+        self.plugin_manager.remove_role_from_discord_user(account_name, guild_id, user_id, role_id).await
     }
 }
