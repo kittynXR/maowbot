@@ -14,6 +14,56 @@ pub async fn handle_discord_command(args: &[&str], bot_api: &Arc<dyn BotApi>) ->
 
     match args[0].to_lowercase().as_str() {
         // ------------------------------------------------------------------
+        // Live role management for Twitch streamers
+        // ------------------------------------------------------------------
+        "liverole" => {
+            if args.len() < 2 {
+                return "Usage: discord liverole <guildId> <roleId> OR discord liverole list OR discord liverole remove <guildId>".to_string();
+            }
+            
+            match args[1].to_lowercase().as_str() {
+                "list" => {
+                    match bot_api.list_discord_live_roles().await {
+                        Ok(live_roles) => {
+                            if live_roles.is_empty() {
+                                "No live roles configured.".to_string()
+                            } else {
+                                let mut out = String::from("Discord live roles (assigned to users streaming on Twitch):\n");
+                                for role in live_roles {
+                                    out.push_str(&format!(" - Guild: {}, Role: {}\n", role.guild_id, role.role_id));
+                                }
+                                out
+                            }
+                        }
+                        Err(e) => format!("Error listing live roles: {e}"),
+                    }
+                }
+                "remove" => {
+                    if args.len() < 3 {
+                        return "Usage: discord liverole remove <guildId>".to_string();
+                    }
+                    let guild_id = args[2];
+                    match bot_api.delete_discord_live_role(guild_id).await {
+                        Ok(_) => format!("Removed live role configuration for guild {}", guild_id),
+                        Err(e) => format!("Error removing live role: {e}"),
+                    }
+                }
+                _ => {
+                    // Handle "discord liverole <guildId> <roleId>"
+                    if args.len() < 3 {
+                        return "Usage: discord liverole <guildId> <roleId>".to_string();
+                    }
+                    let guild_id = args[1];
+                    let role_id = args[2];
+                    match bot_api.set_discord_live_role(guild_id, role_id).await {
+                        Ok(_) => format!("Set live role {} for guild {}", role_id, guild_id),
+                        Err(e) => format!("Error setting live role: {e}"),
+                    }
+                }
+            }
+        }
+        
+        // ------------------------------------------------------------------
         // 1) discord guilds [accountNameOrUUID]
         // ------------------------------------------------------------------
         "guilds" => {
@@ -437,6 +487,12 @@ fn show_usage() -> String {
   discord msg <serverId> <channelId> [message text...]
   discord roles [guildId]
       -> list all role IDs and names for the specified guild (or the single guild if only one is joined)
+  discord liverole <guildId> <roleId>
+      -> set role to assign to users when they're streaming on Twitch
+  discord liverole list
+      -> list currently configured live roles
+  discord liverole remove <guildId>
+      -> remove live role configuration for the specified guild
 "#
         .to_string()
 }

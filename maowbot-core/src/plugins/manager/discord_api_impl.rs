@@ -2,7 +2,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use maowbot_common::error::Error;
 use maowbot_common::traits::api::DiscordApi;
-use maowbot_common::models::discord::{DiscordGuildRecord, DiscordChannelRecord, DiscordEventConfigRecord, DiscordEmbed};
+use maowbot_common::models::discord::{DiscordGuildRecord, DiscordChannelRecord, DiscordEventConfigRecord, DiscordEmbed, DiscordLiveRoleRecord};
 use twilight_cache_inmemory::InMemoryCache;
 use twilight_model::id::marker::{GuildMarker};
 use twilight_model::id::Id;
@@ -165,5 +165,45 @@ impl DiscordApi for PluginManager {
             out.push((role.id.to_string(), role.name.clone()));
         }
         Ok(out)
+    }
+    
+    // Implementation of live role management methods
+    async fn set_discord_live_role(&self, guild_id: &str, role_id: &str) -> Result<(), Error> {
+        self.discord_repo.set_live_role(guild_id, role_id).await
+    }
+    
+    async fn get_discord_live_role(&self, guild_id: &str) -> Result<Option<DiscordLiveRoleRecord>, Error> {
+        self.discord_repo.get_live_role(guild_id).await
+    }
+    
+    async fn delete_discord_live_role(&self, guild_id: &str) -> Result<(), Error> {
+        self.discord_repo.delete_live_role(guild_id).await
+    }
+    
+    async fn list_discord_live_roles(&self) -> Result<Vec<DiscordLiveRoleRecord>, Error> {
+        self.discord_repo.list_live_roles().await
+    }
+    
+    // Discord role management for users
+    async fn add_role_to_discord_user(
+        &self, 
+        account_name: &str, 
+        guild_id: &str, 
+        user_id: &str, 
+        role_id: &str
+    ) -> Result<(), Error> {
+        // Use the new PlatformManager method
+        self.platform_manager.add_role_to_discord_user(account_name, guild_id, user_id, role_id).await
+    }
+    
+    async fn remove_role_from_discord_user(
+        &self, 
+        account_name: &str, 
+        guild_id: &str, 
+        user_id: &str, 
+        role_id: &str
+    ) -> Result<(), Error> {
+        // Use the new PlatformManager method
+        self.platform_manager.remove_role_from_discord_user(account_name, guild_id, user_id, role_id).await
     }
 }

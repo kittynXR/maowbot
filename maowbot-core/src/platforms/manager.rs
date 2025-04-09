@@ -20,6 +20,7 @@ use crate::platforms::twitch::runtime::TwitchPlatform;
 use crate::platforms::vrchat_pipeline::runtime::VRChatPlatform;
 use crate::platforms::twitch_irc::runtime::TwitchIrcPlatform;
 use crate::platforms::twitch_eventsub::runtime::TwitchEventSubPlatform;
+use crate::repositories::postgres::discord::PostgresDiscordRepository;
 
 pub struct PlatformRuntimeHandle {
     pub join_handle: JoinHandle<()>,
@@ -40,6 +41,7 @@ pub struct PlatformManager {
 
     pub active_runtimes: AsyncMutex<HashMap<(String, String), PlatformRuntimeHandle>>,
     pub discord_caches: AsyncMutex<HashMap<(String, String), Arc<InMemoryCache>>>,
+    pub discord_repo: Arc<PostgresDiscordRepository>,
 }
 
 impl PlatformManager {
@@ -47,6 +49,7 @@ impl PlatformManager {
         user_svc: Arc<UserService>,
         event_bus: Arc<EventBus>,
         credentials_repo: Arc<dyn CredentialsRepository + Send + Sync>,
+        discord_repo: Arc<PostgresDiscordRepository>,
     ) -> Self {
         Self {
             message_service: Mutex::new(None),
@@ -55,6 +58,7 @@ impl PlatformManager {
             credentials_repo,
             active_runtimes: AsyncMutex::new(HashMap::new()),
             discord_caches: AsyncMutex::new(HashMap::new()),
+            discord_repo,
         }
     }
 
@@ -145,6 +149,14 @@ impl PlatformManager {
         Ok(())
     }
 
+    pub async fn get_discord_platform(
+        &self,
+        account_name: &str
+    ) -> Result<Arc<DiscordPlatform>, Error> {
+        // This is just an alias for get_discord_instance for better API clarity
+        self.get_discord_instance(account_name).await
+    }
+    
     pub async fn get_discord_instance(
         &self,
         account_name: &str
@@ -198,6 +210,7 @@ impl PlatformManager {
         }
 
         discord.set_event_bus(self.event_bus.clone());
+        discord.set_discord_repo(self.discord_repo.clone());
         discord.connect().await?;
 
         // We pull out its Arc<InMemoryCache> so we can store it in `discord_caches`:
@@ -711,6 +724,84 @@ impl PlatformManager {
             )))
         }
     }
+    pub async fn add_role_to_discord_user(
+        &self,
+        account_name: &str,
+        guild_id: &str,
+        user_id: &str,
+        role_id: &str
+    ) -> Result<(), Error> {
+        // Get the Discord instance
+        let discord = self.get_discord_instance(account_name).await?;
+        
+        // Parse the guild ID
+        let guild_id_u64 = guild_id.parse::<u64>()
+            .map_err(|_| Error::Platform(format!("Invalid guild ID: {}", guild_id)))?;
+            
+        // Parse the user ID
+        let user_id_u64 = user_id.parse::<u64>()
+            .map_err(|_| Error::Platform(format!("Invalid user ID: {}", user_id)))?;
+            
+        // Parse the role ID
+        let role_id_u64 = role_id.parse::<u64>()
+            .map_err(|_| Error::Platform(format!("Invalid role ID: {}", role_id)))?;
+            
+        // Create Twilight ID objects
+        let guild_id = twilight_model::id::Id::<twilight_model::id::marker::GuildMarker>::new(guild_id_u64);
+        let user_id = twilight_model::id::Id::<twilight_model::id::marker::UserMarker>::new(user_id_u64);
+        let role_id = twilight_model::id::Id::<twilight_model::id::marker::RoleMarker>::new(role_id_u64);
+        
+        // Call the API to add the role
+        if let Some(http) = &discord.http {
+            http.add_guild_member_role(guild_id, user_id, role_id)
+                .await
+                .map_err(|e| Error::Platform(format!("Failed to add role to user: {}", e)))?;
+        } else {
+            return Err(Error::Platform("Discord HTTP client not initialized".into()));
+        }
+        
+        Ok(())
+    }
+    
+    pub async fn remove_role_from_discord_user(
+        &self,
+        account_name: &str,
+        guild_id: &str,
+        user_id: &str,
+        role_id: &str
+    ) -> Result<(), Error> {
+        // Get the Discord instance
+        let discord = self.get_discord_instance(account_name).await?;
+        
+        // Parse the guild ID
+        let guild_id_u64 = guild_id.parse::<u64>()
+            .map_err(|_| Error::Platform(format!("Invalid guild ID: {}", guild_id)))?;
+            
+        // Parse the user ID
+        let user_id_u64 = user_id.parse::<u64>()
+            .map_err(|_| Error::Platform(format!("Invalid user ID: {}", user_id)))?;
+            
+        // Parse the role ID
+        let role_id_u64 = role_id.parse::<u64>()
+            .map_err(|_| Error::Platform(format!("Invalid role ID: {}", role_id)))?;
+            
+        // Create Twilight ID objects
+        let guild_id = twilight_model::id::Id::<twilight_model::id::marker::GuildMarker>::new(guild_id_u64);
+        let user_id = twilight_model::id::Id::<twilight_model::id::marker::UserMarker>::new(user_id_u64);
+        let role_id = twilight_model::id::Id::<twilight_model::id::marker::RoleMarker>::new(role_id_u64);
+        
+        // Call the API to remove the role
+        if let Some(http) = &discord.http {
+            http.remove_guild_member_role(guild_id, user_id, role_id)
+                .await
+                .map_err(|e| Error::Platform(format!("Failed to remove role from user: {}", e)))?;
+        } else {
+            return Err(Error::Platform("Discord HTTP client not initialized".into()));
+        }
+        
+        Ok(())
+    }
+
     pub async fn send_discord_embed(
         &self,
         account_name: &str,

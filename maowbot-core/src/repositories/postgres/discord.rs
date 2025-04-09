@@ -14,6 +14,7 @@ use maowbot_common::models::discord::{
     DiscordChannelRecord,
     DiscordGuildRecord,
     DiscordEventConfigRecord,
+    DiscordLiveRoleRecord,
 };
 use maowbot_common::traits::repository_traits::DiscordRepository;
 
@@ -250,6 +251,90 @@ impl PostgresDiscordRepository {
     pub async fn list_roles_for_guild(&self, guild_id: &str) -> Result<Vec<(String, String)>, Error> {
         // For now, return an empty list.
         Ok(vec![])
+    }
+    
+    // Implementation for live role management
+    pub async fn set_live_role(&self, guild_id: &str, role_id: &str) -> Result<(), Error> {
+        let q = r#"
+            INSERT INTO discord_live_roles (guild_id, role_id, created_at, updated_at)
+            VALUES ($1, $2, NOW(), NOW())
+            ON CONFLICT (guild_id)
+            DO UPDATE SET
+                role_id = EXCLUDED.role_id,
+                updated_at = NOW()
+        "#;
+        
+        sqlx::query(q)
+            .bind(guild_id)
+            .bind(role_id)
+            .execute(&self.pool)
+            .await?;
+            
+        Ok(())
+    }
+    
+    pub async fn get_live_role(&self, guild_id: &str) -> Result<Option<DiscordLiveRoleRecord>, Error> {
+        let q = r#"
+            SELECT live_role_id, guild_id, role_id, created_at, updated_at
+            FROM discord_live_roles
+            WHERE guild_id = $1
+        "#;
+        
+        let row_opt = sqlx::query(q)
+            .bind(guild_id)
+            .fetch_optional(&self.pool)
+            .await?;
+            
+        if let Some(row) = row_opt {
+            Ok(Some(DiscordLiveRoleRecord {
+                live_role_id: row.try_get("live_role_id")?,
+                guild_id: row.try_get("guild_id")?,
+                role_id: row.try_get("role_id")?,
+                created_at: row.try_get("created_at")?,
+                updated_at: row.try_get("updated_at")?,
+            }))
+        } else {
+            Ok(None)
+        }
+    }
+    
+    pub async fn delete_live_role(&self, guild_id: &str) -> Result<(), Error> {
+        let q = r#"
+            DELETE FROM discord_live_roles
+            WHERE guild_id = $1
+        "#;
+        
+        sqlx::query(q)
+            .bind(guild_id)
+            .execute(&self.pool)
+            .await?;
+            
+        Ok(())
+    }
+    
+    pub async fn list_live_roles(&self) -> Result<Vec<DiscordLiveRoleRecord>, Error> {
+        let q = r#"
+            SELECT live_role_id, guild_id, role_id, created_at, updated_at
+            FROM discord_live_roles
+            ORDER BY guild_id
+        "#;
+        
+        let rows = sqlx::query(q)
+            .fetch_all(&self.pool)
+            .await?;
+            
+        let mut result = Vec::with_capacity(rows.len());
+        for row in rows {
+            result.push(DiscordLiveRoleRecord {
+                live_role_id: row.try_get("live_role_id")?,
+                guild_id: row.try_get("guild_id")?,
+                role_id: row.try_get("role_id")?,
+                created_at: row.try_get("created_at")?,
+                updated_at: row.try_get("updated_at")?,
+            });
+        }
+        
+        Ok(result)
     }
 }
 
@@ -659,5 +744,22 @@ impl maowbot_common::traits::repository_traits::DiscordRepository for PostgresDi
         } else {
             Ok(None)
         }
+    }
+    
+    // Implementation of live role methods from trait
+    async fn set_live_role(&self, guild_id: &str, role_id: &str) -> Result<(), Error> {
+        self.set_live_role(guild_id, role_id).await
+    }
+    
+    async fn get_live_role(&self, guild_id: &str) -> Result<Option<DiscordLiveRoleRecord>, Error> {
+        self.get_live_role(guild_id).await
+    }
+    
+    async fn delete_live_role(&self, guild_id: &str) -> Result<(), Error> {
+        self.delete_live_role(guild_id).await
+    }
+    
+    async fn list_live_roles(&self) -> Result<Vec<DiscordLiveRoleRecord>, Error> {
+        self.list_live_roles().await
     }
 }

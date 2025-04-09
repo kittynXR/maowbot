@@ -8,7 +8,7 @@ use crate::error::Error;
 use crate::models::{Command, CommandUsage, Redeem, RedeemUsage, UserAnalysis};
 use crate::models::analytics::{BotEvent, ChatMessage};
 use crate::models::auth::Platform;
-use crate::models::discord::{DiscordAccountRecord, DiscordChannelRecord, DiscordEmbed, DiscordEventConfigRecord, DiscordGuildRecord};
+use crate::models::discord::{DiscordAccountRecord, DiscordChannelRecord, DiscordEmbed, DiscordEventConfigRecord, DiscordGuildRecord, DiscordLiveRoleRecord};
 use crate::models::drip::DripAvatarSummary;
 use crate::models::platform::{PlatformConfigData, PlatformCredential, PlatformIdentity};
 use crate::models::plugin::StatusData;
@@ -305,6 +305,16 @@ pub trait DiscordApi {
     async fn add_discord_event_role(&self, event_name: &str, role_id: &str) -> Result<(), Error>;
     async fn remove_discord_event_role(&self, event_name: &str, role_id: &str) -> Result<(), Error>;
     async fn list_discord_roles(&self, account_name: &str, guild_id: &str) -> Result<Vec<(String, String)>, Error>;
+    
+    // Live role management for Twitch streamers
+    async fn set_discord_live_role(&self, guild_id: &str, role_id: &str) -> Result<(), Error>;
+    async fn get_discord_live_role(&self, guild_id: &str) -> Result<Option<DiscordLiveRoleRecord>, Error>;
+    async fn delete_discord_live_role(&self, guild_id: &str) -> Result<(), Error>;
+    async fn list_discord_live_roles(&self) -> Result<Vec<DiscordLiveRoleRecord>, Error>;
+    
+    // Discord role management for users
+    async fn add_role_to_discord_user(&self, account_name: &str, guild_id: &str, user_id: &str, role_id: &str) -> Result<(), Error>;
+    async fn remove_role_from_discord_user(&self, account_name: &str, guild_id: &str, user_id: &str, role_id: &str) -> Result<(), Error>;
 }
 
 /// Trait for AI functionality

@@ -23,8 +23,9 @@ use twilight_http::client::ClientBuilder;
 use twilight_http::Client as HttpClient;
 use twilight_model::{
     channel::ChannelType,
-    gateway::payload::incoming::{InteractionCreate, MessageCreate, Ready as ReadyPayload},
-    id::marker::{ApplicationMarker, ChannelMarker},
+    gateway::payload::incoming::{InteractionCreate, MessageCreate, Ready as ReadyPayload, PresenceUpdate},
+    gateway::presence::ActivityType,
+    id::marker::{ApplicationMarker, ChannelMarker, GuildMarker, RoleMarker, UserMarker},
 };
 use twilight_model::util::Timestamp;
 use twilight_util::builder::embed::ImageSource;
@@ -53,6 +54,7 @@ async fn shard_runner(
     event_bus: Option<Arc<EventBus>>,
     cache: Arc<InMemoryCache>,
     application_id: Option<twilight_model::id::Id<ApplicationMarker>>,
+    discord_repo: Option<Arc<dyn maowbot_common::traits::repository_traits::DiscordRepository + Send + Sync>>,
 ) {
     let shard_id = shard.id().number();
     info!("(ShardRunner) Shard {shard_id} started. Listening for events.");
@@ -176,6 +178,84 @@ async fn shard_runner(
                             }
                         }
                     }
+                    Event::PresenceUpdate(presence_update) => {
+                        // Handle presence update for live role
+                        if let Some(repo) = &discord_repo {
+                            let guild_id = presence_update.guild_id.to_string();
+                            let user_id = presence_update.user.id().to_string();
+                            
+                            // Try to get the live role for this guild
+                            match repo.get_live_role(&guild_id).await {
+                                Ok(Some(live_role)) => {
+                                    // First check if there was a change in streaming status
+                                    let is_streaming = presence_update.activities.iter().any(|activity| {
+                                        activity.kind == ActivityType::Streaming && 
+                                        activity.url.as_ref().map_or(false, |url| url.contains("twitch.tv"))
+                                    });
+                                    
+                                    // Convert string IDs to u64 and create Twilight IDs
+                                    // We'll need these for both adding and checking roles
+                                    let guild_id_u64 = guild_id.parse::<u64>().unwrap_or_else(|_| {
+                                        warn!("Invalid guild ID format: {}", guild_id);
+                                        0
+                                    });
+                                    let user_id_u64 = user_id.parse::<u64>().unwrap_or_else(|_| {
+                                        warn!("Invalid user ID format: {}", user_id);
+                                        0
+                                    });
+                                    let role_id_u64 = live_role.role_id.parse::<u64>().unwrap_or_else(|_| {
+                                        warn!("Invalid role ID format: {}", live_role.role_id);
+                                        0
+                                    });
+                                    
+                                    // Skip if any ID parsing failed
+                                    if guild_id_u64 == 0 || user_id_u64 == 0 || role_id_u64 == 0 {
+                                        continue;
+                                    }
+                                    
+                                    let guild_id = twilight_model::id::Id::<GuildMarker>::new(guild_id_u64);
+                                    let user_id = twilight_model::id::Id::<UserMarker>::new(user_id_u64);
+                                    let role_id = twilight_model::id::Id::<RoleMarker>::new(role_id_u64);
+                                    
+                                    // Check if the member has the role using the cache
+                                    let has_role = if let Some(member) = cache.member(guild_id, user_id) {
+                                        member.roles().iter().any(|&r| r == role_id)
+                                    } else {
+                                        false
+                                    };
+                                    
+                                    // Only perform action if there's a status change
+                                    if is_streaming && !has_role {
+                                        // User is streaming but doesn't have the role - add it
+                                        debug!("User {} started streaming on Twitch, adding live role {}", 
+                                            user_id, live_role.role_id);
+                                        
+                                        if let Err(e) = http.add_guild_member_role(guild_id, user_id, role_id).await {
+                                            warn!("Failed to add live role to user: {}", e);
+                                        }
+                                    } else if !is_streaming && has_role {
+                                        // User has stopped streaming and has the role - remove it
+                                        debug!("User {} stopped streaming on Twitch, removing live role {}", 
+                                            user_id, live_role.role_id);
+                                        
+                                        if let Err(e) = http.remove_guild_member_role(guild_id, user_id, role_id).await {
+                                            warn!("Failed to remove live role from user: {}", e);
+                                        }
+                                    } else {
+                                        // No change in streaming status or role state matches status
+                                        trace!("No change in streaming status for user {}", user_id);
+                                    }
+                                }
+                                Ok(None) => {
+                                    // No live role configured for this guild
+                                    trace!("No live role configured for guild {}", guild_id);
+                                }
+                                Err(e) => {
+                                    warn!("Error checking for live role: {}", e);
+                                }
+                            }
+                        }
+                    }
                     _ => {
                         trace!("Shard {shard_id} => unhandled event: {event:?}");
                     }
@@ -207,6 +287,8 @@ pub struct DiscordPlatform {
     pub event_bus: Option<Arc<EventBus>>,
     /// If set, the ID for slash commands
     pub application_id: Option<twilight_model::id::Id<ApplicationMarker>>,
+    /// Reference to the Discord repository for live role functionality
+    pub discord_repo: Option<Arc<dyn maowbot_common::traits::repository_traits::DiscordRepository + Send + Sync>>,
 }
 
 impl DiscordPlatform {
@@ -221,7 +303,12 @@ impl DiscordPlatform {
             cache: None,
             event_bus: None,
             application_id: None,
+            discord_repo: None,
         }
+    }
+    
+    pub fn set_discord_repo(&mut self, repo: Arc<dyn maowbot_common::traits::repository_traits::DiscordRepository + Send + Sync>) {
+        self.discord_repo = Some(repo);
     }
 
     pub fn set_event_bus(&mut self, bus: Arc<EventBus>) {
@@ -471,7 +558,7 @@ impl PlatformIntegration for DiscordPlatform {
         // Create recommended shards
         let config = Config::new(
             self.token.clone(),
-            Intents::GUILDS | Intents::GUILD_MESSAGES | Intents::MESSAGE_CONTENT,
+            Intents::GUILDS | Intents::GUILD_MESSAGES | Intents::MESSAGE_CONTENT | Intents::GUILD_PRESENCES,
         );
 
         let shards = gateway::create_recommended(&http_client, config, |_, b| b.build())
@@ -487,6 +574,7 @@ impl PlatformIntegration for DiscordPlatform {
             let bus_for_shard = self.event_bus.clone();
             let cache_for_shard = arc_cache.clone();
             let app_id = self.application_id;
+            let discord_repo_for_shard = self.discord_repo.clone();
 
             let handle = tokio::spawn(async move {
                 shard_runner(
@@ -496,6 +584,7 @@ impl PlatformIntegration for DiscordPlatform {
                     bus_for_shard,
                     cache_for_shard,
                     app_id,
+                    discord_repo_for_shard,
                 )
                     .await;
             });
@@ -554,5 +643,71 @@ impl PlatformIntegration for DiscordPlatform {
 
     async fn get_connection_status(&self) -> Result<ConnectionStatus, Error> {
         Ok(self.connection_status.clone())
+    }
+}
+
+impl DiscordPlatform {
+    /// Add a role to a Discord user
+    pub async fn add_role_to_user(
+        &self,
+        guild_id: &str,
+        user_id: &str,
+        role_id: &str
+    ) -> Result<(), Error> {
+        if let Some(http) = &self.http {
+            let guild_id_u64: u64 = guild_id.parse().map_err(|_| {
+                Error::Platform(format!("Invalid guild ID: {}", guild_id))
+            })?;
+            
+            let user_id_u64: u64 = user_id.parse().map_err(|_| {
+                Error::Platform(format!("Invalid user ID: {}", user_id))
+            })?;
+            
+            let role_id_u64: u64 = role_id.parse().map_err(|_| {
+                Error::Platform(format!("Invalid role ID: {}", role_id))
+            })?;
+            
+            let guild_id = twilight_model::id::Id::<GuildMarker>::new(guild_id_u64);
+            let user_id = twilight_model::id::Id::<UserMarker>::new(user_id_u64);
+            let role_id = twilight_model::id::Id::<RoleMarker>::new(role_id_u64);
+            
+            http.add_guild_member_role(guild_id, user_id, role_id)
+                .await
+                .map_err(|e| Error::Platform(format!("Failed to add role to user: {}", e)))?;
+        }
+        
+        Ok(())
+    }
+    
+    /// Remove a role from a Discord user
+    pub async fn remove_role_from_user(
+        &self,
+        guild_id: &str,
+        user_id: &str,
+        role_id: &str
+    ) -> Result<(), Error> {
+        if let Some(http) = &self.http {
+            let guild_id_u64: u64 = guild_id.parse().map_err(|_| {
+                Error::Platform(format!("Invalid guild ID: {}", guild_id))
+            })?;
+            
+            let user_id_u64: u64 = user_id.parse().map_err(|_| {
+                Error::Platform(format!("Invalid user ID: {}", user_id))
+            })?;
+            
+            let role_id_u64: u64 = role_id.parse().map_err(|_| {
+                Error::Platform(format!("Invalid role ID: {}", role_id))
+            })?;
+            
+            let guild_id = twilight_model::id::Id::<GuildMarker>::new(guild_id_u64);
+            let user_id = twilight_model::id::Id::<UserMarker>::new(user_id_u64);
+            let role_id = twilight_model::id::Id::<RoleMarker>::new(role_id_u64);
+            
+            http.remove_guild_member_role(guild_id, user_id, role_id)
+                .await
+                .map_err(|e| Error::Platform(format!("Failed to remove role from user: {}", e)))?;
+        }
+        
+        Ok(())
     }
 }

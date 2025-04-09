@@ -53,7 +53,19 @@ pub struct DiscordEventConfigRecord {
 }
 
 // ------------------------------------------------------------------------------------------------
-// NEW: Discord Embed structures to support rich message formatting
+// Discord LiveRole Record for storing Twitch streamer live role assignment
+// ------------------------------------------------------------------------------------------------
+#[derive(Debug, Clone)]
+pub struct DiscordLiveRoleRecord {
+    pub live_role_id: uuid::Uuid,
+    pub guild_id: String,
+    pub role_id: String,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+// ------------------------------------------------------------------------------------------------
+// Discord Embed structures to support rich message formatting
 // ------------------------------------------------------------------------------------------------
 /// Represents the color of a Discord embed - stored as an integer
 #[derive(Debug, Clone)]

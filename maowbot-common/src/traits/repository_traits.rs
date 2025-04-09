@@ -5,7 +5,7 @@ use sqlx::types::JsonValue;
 use uuid::Uuid;
 use crate::error::Error;
 use crate::models::{Command, CommandUsage, Redeem, RedeemUsage, UserAnalysis};
-use crate::models::discord::{DiscordAccountRecord, DiscordChannelRecord, DiscordGuildRecord};
+use crate::models::discord::{DiscordAccountRecord, DiscordChannelRecord, DiscordGuildRecord, DiscordLiveRoleRecord};
 use crate::models::link_request::LinkRequest;
 use crate::models::platform::{Platform, PlatformConfig, PlatformCredential, PlatformIdentity};
 use crate::models::user::{User, UserAuditLogEntry};
@@ -374,4 +374,10 @@ pub trait DiscordRepository {
 
     async fn set_active_channel(&self, account_name: &str, guild_id: &str, channel_id: &str) -> Result<(), Error>;
     async fn get_active_channel(&self, account_name: &str, guild_id: &str) -> Result<Option<String>, Error>;
+    
+    // Live role methods for Twitch streamers
+    async fn set_live_role(&self, guild_id: &str, role_id: &str) -> Result<(), Error>;
+    async fn get_live_role(&self, guild_id: &str) -> Result<Option<DiscordLiveRoleRecord>, Error>;
+    async fn delete_live_role(&self, guild_id: &str) -> Result<(), Error>;
+    async fn list_live_roles(&self) -> Result<Vec<DiscordLiveRoleRecord>, Error>;
 }
