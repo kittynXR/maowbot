@@ -11,7 +11,7 @@ use std::time::Instant;
 use futures_util::StreamExt;
 use libloading::{Library, Symbol};
 use tokio::sync::{mpsc::UnboundedSender, Mutex as AsyncMutex};
-use tracing::{info, error, debug};
+use tracing::{info, error, debug, trace};
 
 use crate::Error;
 use crate::eventbus::{BotEvent, EventBus};
@@ -186,7 +186,7 @@ impl PluginManager {
                         match maybe_event {
                             Some(event) => match event {
                                 BotEvent::ChatMessage { platform, channel, user, text, .. } => {
-                                    info!("🔴 PLUGIN MANAGER: Received event from EventBus - platform: {}, channel: {}, user: {}, text: '{}'", 
+                                    trace!("🔴 PLUGIN MANAGER: Received event from EventBus - platform: {}, channel: {}, user: {}, text: '{}'",
                                          platform, channel, user, text);
                                     pm_clone.handle_chat_event(&platform, &channel, &user, &text).await;
                                 },
@@ -227,7 +227,7 @@ impl PluginManager {
     /// Called internally whenever a ChatMessage event arrives. We can broadcast to plugins if they have a chat capability.
     /// Additionally, we now check if the message should be processed by the AI service
     async fn handle_chat_event(&self, platform: &str, channel: &str, user: &str, text: &str) {
-        info!("🔴 PLUGIN MANAGER: Received chat event - platform: {}, channel: {}, user: {}, text: '{}'", platform, channel, user, text);
+        trace!("🔴 PLUGIN MANAGER: Received chat event - platform: {}, channel: {}, user: {}, text: '{}'", platform, channel, user, text);
         
         use maowbot_proto::plugs::{
             PluginStreamResponse,
@@ -250,22 +250,22 @@ impl PluginManager {
         // Now check if we should process this with AI
         info!("🔴 PLUGIN MANAGER: Checking if we should process message with AI");
         if let Some(ai_impl) = &self.ai_api_impl {
-            info!("🔴 PLUGIN MANAGER: AI API implementation found");
+            trace!("🔴 PLUGIN MANAGER: AI API implementation found");
             
             // First check if the AI would process this message at all
             // (most messages won't be AI commands)
             let ai_service = if let Some(svc) = ai_impl.get_ai_service() {
-                info!("🔴 PLUGIN MANAGER: Got AI service reference");
+                trace!("🔴 PLUGIN MANAGER: Got AI service reference");
                 svc
             } else {
-                error!("🔴 PLUGIN MANAGER: No AI service available for processing");
+                warn!("🔴 PLUGIN MANAGER: No AI service available for processing");
                 return;
             };
             
             // Get trigger prefixes to log them for debugging
             let prefixes = match ai_service.get_trigger_prefixes().await {
                 Ok(p) => {
-                    info!("🔴 PLUGIN MANAGER: Successfully retrieved trigger prefixes: {:?}", p);
+                    trace!("🔴 PLUGIN MANAGER: Successfully retrieved trigger prefixes: {:?}", p);
                     p
                 },
                 Err(e) => {
@@ -274,16 +274,16 @@ impl PluginManager {
                 },
             };
             
-            info!("🔴 PLUGIN MANAGER: About to call should_process_with_ai for message: '{}'", text);
+            trace!("🔴 PLUGIN MANAGER: About to call should_process_with_ai for message: '{}'", text);
             
             // Check if this message would trigger AI processing
             let should_process = match ai_service.should_process_with_ai(text).await {
                 true => {
-                    info!("🔴 PLUGIN MANAGER: Message '{}' MATCHES AI trigger - proceeding with AI processing", text);
+                    trace!("🔴 PLUGIN MANAGER: Message '{}' MATCHES AI trigger - proceeding with AI processing", text);
                     true
                 },
                 false => {
-                    info!("🔴 PLUGIN MANAGER: Message '{}' does NOT match any AI trigger prefix - skipping", text);
+                    trace!("🔴 PLUGIN MANAGER: Message '{}' does NOT match any AI trigger prefix - skipping", text);
                     return;
                 }
             };
@@ -302,27 +302,27 @@ impl PluginManager {
             };
             
             // First, try to get the user using the UserService's get_or_create_user method
-            info!("🔴 PLUGIN MANAGER: Looking up user ID for AI processing - platform: {}, user: {}", platform, user);
+            trace!("🔴 PLUGIN MANAGER: Looking up user ID for AI processing - platform: {}, user: {}", platform, user);
             match self.user_service.get_or_create_user(platform, user, Some(user)).await {
                 Ok(user_data) => {
                     // Process the message with AI
-                    info!("🔴 PLUGIN MANAGER: Found user: {:?}, processing with AI", user_data);
+                    trace!("🔴 PLUGIN MANAGER: Found user: {:?}, processing with AI", user_data);
                     
                     // Use the AI service to process the message
-                    info!("🔴 PLUGIN MANAGER: Calling process_user_message with user_id: {} and text: '{}'", user_data.user_id, text);
+                    trace!("🔴 PLUGIN MANAGER: Calling process_user_message with user_id: {} and text: '{}'", user_data.user_id, text);
                     match ai_impl.process_user_message(user_data.user_id, text).await {
                         Ok(ai_response) => {
-                            info!("🔴 PLUGIN MANAGER: Got AI response: '{}'", ai_response);
+                            trace!("🔴 PLUGIN MANAGER: Got AI response: '{}'", ai_response);
                             
                             // Send the response back to the original channel
                             if platform == "discord" {
-                                info!("🔴 PLUGIN MANAGER: Sending response to Discord channel {}", channel);
+                                trace!("🔴 PLUGIN MANAGER: Sending response to Discord channel {}", channel);
                                 // Get Discord bot credentials
                                 match self.credentials_repo.list_credentials_for_platform(&PlatformEnum::Discord).await {
                                     Ok(creds) => {
-                                        info!("🔴 PLUGIN MANAGER: Got {} Discord credentials", creds.len());
+                                        trace!("🔴 PLUGIN MANAGER: Got {} Discord credentials", creds.len());
                                         if let Some(bot_cred) = creds.iter().find(|c| c.is_bot) {
-                                            info!("🔴 PLUGIN MANAGER: Using Discord bot account: {}", bot_cred.user_name);
+                                            trace!("🔴 PLUGIN MANAGER: Using Discord bot account: {}", bot_cred.user_name);
                                             
                                             // Send message using the bot's credential
                                             match self.platform_manager.send_discord_message(
@@ -331,7 +331,7 @@ impl PluginManager {
                                                 channel,  // Channel name or ID
                                                 &ai_response
                                             ).await {
-                                                Ok(_) => info!("🔴 PLUGIN MANAGER: Successfully sent AI response to Discord channel: {}", channel),
+                                                Ok(_) => trace!("🔴 PLUGIN MANAGER: Successfully sent AI response to Discord channel: {}", channel),
                                                 Err(e) => error!("🔴 PLUGIN MANAGER: Failed to send AI response via Discord: {:?}", e),
                                             }
                                         } else {
@@ -341,13 +341,13 @@ impl PluginManager {
                                     Err(e) => error!("🔴 PLUGIN MANAGER: Failed to get Discord credentials: {:?}", e),
                                 }
                             } else if platform == "twitch" || platform == "twitch-irc" {
-                                info!("🔴 PLUGIN MANAGER: Sending response to Twitch channel {}", channel);
+                                trace!("🔴 PLUGIN MANAGER: Sending response to Twitch channel {}", channel);
                                 // Get Twitch bot credentials
                                 match self.credentials_repo.list_credentials_for_platform(&PlatformEnum::TwitchIRC).await {
                                     Ok(creds) => {
-                                        info!("🔴 PLUGIN MANAGER: Got {} Twitch credentials", creds.len());
+                                        trace!("🔴 PLUGIN MANAGER: Got {} Twitch credentials", creds.len());
                                         if let Some(bot_cred) = creds.iter().find(|c| c.is_bot) {
-                                            info!("🔴 PLUGIN MANAGER: Using Twitch bot account: {}", bot_cred.user_name);
+                                            trace!("🔴 PLUGIN MANAGER: Using Twitch bot account: {}", bot_cred.user_name);
                                             
                                             // Send message using the bot's credential
                                             match self.platform_manager.send_twitch_irc_message(
@@ -355,7 +355,7 @@ impl PluginManager {
                                                 channel,
                                                 &ai_response
                                             ).await {
-                                                Ok(_) => info!("🔴 PLUGIN MANAGER: Successfully sent AI response to Twitch channel: {}", channel),
+                                                Ok(_) => trace!("🔴 PLUGIN MANAGER: Successfully sent AI response to Twitch channel: {}", channel),
                                                 Err(e) => error!("🔴 PLUGIN MANAGER: Failed to send AI response via Twitch: {:?}", e),
                                             }
                                         } else {
@@ -365,7 +365,7 @@ impl PluginManager {
                                     Err(e) => error!("🔴 PLUGIN MANAGER: Failed to get Twitch credentials: {:?}", e),
                                 }
                             } else {
-                                info!("🔴 PLUGIN MANAGER: Platform '{}' not supported for AI responses", platform);
+                                trace!("🔴 PLUGIN MANAGER: Platform '{}' not supported for AI responses", platform);
                             }
                         },
                         Err(e) => {
