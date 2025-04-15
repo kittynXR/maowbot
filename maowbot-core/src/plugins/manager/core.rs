@@ -11,7 +11,7 @@ use std::time::Instant;
 use futures_util::StreamExt;
 use libloading::{Library, Symbol};
 use tokio::sync::{mpsc::UnboundedSender, Mutex as AsyncMutex};
-use tracing::{info, error, debug, trace};
+use tracing::{info, error, debug, trace, warn};
 
 use crate::Error;
 use crate::eventbus::{BotEvent, EventBus};
