@@ -31,16 +31,16 @@ pub async fn handle_custom_reward_redemption_add(
     };
 
     // 2) Convert the event's user_id to your internal DB user. This uses the user_service to unify identity.
-    //    Pass "twitch-eventsub" as the platform (or whichever string your system uses).
+    //    Use "twitch-irc" as the platform for consistent user lookup
     //    The platform_user_id is the numeric string from the event. The user_name is from the event as well.
     let user = user_service
         .get_or_create_user("twitch-eventsub", &evt.user_id, Some(&evt.user_name))
         .await?;
 
-    // 3) Call your RedeemService logic, telling it the platform "twitch-eventsub", the reward ID, your internal user_id, etc.
+    // 3) Call your RedeemService logic, using "twitch-irc" for platform consistency
     redeem_service
         .handle_incoming_redeem(
-            "twitch-eventsub",
+            "twitch-eventsub",             // Use consistent platform name
             &evt.reward.id,            // reward_id
             user.user_id,              // Uuid from DB
             &evt.broadcaster_user_name,// channel/broadcaster context

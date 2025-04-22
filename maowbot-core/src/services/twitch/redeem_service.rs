@@ -27,9 +27,9 @@ pub struct RedeemHandlerContext<'a> {
 pub struct RedeemService {
     pub(crate) redeem_repo: Arc<dyn RedeemRepository + Send + Sync>,
     usage_repo: Arc<dyn RedeemUsageRepository + Send + Sync>,
-    user_service: Arc<UserService>,
+    pub user_service: Arc<UserService>,
 
-    platform_manager: Arc<PlatformManager>,
+    pub platform_manager: Arc<PlatformManager>,
 
     /// For picking fallback credentials, we also need direct access to credentials_repo
     pub credentials_repo: Arc<dyn CredentialsRepository + Send + Sync>,
@@ -50,6 +50,42 @@ impl RedeemService {
             platform_manager,
             credentials_repo,
         }
+    }
+    
+    /// Get access to the AI API for redeem handlers
+    pub fn get_ai_api(&self) -> Option<Arc<dyn maowbot_common::traits::api::AiApi + Send + Sync>> {
+        // First check if platform manager has a direct API
+        info!("🔷 REDEEM_SERVICE: Attempting to get AI API from multiple sources");
+        let platform_api = self.platform_manager.get_ai_api();
+        
+        if let Some(ai_api) = platform_api {
+            info!("🔷 REDEEM_SERVICE: Successfully retrieved AI API directly from platform_manager.get_ai_api()");
+            return Some(ai_api);
+        } else {
+            info!("🔷 REDEEM_SERVICE: No AI API from platform_manager.get_ai_api(), checking plugin_manager");
+        }
+        
+        // Try to get the AI API through the plugin manager
+        if let Some(plugin_manager) = self.platform_manager.plugin_manager() {
+            info!("🔷 REDEEM_SERVICE: Got plugin_manager reference, checking for ai_api_impl");
+            
+            if let Some(ai_impl) = &plugin_manager.ai_api_impl {
+                info!("🔷 REDEEM_SERVICE: Found ai_api_impl in plugin_manager");
+                
+                // Create a new instance by cloning to ensure we get a fresh copy
+                let cloned_impl = ai_impl.clone();
+                info!("🔷 REDEEM_SERVICE: Successfully cloned ai_impl, returning as Arc");
+                
+                return Some(Arc::new(cloned_impl));
+            } else {
+                warn!("🔷 REDEEM_SERVICE: plugin_manager found but no ai_api_impl available");
+            }
+        } else {
+            warn!("🔷 REDEEM_SERVICE: Failed to get plugin_manager reference from platform_manager");
+        }
+        
+        warn!("🔷 REDEEM_SERVICE: AI API not available from any source");
+        None
     }
 
     /// Called by Twitch EventSub pipeline or a similar mechanism whenever a new redemption arrives.
@@ -160,14 +196,18 @@ impl RedeemService {
     }
 
     /// Optionally build a Helix client from a given credential if it’s the Helix type.
+    // Improved version that tries multiple sources for the Helix client
     async fn get_helix_client_for_credential(
         &self,
         cred_opt: &Option<PlatformCredential>
     ) -> Option<crate::platforms::twitch::client::TwitchHelixClient> {
+        // First try from the provided credential
         if let Some(cred) = cred_opt {
-            if cred.platform == Platform::Twitch {
+            // Check both Twitch and TwitchIRC credential types
+            if cred.platform == Platform::Twitch || cred.platform == Platform::TwitchIRC {
                 if let Some(additional) = &cred.additional_data {
                     if let Some(cid) = additional.get("client_id").and_then(|v| v.as_str()) {
+                        info!("Creating Helix client from credential: platform={:?}", cred.platform);
                         let client = crate::platforms::twitch::client::TwitchHelixClient::new(
                             &cred.primary_token, cid
                         );
@@ -176,7 +216,19 @@ impl RedeemService {
                 }
             }
         }
-        None
+        
+        // If no suitable credential was provided, try to get a default one from the platform manager
+        info!("No suitable credential for Helix client, trying platform manager's default client");
+        match self.platform_manager.get_twitch_client().await {
+            Some(client) => {
+                info!("Using default Twitch client from platform manager");
+                Some(client)
+            },
+            None => {
+                warn!("Could not create Helix client from any source");
+                None
+            }
+        }
     }
 
     // ------------------------------------------------------------------
@@ -207,6 +259,7 @@ impl RedeemService {
             is_managed: false,
             plugin_name: None,
             command_name: None,
+            is_user_input_required: false,
         };
         self.redeem_repo.create_redeem(&rd).await?;
         Ok(rd)

@@ -21,10 +21,15 @@ pub struct Redeem {
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 
-    /// **NEW**: If set, indicates which credential is actually “active”
+    /// **NEW**: If set, indicates which credential is actually "active"
     /// for this redeem. Could be used for deciding which account processes it.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub active_credential_id: Option<Uuid>,
+    
+    /// Indicates whether this redeem requires the user to provide input text.
+    /// For AI-related redeems, this should typically be true.
+    #[serde(default)]
+    pub is_user_input_required: bool,
 }
 
 /// Tracks usage of a given redeem by a user.

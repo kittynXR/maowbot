@@ -17,7 +17,7 @@ struct AutostartConfig {
 /// “web-app managed” and from “bot-managed” to “internally managed.”
 pub async fn handle_redeem_command(args: &[&str], bot_api: &Arc<dyn BotApi>) -> String {
     if args.is_empty() {
-        return "Usage: redeem <list|info|add|enable|pause|offline|setcost|setprompt|setplugin|setcommand|remove|sync>".to_string();
+        return "Usage: redeem <list|info|add|enable|pause|offline|setcost|setprompt|setplugin|setcommand|setinput|remove|sync>".to_string();
     }
 
     match args[0].to_lowercase().as_str() {
@@ -108,9 +108,9 @@ pub async fn handle_redeem_command(args: &[&str], bot_api: &Arc<dyn BotApi>) -> 
         // -----------------------------------------------------
         "add" => {
             // Example usage:
-            //   redeem add <rewardName> <cost> [--managed] [--offline] [--dynamic]
+            //   redeem add <rewardName> <cost> [--managed] [--offline] [--dynamic] [--input]
             if args.len() < 3 {
-                return "Usage: redeem add <rewardName> <cost> [--managed] [--offline] [--dynamic]".to_string();
+                return "Usage: redeem add <rewardName> <cost> [--managed] [--offline] [--dynamic] [--input]".to_string();
             }
 
             let reward_name = args[1];
@@ -124,13 +124,15 @@ pub async fn handle_redeem_command(args: &[&str], bot_api: &Arc<dyn BotApi>) -> 
             let mut is_managed = false;
             let mut active_offline = false;
             let mut dynamic_pricing = false;
+            let mut is_user_input_required = false;
             for flag in &args[3..] {
                 match flag.to_lowercase().as_str() {
                     "--managed" => is_managed = true,
                     "--offline" => active_offline = true,
                     "--dynamic" => dynamic_pricing = true,
+                    "--input" => is_user_input_required = true,
                     other => {
-                        return format!("Unknown flag '{other}'. Valid flags: --managed, --offline, --dynamic");
+                        return format!("Unknown flag '{other}'. Valid flags: --managed, --offline, --dynamic, --input");
                     }
                 }
             }
@@ -138,21 +140,22 @@ pub async fn handle_redeem_command(args: &[&str], bot_api: &Arc<dyn BotApi>) -> 
             // 1) Insert new row. We'll pass empty "" for reward_id initially.
             match bot_api.create_redeem("twitch-eventsub", "", reward_name, cost, dynamic_pricing).await {
                 Ok(mut new_rd) => {
-                    // 2) If user wants is_managed or offline, update the newly created row
-                    if is_managed || active_offline {
+                    // 2) If user wants is_managed, offline, or user_input_required, update the newly created row
+                    if is_managed || active_offline || is_user_input_required {
                         new_rd.is_managed = is_managed;
                         new_rd.active_offline = active_offline;
+                        new_rd.is_user_input_required = is_user_input_required;
                         new_rd.updated_at = Utc::now();
 
                         if let Err(e) = bot_api.update_redeem(&new_rd).await {
-                            return format!("(Partial) Created redeem but error updating is_managed/offline => {e}");
+                            return format!("(Partial) Created redeem but error updating additional flags => {e}");
                         }
                     }
 
                     format!(
-                        "New redeem '{}' created with cost={} (managed={}, offline={}, dynamic={}).\n\
+                        "New redeem '{}' created with cost={} (managed={}, offline={}, dynamic={}, input={}).\n\
                          You can run 'redeem sync' or restart to push it to Twitch if managed=true.",
-                        new_rd.reward_name, new_rd.cost, is_managed, active_offline, dynamic_pricing
+                        new_rd.reward_name, new_rd.cost, is_managed, active_offline, dynamic_pricing, is_user_input_required
                     )
                 }
                 Err(e) => format!("Error creating => {e}"),
@@ -327,6 +330,31 @@ pub async fn handle_redeem_command(args: &[&str], bot_api: &Arc<dyn BotApi>) -> 
         }
 
         // -----------------------------------------------------
+        // SETINPUT (toggle is_user_input_required)
+        // -----------------------------------------------------
+        "setinput" => {
+            if args.len() < 2 {
+                return "Usage: redeem setinput <redeemNameOrUuid>".to_string();
+            }
+            let user_input = args[1];
+            match resolve_singleton_redeem(bot_api, user_input).await {
+                Ok(mut redeem) => {
+                    let new_val = !redeem.is_user_input_required;
+                    redeem.is_user_input_required = new_val;
+                    redeem.updated_at = Utc::now();
+                    let update_result = bot_api.update_redeem(&redeem).await;
+                    match update_result {
+                        Ok(_) => format!(
+                            "Redeem '{}' user input required toggled to {}.",
+                            redeem.reward_name, redeem.is_user_input_required
+                        ),
+                        Err(e) => format!("Error updating => {e}"),
+                    }
+                }
+                Err(e) => e,
+            }
+        }
+
         // REMOVE
         // -----------------------------------------------------
         "remove" => {
@@ -501,19 +529,20 @@ fn format_redeem_details(rd: &Redeem) -> String {
     format!(
         "Redeem Info\n\
          -------------\n\
-         redeem_id:        {}\n\
-         platform:         {}\n\
-         reward_id:        {}\n\
-         reward_name:      {}\n\
-         cost:             {}\n\
-         is_active:        {}\n\
-         dynamic_pricing:  {}\n\
-         created_at:       {}\n\
-         updated_at:       {}\n\
-         active_offline:   {}\n\
-         is_managed:       {}\n\
-         plugin_name:      {}\n\
-         command_name:     {}\n",
+         redeem_id:             {}\n\
+         platform:              {}\n\
+         reward_id:             {}\n\
+         reward_name:           {}\n\
+         cost:                  {}\n\
+         is_active:             {}\n\
+         dynamic_pricing:       {}\n\
+         created_at:            {}\n\
+         updated_at:            {}\n\
+         active_offline:        {}\n\
+         is_managed:            {}\n\
+         is_user_input_required: {}\n\
+         plugin_name:           {}\n\
+         command_name:          {}\n",
         rd.redeem_id,
         rd.platform,
         rd.reward_id,
@@ -525,6 +554,7 @@ fn format_redeem_details(rd: &Redeem) -> String {
         rd.updated_at,
         rd.active_offline,
         rd.is_managed,
+        rd.is_user_input_required,
         rd.plugin_name.as_deref().unwrap_or("-"),
         rd.command_name.as_deref().unwrap_or("-"),
     )

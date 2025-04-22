@@ -42,6 +42,9 @@ pub struct PlatformManager {
     pub active_runtimes: AsyncMutex<HashMap<(String, String), PlatformRuntimeHandle>>,
     pub discord_caches: AsyncMutex<HashMap<(String, String), Arc<InMemoryCache>>>,
     pub discord_repo: Arc<PostgresDiscordRepository>,
+    
+    // Reference to the plugin manager - will be set later
+    plugin_manager: Mutex<Option<Arc<crate::plugins::manager::PluginManager>>>,
 }
 
 impl PlatformManager {
@@ -59,7 +62,35 @@ impl PlatformManager {
             active_runtimes: AsyncMutex::new(HashMap::new()),
             discord_caches: AsyncMutex::new(HashMap::new()),
             discord_repo,
+            plugin_manager: Mutex::new(None),
         }
+    }
+    
+    /// Set the plugin manager reference
+    pub fn set_plugin_manager(&self, plugin_manager: Arc<crate::plugins::manager::PluginManager>) {
+        let mut pm = self.plugin_manager.lock().unwrap();
+        *pm = Some(plugin_manager);
+    }
+    
+    /// Get the plugin manager reference
+    pub fn plugin_manager(&self) -> Option<Arc<crate::plugins::manager::PluginManager>> {
+        let pm = self.plugin_manager.lock().unwrap();
+        pm.clone()
+    }
+    
+    /// Get access to the AI API through the plugin manager
+    pub fn get_ai_api(&self) -> Option<Arc<dyn maowbot_common::traits::api::AiApi + Send + Sync>> {
+        // First attempt: try to get from plugin_manager if it exists
+        if let Some(pm) = self.plugin_manager() {
+            if let Some(ai_impl) = &pm.ai_api_impl {
+                info!("Found AI API implementation in plugin_manager");
+                return Some(Arc::new(ai_impl.clone()));
+            }
+        }
+        
+        // If we reach here, we couldn't get the AI API from plugin_manager
+        info!("Could not find AI API implementation in plugin_manager, falling back to stub");
+        None
     }
 
     pub fn set_message_service(&self, svc: Arc<MessageService>) {
