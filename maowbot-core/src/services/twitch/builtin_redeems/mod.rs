@@ -1,6 +1,9 @@
 // File: maowbot-core/src/services/twitch/builtin_redeems/mod.rs
 
 pub mod cute;
+pub mod pillo;
+pub mod osc_triggers;
+mod askai;
 
 // Re-export or define a small “dispatcher” function:
 use tracing::info;
@@ -19,7 +22,21 @@ pub async fn handle_builtin_redeem(
         "cute" => {
             cute::handle_cute_redeem(ctx, redemption).await?;
         },
-        // Additional built-in redeems can be matched here...
+        "cat_trap" => {
+            osc_triggers::handle_cattrap_redeem(ctx, redemption).await?;
+        },
+        "pillo" => {
+            osc_triggers::handle_pillo_redeem(ctx, redemption).await?;
+        },
+        "askai" => {
+            askai::handle_askai_redeem(ctx, redemption).await?;
+        },
+        "askmao" => {
+            askai::handle_askmao_redeem(ctx, redemption).await?;
+        },
+        "askai_search" => {
+            askai::handle_askai_search_redemption(ctx, redemption).await?;
+        }
         _ => {
             info!("No built-in redeem logic found for command_name='{}'", command_name);
         }
