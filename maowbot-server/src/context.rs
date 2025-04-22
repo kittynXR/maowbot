@@ -52,7 +52,7 @@ pub struct ServerContext {
     pub auth_manager: Arc<Mutex<AuthManager>>,
     pub message_service: Arc<MessageService>,
     pub platform_manager: Arc<PlatformManager>,
-    pub plugin_manager: PluginManager,
+    pub plugin_manager: Arc<PluginManager>,
     pub eventsub_service: Arc<EventSubService>,
     pub command_service: Arc<CommandService>,
     pub redeem_service: Arc<RedeemService>,
@@ -313,15 +313,20 @@ impl ServerContext {
             cmd_usage_repo,
             redeem_usage_repo,
             creds_repo_arc.clone(),
-            Some(ai_api_impl.clone())
+            Some(ai_api_impl.clone()),
         );
         // Let plugin manager see the event bus
         plugin_manager.set_event_bus(event_bus.clone());
         plugin_manager.set_auth_manager(auth_manager_arc.clone());
-        
-        // Subscribe to event bus - critical for AI functionality!
-        info!("Subscribing plugin manager to event bus");
+
+        // subscribe / load etc. (all the same mut calls)
         plugin_manager.subscribe_to_event_bus(event_bus.clone()).await;
+        if let Some(path) = &args.in_process_plugin {
+            if let Err(e) = plugin_manager.load_in_process_plugin(path).await {
+                error!("Failed to load in‑process plugin from {}: {:?}", path, e);
+            }
+        }
+
 
         // Attempt to load optional in-process plugin
         if let Some(path) = &args.in_process_plugin {
@@ -349,10 +354,17 @@ impl ServerContext {
         // After we're done with mutations, create the Arc
         let osc_manager_arc = Arc::new(osc_manager);
 
+        plugin_manager.set_osc_manager(osc_manager_arc.clone());
+
         // Create the new robo system:
         let robo_control = Arc::new(Mutex::new(RoboControlSystem::new()));
 
         plugin_manager.set_osc_manager(Arc::clone(&osc_manager_arc));
+
+        let plugin_manager_arc = Arc::new(plugin_manager);
+
+        // hand to PlatformManager so `get_ai_api()` can succeed
+        platform_manager.set_plugin_manager(plugin_manager_arc.clone());
 
         Ok(ServerContext {
             db,
@@ -360,7 +372,7 @@ impl ServerContext {
             auth_manager: auth_manager_arc,
             message_service,
             platform_manager,
-            plugin_manager,
+            plugin_manager: plugin_manager_arc,
             eventsub_service,
             command_service,
             redeem_service,

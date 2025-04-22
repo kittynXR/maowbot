@@ -71,7 +71,7 @@ pub async fn run_server(args: Args) -> Result<(), Error> {
     }
 
     // Create a proper BotApiWrapper that implements all BotApi traits including AiApi
-    let bot_api = Arc::new(BotApiWrapper::new(Arc::new(ctx.plugin_manager.clone())));
+    let bot_api = Arc::new(BotApiWrapper::new(ctx.plugin_manager.clone()));
     
     // 4) Autostart any configured accounts
     if let Err(e) = run_autostart(bot_api.as_ref(), bot_api.clone()).await {
@@ -150,7 +150,7 @@ pub async fn run_server(args: Args) -> Result<(), Error> {
     info!("Starting Tonic gRPC server on {}", addr);
 
     let service_impl = PluginServiceGrpc {
-        manager: Arc::new(ctx.plugin_manager.clone()),
+        manager: ctx.plugin_manager.clone(),
     };
     let server_future = Server::builder()
         .tls_config(tls_config)?
