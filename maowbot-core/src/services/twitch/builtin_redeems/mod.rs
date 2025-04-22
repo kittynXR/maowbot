@@ -1,9 +1,8 @@
 // File: maowbot-core/src/services/twitch/builtin_redeems/mod.rs
 
 pub mod cute;
-pub mod pillo;
 pub mod osc_triggers;
-mod askai;
+pub mod askai;
 
 // Re-export or define a small “dispatcher” function:
 use tracing::info;
