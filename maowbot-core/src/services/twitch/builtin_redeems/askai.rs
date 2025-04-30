@@ -17,87 +17,40 @@ async fn generate_ai_response(
     input: &str,
     system_prompt: Option<&str>
 ) -> Result<String, Error> {
-    info!("🔍 ASKAI: Generating AI response for user {}, input: '{}'", user_id, input);
-    // Get the AI API directly through multiple methods to increase chances of success
+    info!("Generating AI response for user {}", user_id);
     
-    // First try through the redeem service with more detailed logging
+    // Get the AI API through the redeem service first
     let ai_api_opt = match ctx.redeem_service.get_ai_api() {
-        Some(api) => {
-            info!("🔍 ASKAI: Successfully got AI API from redeem_service.get_ai_api()");
-            // Test if this API actually works
-            match api.process_user_message(Uuid::nil(), "Test message for AI verification").await {
-                Ok(test_response) => {
-                    info!("🔍 ASKAI: Test call to AI API successful! Response: '{}'", test_response);
-                    Some(api)
-                },
-                Err(e) => {
-                    error!("🔍 ASKAI: AI API from redeem_service failed test: {:?}", e);
-                    None
-                }
-            }
-        },
-        None => {
-            info!("🔍 ASKAI: Failed to get AI API from redeem_service.get_ai_api(), trying through platform_manager");
-            None
-        }
+        Some(api) => Some(api),
+        None => ctx.redeem_service.platform_manager.get_ai_api()
     };
     
-    // Either use what we got from redeem_service or try from platform_manager
+    // If still not found, try through plugin manager
     let ai_api = if let Some(api) = ai_api_opt {
         api
-    } else if let Some(api) = ctx.redeem_service.platform_manager.get_ai_api() {
-        info!("🔍 ASKAI: Successfully got AI API directly from platform_manager.get_ai_api()");
-        // Test the platform manager API too
-        match api.process_user_message(Uuid::nil(), "Test message for AI verification").await {
-            Ok(test_response) => {
-                info!("🔍 ASKAI: Test call to platform_manager's AI API successful! Response: '{}'", test_response);
-            },
-            Err(e) => {
-                error!("🔍 ASKAI: AI API from platform_manager failed test: {:?}", e);
-            }
-        }
-        api
-    } else {
-        // Last try - check if plugin_manager is available and has the AI API
-        if let Some(plugin_manager) = ctx.redeem_service.platform_manager.plugin_manager() {
-            if let Some(ai_impl) = &plugin_manager.ai_api_impl {
-                info!("🔍 ASKAI: Using AI API implementation from plugin_manager");
-                // Wrap and test one more time
-                let api = Arc::new(ai_impl.clone());
-                match api.process_user_message(Uuid::nil(), "Test message for AI verification").await {
-                    Ok(test_response) => {
-                        info!("🔍 ASKAI: Test call to plugin_manager's AI API successful! Response: '{}'", test_response);
-                    },
-                    Err(e) => {
-                        error!("🔍 ASKAI: AI API from plugin_manager failed test: {:?}", e);
-                    }
-                }
-                api
-            } else {
-                warn!("🔍 ASKAI: AI API is not available through any means, falling back to placeholder response");
-                // Continue with placeholder response
-                if let Some(prompt) = system_prompt {
-                    return Ok(format!("AI response to '{}' with prompt '{}'", input, prompt));
-                } else {
-                    return Ok(format!("AI response to '{}'", input));
-                }
-            }
+    } else if let Some(plugin_manager) = ctx.redeem_service.platform_manager.plugin_manager() {
+        if let Some(ai_impl) = &plugin_manager.ai_api_impl {
+            Arc::new(ai_impl.clone())
         } else {
-            warn!("🔍 ASKAI: AI API is not available through any means, falling back to placeholder response");
-            // Continue with placeholder response
+            warn!("AI API is not available through any means, falling back to placeholder response");
             if let Some(prompt) = system_prompt {
                 return Ok(format!("AI response to '{}' with prompt '{}'", input, prompt));
             } else {
                 return Ok(format!("AI response to '{}'", input));
             }
         }
+    } else {
+        warn!("AI API is not available through any means, falling back to placeholder response");
+        if let Some(prompt) = system_prompt {
+            return Ok(format!("AI response to '{}' with prompt '{}'", input, prompt));
+        } else {
+            return Ok(format!("AI response to '{}'", input));
+        }
     };
-    
-    info!("🔍 ASKAI: Using AI API to generate response for input: {}", input);
     
     // If we have a system prompt, construct a message array with it
     if let Some(prompt) = system_prompt {
-        info!("🔍 ASKAI: Using system prompt: {}", prompt);
+        info!("Using system prompt: {}", prompt);
         let messages = vec![
             serde_json::json!({
                 "role": "system",
@@ -109,30 +62,101 @@ async fn generate_ai_response(
             })
         ];
         
-        // Use the generate_chat method to get a response
-        info!("🔍 ASKAI: Calling generate_chat with {} messages", messages.len());
         match ai_api.generate_chat(messages).await {
-            Ok(response) => {
-                info!("🔍 ASKAI: AI response generated successfully: '{}'", response);
-                Ok(response)
-            },
+            Ok(response) => Ok(response),
             Err(e) => {
-                error!("🔍 ASKAI: Error generating AI response: {:?}", e);
+                error!("Error generating AI response: {:?}", e);
                 Err(Error::Internal(format!("AI API error: {}", e)))
             }
         }
     } else {
         // Use the process_user_message method that handles conversation history
-        info!("🔍 ASKAI: No system prompt provided, using process_user_message with user_id {}", user_id);
         match ai_api.process_user_message(user_id, input).await {
-            Ok(response) => {
-                info!("🔍 ASKAI: AI response generated successfully: '{}'", response);
-                Ok(response)
-            },
+            Ok(response) => Ok(response),
             Err(e) => {
-                error!("🔍 ASKAI: Error generating AI response: {:?}", e);
+                error!("Error generating AI response: {:?}", e);
                 Err(Error::Internal(format!("AI API error: {}", e)))
             }
+        }
+    }
+}
+
+// Helper function to generate an AI response with web search capability
+async fn generate_ai_web_search_response(
+    ctx: &RedeemHandlerContext<'_>,
+    user_id: Uuid,
+    input: &str,
+    system_prompt: Option<&str>
+) -> Result<String, Error> {
+    info!("Generating AI web search response for user {}", user_id);
+    
+    // Get the AI API the same way as in generate_ai_response
+    let ai_api_opt = match ctx.redeem_service.get_ai_api() {
+        Some(api) => Some(api),
+        None => ctx.redeem_service.platform_manager.get_ai_api()
+    };
+    
+    let ai_api = if let Some(api) = ai_api_opt {
+        api
+    } else if let Some(plugin_manager) = ctx.redeem_service.platform_manager.plugin_manager() {
+        if let Some(ai_impl) = &plugin_manager.ai_api_impl {
+            Arc::new(ai_impl.clone())
+        } else {
+            warn!("AI API is not available through any means, falling back to placeholder response");
+            if let Some(prompt) = system_prompt {
+                return Ok(format!("Web search AI response to '{}' with prompt '{}'", input, prompt));
+            } else {
+                return Ok(format!("Web search AI response to '{}'", input));
+            }
+        }
+    } else {
+        warn!("AI API is not available through any means, falling back to placeholder response");
+        if let Some(prompt) = system_prompt {
+            return Ok(format!("Web search AI response to '{}' with prompt '{}'", input, prompt));
+        } else {
+            return Ok(format!("Web search AI response to '{}'", input));
+        }
+    };
+    
+    // Create messages with system prompt if provided
+    let mut messages = Vec::new();
+    
+    if let Some(prompt) = system_prompt {
+        messages.push(serde_json::json!({
+            "role": "system",
+            "content": prompt
+        }));
+    }
+    
+    messages.push(serde_json::json!({
+        "role": "user",
+        "content": input
+    }));
+    
+    // The OpenAI provider has been modified to automatically add web search options
+    // when the model is set to gpt-4.1 or when "enable_web_search" is set to "true"
+    // in the options. Here we'll use both approaches to ensure it works.
+    
+    // First try: Configure the AI service to use GPT-4.1 model
+    if let Err(e) = ai_api.configure_ai_provider(serde_json::json!({
+        "provider_type": "openai",
+        "default_model": "gpt-4.1",
+        "options": {
+            "enable_web_search": "true"
+        }
+    })).await {
+        warn!("Failed to configure AI provider for web search: {:?}", e);
+        // Continue anyway - our provider implementation should handle this
+    }
+    
+    info!("Using model gpt-4.1 with web search capabilities");
+    
+    // Process the request - the provider will add web_search_options
+    match ai_api.generate_chat(messages).await {
+        Ok(response) => Ok(response),
+        Err(e) => {
+            error!("Error generating AI web search response: {:?}", e);
+            Err(Error::Internal(format!("AI API web search error: {}", e)))
         }
     }
 }
@@ -143,8 +167,7 @@ async fn send_ai_response_to_chat(
     channel: &str,
     response: &str,
 ) -> Result<(), Error> {
-    info!("🚀 ASKAI: Attempting to send AI response to chat channel: {}", channel);
-    info!("🚀 ASKAI: Response to send: '{}'", response);
+    info!("Sending AI response to chat channel: {}", channel);
     
     // Create a message sender instance using the platform manager and credentials repo
     let message_sender = MessageSender::new(
@@ -166,11 +189,11 @@ async fn send_ai_response_to_chat(
     
     match result {
         Ok(_) => {
-            info!("🚀 ASKAI: Successfully sent AI response to channel: {}", channel);
+            info!("Successfully sent AI response to channel: {}", channel);
             Ok(())
         },
         Err(e) => {
-            error!("🚀 ASKAI: Failed to send AI response: {:?}", e);
+            error!("Failed to send AI response: {:?}", e);
             Err(e)
         }
     }
@@ -181,10 +204,6 @@ async fn get_user_from_twitch_id(
     ctx: &RedeemHandlerContext<'_>, 
     twitch_user_id: &str
 ) -> Result<User, Error> {
-    // For Twitch redeems, we'll get the user ID from the user service directly
-    // This is simpler than using the User API which doesn't have a direct method
-    // for looking up users by platform ID
-    
     // Use "twitch-irc" as the platform for consistent user lookup
     match ctx.redeem_service.user_service.get_or_create_user(
         "twitch-irc",
@@ -211,19 +230,8 @@ pub async fn handle_askai_redeem(
         redemption.user_input.trim()
     } else {
         // No user input or empty input, mark as failed
-        // Get a Helix client instance for redemption management
         let helix_client_opt = ctx.redeem_service.platform_manager.get_twitch_client().await;
         
-        // If we got a client, use it, otherwise log a warning
-        if let Some(ref client) = helix_client_opt {
-            info!("Using Helix client from platform manager");
-        } else if ctx.helix_client.is_some() {
-            info!("Using Helix client from context");
-            // We'll use this in the next section
-        } else {
-            warn!("No Helix client available from any source");
-        }
-
         // Try to use the Helix client from either source to cancel the redemption
         info!("No user input provided for 'ask ai' redeem, canceling redemption");
         let broadcaster_id = &redemption.broadcaster_id;
@@ -265,53 +273,35 @@ pub async fn handle_askai_redeem(
         }
     };
 
-    // Log that we received the redeem and the input
     info!("Received askai redeem with input: {}", user_input);
     
     // Get the user from the Twitch ID
     let user = match get_user_from_twitch_id(ctx, &redemption.user_id).await {
-        Ok(user) => {
-            info!("Found user for AI redeem: {}", user.user_id);
-            user
-        },
+        Ok(user) => user,
         Err(e) => {
             error!("Failed to get user for AI redeem: {:?}", e);
             
             // Try to cancel the redemption since we can't process it
-            // Get a Helix client for canceling the redemption
             let helix_client_opt = ctx.redeem_service.platform_manager.get_twitch_client().await;
             
-            // First try with context client
             if let Some(client) = &ctx.helix_client {
-                if let Err(cancel_err) = client
+                let _ = client
                     .update_redemption_status(
                         &redemption.broadcaster_id,
                         &redemption.reward.id,
                         &[&redemption.id],
                         "CANCELED",
                     )
-                    .await
-                {
-                    warn!("Failed to cancel redemption using context client: {:?}", cancel_err);
-                } else {
-                    info!("Successfully canceled redemption using context client");
-                }
+                    .await;
             } else if let Some(client) = helix_client_opt {
-                if let Err(cancel_err) = client
+                let _ = client
                     .update_redemption_status(
                         &redemption.broadcaster_id,
                         &redemption.reward.id,
                         &[&redemption.id],
                         "CANCELED",
                     )
-                    .await
-                {
-                    warn!("Failed to cancel redemption using platform manager client: {:?}", cancel_err);
-                } else {
-                    info!("Successfully canceled redemption using platform manager client");
-                }
-            } else {
-                warn!("No Helix client available to cancel redemption");
+                    .await;
             }
             
             return Err(e);
@@ -320,75 +310,23 @@ pub async fn handle_askai_redeem(
     
     // Generate an AI response using real AI API
     let response = match generate_ai_response(ctx, user.user_id, user_input, None).await {
-        Ok(resp) => {
-            info!("Generated standard AI response: '{}'", resp);
-            resp
-        },
+        Ok(resp) => resp,
         Err(e) => {
             error!("Error generating AI response: {:?}", e);
             format!("Sorry, I couldn't generate a response: {}", e)
         }
     };
     
-    // Send the response to chat with more detailed logging
+    // Send the response to chat
     if let Some(broadcaster_login) = &redemption.broadcaster_login {
-        info!("🚀 ASKAI: Trying to send AI response to broadcaster channel: {}", broadcaster_login);
-        match send_ai_response_to_chat(ctx, broadcaster_login, &response).await {
-            Ok(_) => {
-                info!("🚀 ASKAI: Successfully sent AI response to chat channel: {}", broadcaster_login);
-                
-                // Try to send a follow-up confirmation message for debugging
-                let fallback_msg = "[DEBUG] AI response was successfully sent by the askai redeem handler";
-                // Use same channel hash format approach as the main function
-                let login_with_hash = if !broadcaster_login.starts_with('#') {
-                    format!("#{}", broadcaster_login)
-                } else {
-                    broadcaster_login.to_string()
-                };
-                
-                match ctx.redeem_service.platform_manager.send_twitch_irc_message(
-                    "maowBot",  // Most likely name of the bot
-                    &login_with_hash,
-                    fallback_msg
-                ).await {
-                    Ok(_) => info!("🚀 ASKAI: Sent confirmation message about successful AI response"),
-                    Err(e) => warn!("🚀 ASKAI: Failed to send follow-up confirmation: {:?}", e),
-                }
-            },
-            Err(e) => {
-                error!("🚀 ASKAI: Failed to send AI response to chat: {:?}", e);
-                
-                // Try to send a fallback error message
-                if let Ok(creds) = ctx.redeem_service.credentials_repo
-                    .list_credentials_for_platform(&maowbot_common::models::platform::Platform::TwitchIRC)
-                    .await
-                {
-                    if let Some(bot_cred) = creds.iter().find(|c| c.is_bot) {
-                        let fallback_msg = format!("[ERROR] Failed to process AI redeem: {}", e);
-                        // Make sure error message uses proper channel format
-                        let login_with_hash = if !broadcaster_login.starts_with('#') {
-                            format!("#{}", broadcaster_login)
-                        } else {
-                            broadcaster_login.to_string()
-                        };
-                        
-                        if let Err(e2) = ctx.redeem_service.platform_manager.send_twitch_irc_message(
-                            &bot_cred.user_name,
-                            &login_with_hash,
-                            &fallback_msg
-                        ).await {
-                            error!("🚀 ASKAI: Even fallback error message failed: {:?}", e2);
-                        }
-                    }
-                }
-            }
+        if let Err(e) = send_ai_response_to_chat(ctx, broadcaster_login, &response).await {
+            error!("Failed to send AI response to chat: {:?}", e);
         }
     } else {
-        error!("🚀 ASKAI: No broadcaster login found in redemption - can't send response");
+        error!("No broadcaster login found in redemption - can't send response");
     }
     
     // Try to mark the redemption as complete
-    // Get a Helix client to fulfill the redemption
     let helix_client_opt = ctx.redeem_service.platform_manager.get_twitch_client().await;
     let broadcaster_id = &redemption.broadcaster_id;
     let reward_id = &redemption.reward.id;
@@ -396,9 +334,8 @@ pub async fn handle_askai_redeem(
     
     info!("Attempting to complete AI redeem");
     
-    // First try with context client
     if let Some(client) = &ctx.helix_client {
-        match client
+        if let Err(e) = client
             .update_redemption_status(
                 broadcaster_id,
                 reward_id,
@@ -407,41 +344,30 @@ pub async fn handle_askai_redeem(
             )
             .await
         {
-            Ok(_) => info!("Successfully marked redemption as fulfilled using context client"),
-            Err(e) => {
-                warn!("Failed to mark redemption as fulfilled using context client: {:?}", e);
-                
-                // Try fall back to platform manager client if context client fails
-                if let Some(client2) = helix_client_opt {
-                    match client2
-                        .update_redemption_status(
-                            broadcaster_id,
-                            reward_id,
-                            &[&redemption_id],
-                            "FULFILLED",
-                        )
-                        .await 
-                    {
-                        Ok(_) => info!("Successfully marked redemption as fulfilled using platform manager client"),
-                        Err(e2) => warn!("Failed to mark redemption as fulfilled using platform manager client: {:?}", e2)
-                    }
-                }
+            warn!("Failed to mark redemption as fulfilled using context client: {:?}", e);
+            
+            // Try fall back to platform manager client if context client fails
+            if let Some(client2) = helix_client_opt {
+                let _ = client2
+                    .update_redemption_status(
+                        broadcaster_id,
+                        reward_id,
+                        &[&redemption_id],
+                        "FULFILLED",
+                    )
+                    .await;
             }
         }
     } else if let Some(client) = helix_client_opt {
         // Fall back to platform manager client
-        match client
+        let _ = client
             .update_redemption_status(
                 broadcaster_id,
                 reward_id,
                 &[&redemption_id],
                 "FULFILLED",
             )
-            .await
-        {
-            Ok(_) => info!("Successfully marked redemption as fulfilled using platform manager client"),
-            Err(e) => warn!("Failed to mark redemption as fulfilled using platform manager client: {:?}", e)
-        }
+            .await;
     } else {
         warn!("No Helix client available from any source, can't update redeem status");
     }
@@ -469,9 +395,7 @@ pub async fn handle_askmao_redeem(
             let reward_id = &redemption.reward.id;
             let redemption_id = &redemption.id;
 
-            info!(
-                "No user input provided for 'ask maow' redeem, canceling redemption"
-            );
+            info!("No user input provided for 'ask maow' redeem, canceling redemption");
 
             // Cancel by setting status = "CANCELED"
             let _ = client
@@ -488,7 +412,6 @@ pub async fn handle_askmao_redeem(
         }
     };
 
-    // Log that we received the redeem and the input
     info!("Received askmao redeem with input: {}", user_input);
     
     // Get the user from the Twitch ID
@@ -518,10 +441,7 @@ pub async fn handle_askmao_redeem(
     
     // Generate an AI response with cat-like system prompt using real AI API
     let response = match generate_ai_response(ctx, user.user_id, user_input, Some(system_prompt)).await {
-        Ok(resp) => {
-            info!("Generated cat-like AI response");
-            resp
-        },
+        Ok(resp) => resp,
         Err(e) => {
             error!("Error generating cat-like AI response: {:?}", e);
             format!("Meow? *looks confused* Something went wrong with my cat brain. Try again later!")
@@ -530,7 +450,6 @@ pub async fn handle_askmao_redeem(
     
     // Send the response to chat
     if let Some(broadcaster_login) = &redemption.broadcaster_login {
-        // Use proper broadcaster_login
         if let Err(e) = send_ai_response_to_chat(ctx, broadcaster_login, &response).await {
             error!("Failed to send askmaow response to chat: {:?}", e);
         }
@@ -582,9 +501,7 @@ pub async fn handle_askai_search_redemption(
             let reward_id = &redemption.reward.id;
             let redemption_id = &redemption.id;
 
-            info!(
-                "No user input provided for 'ask ai with search' redeem, canceling redemption"
-            );
+            info!("No user input provided for 'ask ai with search' redeem, canceling redemption");
 
             // Cancel by setting status = "CANCELED"
             let _ = client
@@ -601,7 +518,6 @@ pub async fn handle_askai_search_redemption(
         }
     };
 
-    // Log that we received the redeem and the input
     info!("Received askai_search redeem with input: {}", user_input);
     
     // Get the user from the Twitch ID
@@ -626,15 +542,12 @@ pub async fn handle_askai_search_redemption(
         }
     };
     
-    // Create a search prompt 
-    let system_prompt = "You are a helpful AI assistant that has the ability to search the web for information. For this request, respond as if you had searched for this information, providing a disclaimer that web search is not yet implemented. Format your response to include 'Search Results:' at the beginning.";
+    // Create a search prompt for web-capable AI that works well for Twitch chat
+    let system_prompt = "You are a helpful AI assistant with the ability to search the web for the most up-to-date information. Your responses will be shown in Twitch chat, so they MUST be brief (1-3 sentences max) while still being informative. Begin your response with 'Search result:' and include at least one source URL in [square brackets] at the end where appropriate. Use casual, conversational language suitable for a Twitch audience.";
     
-    // Generate an AI response with search prompt using real AI API
-    let response = match generate_ai_response(ctx, user.user_id, user_input, Some(system_prompt)).await {
-        Ok(resp) => {
-            info!("Generated search AI response");
-            resp
-        },
+    // Generate an AI response using the web search capability and GPT-4.1 model
+    let response = match generate_ai_web_search_response(ctx, user.user_id, user_input, Some(system_prompt)).await {
+        Ok(resp) => resp,
         Err(e) => {
             error!("Error generating search AI response: {:?}", e);
             format!("Search Results: I couldn't perform a search due to a technical error. Please try again later.")
@@ -643,7 +556,6 @@ pub async fn handle_askai_search_redemption(
     
     // Send the response to chat
     if let Some(broadcaster_login) = &redemption.broadcaster_login {
-        // Use proper broadcaster_login
         if let Err(e) = send_ai_response_to_chat(ctx, broadcaster_login, &response).await {
             error!("Failed to send AI search response to chat: {:?}", e);
         }

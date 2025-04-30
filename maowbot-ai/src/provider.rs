@@ -99,16 +99,33 @@ impl ModelProvider for OpenAIProvider {
         // Combine system message (if added) with other messages
         all_messages.append(&mut formatted_messages);
         
+        // Build the request payload
+        let mut request_payload = json!({
+            "model": self.config.default_model,
+            "messages": all_messages,
+            "max_tokens": 1000,
+            "temperature": 0.7,
+        });
+        
+        // Check if this is a web search request (we'll use gpt-4.1 model)
+        if self.config.default_model == "gpt-4.1" || 
+           self.config.options.get("enable_web_search").map_or(false, |v| v == "true") {
+            tracing::info!("Using GPT-4.1 with web search capabilities");
+            
+            // Set model to gpt-4.1 explicitly
+            request_payload["model"] = json!("gpt-4.1");
+            
+            // Add web search options
+            request_payload["web_search_options"] = json!({
+                "search_context_size": "low"
+            });
+        }
+        
         // Request to OpenAI API
         let response = self.client
             .post(format!("{}/chat/completions", api_base))
             .header("Authorization", format!("Bearer {}", self.config.api_key))
-            .json(&json!({
-                "model": self.config.default_model,
-                "messages": all_messages,
-                "max_tokens": 1000,
-                "temperature": 0.7,
-            }))
+            .json(&request_payload)
             .send()
             .await?;
         
