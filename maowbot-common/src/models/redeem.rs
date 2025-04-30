@@ -29,7 +29,12 @@ pub struct Redeem {
     /// Indicates whether this redeem requires the user to provide input text.
     /// For AI-related redeems, this should typically be true.
     #[serde(default)]
-    pub is_user_input_required: bool,
+    pub is_input_required: bool,
+    
+    /// The prompt text to show in the chat for this redeem.
+    /// Will be used for user interactions, especially with AI-related redeems.
+    #[serde(default)]
+    pub redeem_prompt_text: Option<String>,
 }
 
 /// Tracks usage of a given redeem by a user.

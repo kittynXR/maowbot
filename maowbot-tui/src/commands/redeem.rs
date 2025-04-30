@@ -108,9 +108,9 @@ pub async fn handle_redeem_command(args: &[&str], bot_api: &Arc<dyn BotApi>) -> 
         // -----------------------------------------------------
         "add" => {
             // Example usage:
-            //   redeem add <rewardName> <cost> [--managed] [--offline] [--dynamic] [--input]
+            //   redeem add <rewardName> <cost> [--managed] [--offline] [--dynamic] [--input] [--prompt="text here"]
             if args.len() < 3 {
-                return "Usage: redeem add <rewardName> <cost> [--managed] [--offline] [--dynamic] [--input]".to_string();
+                return "Usage: redeem add <rewardName> <cost> [--managed] [--offline] [--dynamic] [--input] [--prompt=\"prompt text\"]".to_string();
             }
 
             let reward_name = args[1];
@@ -124,15 +124,20 @@ pub async fn handle_redeem_command(args: &[&str], bot_api: &Arc<dyn BotApi>) -> 
             let mut is_managed = false;
             let mut active_offline = false;
             let mut dynamic_pricing = false;
-            let mut is_user_input_required = false;
+            let mut is_input_required = false;
+            let mut redeem_prompt_text = None;
             for flag in &args[3..] {
-                match flag.to_lowercase().as_str() {
-                    "--managed" => is_managed = true,
-                    "--offline" => active_offline = true,
-                    "--dynamic" => dynamic_pricing = true,
-                    "--input" => is_user_input_required = true,
-                    other => {
-                        return format!("Unknown flag '{other}'. Valid flags: --managed, --offline, --dynamic, --input");
+                if let Some(prompt_text) = flag.strip_prefix("--prompt=") {
+                    redeem_prompt_text = Some(prompt_text.to_string());
+                } else {
+                    match flag.to_lowercase().as_str() {
+                        "--managed" => is_managed = true,
+                        "--offline" => active_offline = true,
+                        "--dynamic" => dynamic_pricing = true,
+                        "--input" => is_input_required = true,
+                        other => {
+                            return format!("Unknown flag '{other}'. Valid flags: --managed, --offline, --dynamic, --input, --prompt=\"text\"");
+                        }
                     }
                 }
             }
@@ -140,11 +145,12 @@ pub async fn handle_redeem_command(args: &[&str], bot_api: &Arc<dyn BotApi>) -> 
             // 1) Insert new row. We'll pass empty "" for reward_id initially.
             match bot_api.create_redeem("twitch-eventsub", "", reward_name, cost, dynamic_pricing).await {
                 Ok(mut new_rd) => {
-                    // 2) If user wants is_managed, offline, or user_input_required, update the newly created row
-                    if is_managed || active_offline || is_user_input_required {
+                    // 2) If user wants is_managed, offline, input required, or prompt text, update the newly created row
+                    if is_managed || active_offline || is_input_required || redeem_prompt_text.is_some() {
                         new_rd.is_managed = is_managed;
                         new_rd.active_offline = active_offline;
-                        new_rd.is_user_input_required = is_user_input_required;
+                        new_rd.is_input_required = is_input_required;
+                        new_rd.redeem_prompt_text = redeem_prompt_text.clone();
                         new_rd.updated_at = Utc::now();
 
                         if let Err(e) = bot_api.update_redeem(&new_rd).await {
@@ -152,10 +158,16 @@ pub async fn handle_redeem_command(args: &[&str], bot_api: &Arc<dyn BotApi>) -> 
                         }
                     }
 
+                    let prompt_info = if let Some(prompt) = redeem_prompt_text {
+                        format!(", prompt=\"{}\"", prompt)
+                    } else {
+                        "".to_string()
+                    };
+
                     format!(
-                        "New redeem '{}' created with cost={} (managed={}, offline={}, dynamic={}, input={}).\n\
+                        "New redeem '{}' created with cost={} (managed={}, offline={}, dynamic={}, input={}{}).\n\
                          You can run 'redeem sync' or restart to push it to Twitch if managed=true.",
-                        new_rd.reward_name, new_rd.cost, is_managed, active_offline, dynamic_pricing, is_user_input_required
+                        new_rd.reward_name, new_rd.cost, is_managed, active_offline, dynamic_pricing, is_input_required, prompt_info
                     )
                 }
                 Err(e) => format!("Error creating => {e}"),
@@ -252,7 +264,7 @@ pub async fn handle_redeem_command(args: &[&str], bot_api: &Arc<dyn BotApi>) -> 
         }
 
         // -----------------------------------------------------
-        // SETPROMPT (demo only)
+        // SETPROMPT
         // -----------------------------------------------------
         "setprompt" => {
             if args.len() < 3 {
@@ -260,22 +272,20 @@ pub async fn handle_redeem_command(args: &[&str], bot_api: &Arc<dyn BotApi>) -> 
             }
             let prompt_text = args[1];
             let user_input = args[2];
-            match resolve_redeems_by_arg(bot_api, user_input).await {
-                Ok(matches) => {
-                    if matches.len() == 1 {
-                        let r = &matches[0];
-                        format!("(Demo) Would set prompt for '{}' => '{}'", r.reward_name, prompt_text)
-                    } else if matches.is_empty() {
-                        format!("No redeem found matching '{user_input}'")
-                    } else {
-                        let mut msg = String::new();
-                        msg.push_str("Multiple redeems match that identifier:\n\n");
-                        msg.push_str(&format_table(&matches));
-                        msg.push_str("\nPlease specify the exact UUID.\n");
-                        msg
+            match resolve_singleton_redeem(bot_api, user_input).await {
+                Ok(mut redeem) => {
+                    redeem.redeem_prompt_text = Some(prompt_text.to_string());
+                    redeem.updated_at = Utc::now();
+                    let update_result = bot_api.update_redeem(&redeem).await;
+                    match update_result {
+                        Ok(_) => format!(
+                            "Redeem '{}' prompt text set to \"{}\".",
+                            redeem.reward_name, prompt_text
+                        ),
+                        Err(e) => format!("Error updating => {e}"),
                     }
                 }
-                Err(e) => format!("Error: {e}"),
+                Err(e) => e,
             }
         }
 
@@ -330,7 +340,7 @@ pub async fn handle_redeem_command(args: &[&str], bot_api: &Arc<dyn BotApi>) -> 
         }
 
         // -----------------------------------------------------
-        // SETINPUT (toggle is_user_input_required)
+        // SETINPUT (toggle is_input_required)
         // -----------------------------------------------------
         "setinput" => {
             if args.len() < 2 {
@@ -339,14 +349,14 @@ pub async fn handle_redeem_command(args: &[&str], bot_api: &Arc<dyn BotApi>) -> 
             let user_input = args[1];
             match resolve_singleton_redeem(bot_api, user_input).await {
                 Ok(mut redeem) => {
-                    let new_val = !redeem.is_user_input_required;
-                    redeem.is_user_input_required = new_val;
+                    let new_val = !redeem.is_input_required;
+                    redeem.is_input_required = new_val;
                     redeem.updated_at = Utc::now();
                     let update_result = bot_api.update_redeem(&redeem).await;
                     match update_result {
                         Ok(_) => format!(
                             "Redeem '{}' user input required toggled to {}.",
-                            redeem.reward_name, redeem.is_user_input_required
+                            redeem.reward_name, redeem.is_input_required
                         ),
                         Err(e) => format!("Error updating => {e}"),
                     }
@@ -456,8 +466,8 @@ fn format_table(redeems: &[Redeem]) -> String {
         return "(none)\n".to_string();
     }
 
-    // 1) Collect data: [Name, Cost, Actv, Offl, Plugin, Command, UUID]
-    let mut rows: Vec<[String; 7]> = Vec::new();
+    // 1) Collect data: [Name, Cost, Actv, Offl, Input, Plugin, Command, UUID]
+    let mut rows: Vec<[String; 8]> = Vec::new();
     for rd in redeems {
         let plugin_s = rd.plugin_name.clone().unwrap_or("-".to_string());
         let cmd_s = rd.command_name.clone().unwrap_or("-".to_string());
@@ -466,6 +476,7 @@ fn format_table(redeems: &[Redeem]) -> String {
             format!("{}", rd.cost),
             format!("{}", rd.is_active),
             format!("{}", rd.active_offline),
+            format!("{}", rd.is_input_required),
             plugin_s,
             cmd_s,
             rd.redeem_id.to_string(), // Include UUID at the end
@@ -473,7 +484,7 @@ fn format_table(redeems: &[Redeem]) -> String {
     }
 
     // 2) Determine column widths
-    let mut col_widths = [0usize; 7];
+    let mut col_widths = [0usize; 8];
     for row in &rows {
         for (i, cell) in row.iter().enumerate() {
             col_widths[i] = col_widths[i].max(cell.len());
@@ -484,7 +495,7 @@ fn format_table(redeems: &[Redeem]) -> String {
         *w += 2;
     }
 
-    let headers = ["Name", "Cost", "Actv", "Offl", "Plugin", "Command", "UUID"];
+    let headers = ["Name", "Cost", "Actv", "Offl", "Input", "Plugin", "Command", "UUID"];
     let mut out = String::new();
 
     // 3) Format header row
@@ -540,7 +551,8 @@ fn format_redeem_details(rd: &Redeem) -> String {
          updated_at:            {}\n\
          active_offline:        {}\n\
          is_managed:            {}\n\
-         is_user_input_required: {}\n\
+         is_input_required:     {}\n\
+         redeem_prompt_text:    {}\n\
          plugin_name:           {}\n\
          command_name:          {}\n",
         rd.redeem_id,
@@ -554,7 +566,8 @@ fn format_redeem_details(rd: &Redeem) -> String {
         rd.updated_at,
         rd.active_offline,
         rd.is_managed,
-        rd.is_user_input_required,
+        rd.is_input_required,
+        rd.redeem_prompt_text.as_deref().unwrap_or("-"),
         rd.plugin_name.as_deref().unwrap_or("-"),
         rd.command_name.as_deref().unwrap_or("-"),
     )

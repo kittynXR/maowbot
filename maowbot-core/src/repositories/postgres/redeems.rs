@@ -38,9 +38,10 @@ impl RedeemRepository for PostgresRedeemRepository {
                 created_at,
                 updated_at,
                 active_credential_id,
-                is_user_input_required
+                is_input_required,
+                redeem_prompt_text
             )
-            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
             "#,
         )
             .bind(rd.redeem_id)
@@ -57,7 +58,8 @@ impl RedeemRepository for PostgresRedeemRepository {
             .bind(rd.created_at)
             .bind(rd.updated_at)
             .bind(rd.active_credential_id)
-            .bind(rd.is_user_input_required)
+            .bind(rd.is_input_required)
+            .bind(&rd.redeem_prompt_text)
             .execute(&self.pool)
             .await?;
 
@@ -82,7 +84,8 @@ impl RedeemRepository for PostgresRedeemRepository {
                 created_at,
                 updated_at,
                 active_credential_id,
-                is_user_input_required
+                is_input_required,
+                redeem_prompt_text
             FROM redeems
             WHERE redeem_id = $1
             "#,
@@ -107,7 +110,8 @@ impl RedeemRepository for PostgresRedeemRepository {
                 created_at: r.try_get("created_at")?,
                 updated_at: r.try_get("updated_at")?,
                 active_credential_id: r.try_get("active_credential_id")?,
-                is_user_input_required: r.try_get("is_user_input_required").unwrap_or(false),
+                is_input_required: r.try_get("is_input_required").unwrap_or(false),
+                redeem_prompt_text: r.try_get("redeem_prompt_text")?,
             };
             Ok(Some(rd))
         } else {
@@ -133,7 +137,8 @@ impl RedeemRepository for PostgresRedeemRepository {
                 created_at,
                 updated_at,
                 active_credential_id,
-                is_user_input_required
+                is_input_required,
+                redeem_prompt_text
             FROM redeems
             WHERE LOWER(platform) = LOWER($1)
               AND LOWER(reward_id) = LOWER($2)
@@ -160,7 +165,8 @@ impl RedeemRepository for PostgresRedeemRepository {
                 created_at: r.try_get("created_at")?,
                 updated_at: r.try_get("updated_at")?,
                 active_credential_id: r.try_get("active_credential_id")?,
-                is_user_input_required: r.try_get("is_user_input_required").unwrap_or(false),
+                is_input_required: r.try_get("is_input_required").unwrap_or(false),
+                redeem_prompt_text: r.try_get("redeem_prompt_text")?,
             };
             Ok(Some(rd))
         } else {
@@ -186,7 +192,8 @@ impl RedeemRepository for PostgresRedeemRepository {
                 created_at,
                 updated_at,
                 active_credential_id,
-                is_user_input_required
+                is_input_required,
+                redeem_prompt_text
             FROM redeems
             WHERE LOWER(platform) = LOWER($1)
             ORDER BY reward_name ASC
@@ -213,7 +220,8 @@ impl RedeemRepository for PostgresRedeemRepository {
                 created_at: r.try_get("created_at")?,
                 updated_at: r.try_get("updated_at")?,
                 active_credential_id: r.try_get("active_credential_id")?,
-                is_user_input_required: r.try_get("is_user_input_required").unwrap_or(false),
+                is_input_required: r.try_get("is_input_required").unwrap_or(false),
+                redeem_prompt_text: r.try_get("redeem_prompt_text")?,
             };
             list.push(rd);
         }
@@ -237,8 +245,9 @@ impl RedeemRepository for PostgresRedeemRepository {
               command_name = $10,
               updated_at = $11,
               active_credential_id = $12,
-              is_user_input_required = $13
-            WHERE redeem_id = $14
+              is_input_required = $13,
+              redeem_prompt_text = $14
+            WHERE redeem_id = $15
             "#,
         )
             .bind(&rd.platform)
@@ -253,7 +262,8 @@ impl RedeemRepository for PostgresRedeemRepository {
             .bind(&rd.command_name)
             .bind(rd.updated_at)
             .bind(rd.active_credential_id)
-            .bind(rd.is_user_input_required)
+            .bind(rd.is_input_required)
+            .bind(&rd.redeem_prompt_text)
             .bind(rd.redeem_id)
             .execute(&self.pool)
             .await?;

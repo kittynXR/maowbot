@@ -241,6 +241,8 @@ CREATE TABLE redeems (
      reward_id  TEXT NOT NULL,
      reward_name TEXT NOT NULL,
      cost       INT  NOT NULL,
+     is_input_required BOOLEAN NOT NULL DEFAULT false,
+     redeem_prompt_text TEXT,
      is_active  BOOLEAN NOT NULL DEFAULT true,
      dynamic_pricing BOOLEAN NOT NULL DEFAULT false,
      active_offline BOOLEAN NOT NULL DEFAULT false,

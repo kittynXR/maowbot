@@ -146,7 +146,8 @@ pub async fn sync_channel_redeems(
                 created_at: Utc::now(),
                 updated_at: Utc::now(),
                 active_credential_id: None,
-                is_user_input_required: helix_rd.is_user_input_required,
+                is_input_required: helix_rd.is_user_input_required,
+                redeem_prompt_text: None,
             };
 
             if let Err(e) = redeem_service.redeem_repo.create_redeem(&new_redeem).await {
@@ -209,7 +210,7 @@ async fn sync_one_redeem_via_helix(
                 title: Some(rd.reward_name.clone()),
                 cost: Some(rd.cost as u64),
                 is_enabled: Some(rd.is_active),
-                is_user_input_required: Some(rd.is_user_input_required),
+                is_user_input_required: Some(rd.is_input_required),
                 ..Default::default()
             };
             match client.create_custom_reward(broadcaster_id, &body).await {
@@ -232,7 +233,7 @@ async fn sync_one_redeem_via_helix(
                 title: Some(rd.reward_name.clone()),
                 cost: Some(rd.cost as u64),
                 is_enabled: Some(rd.is_active),
-                is_user_input_required: Some(rd.is_user_input_required),
+                is_user_input_required: Some(rd.is_input_required),
                 ..Default::default()
             };
             match client.create_custom_reward(broadcaster_id, &body).await {
@@ -256,18 +257,18 @@ async fn sync_one_redeem_via_helix(
         let hrew = maybe_helix_rd.unwrap();
         let cost_mismatch = (rd.cost as u64) != hrew.cost;
         let active_mismatch = rd.is_active != hrew.is_enabled;
-        let input_mismatch = rd.is_user_input_required != hrew.is_user_input_required;
+        let input_mismatch = rd.is_input_required != hrew.is_user_input_required;
 
         if cost_mismatch || active_mismatch || input_mismatch {
             debug!(
                 "Patching Helix => cost {}->{}, enabled {}->{}, input required {}->{}",
                 hrew.cost, rd.cost, hrew.is_enabled, rd.is_active, 
-                hrew.is_user_input_required, rd.is_user_input_required
+                hrew.is_user_input_required, rd.is_input_required
             );
             let body = CustomRewardBody {
                 cost: if cost_mismatch { Some(rd.cost as u64) } else { None },
                 is_enabled: if active_mismatch { Some(rd.is_active) } else { None },
-                is_user_input_required: if input_mismatch { Some(rd.is_user_input_required) } else { None },
+                is_user_input_required: if input_mismatch { Some(rd.is_input_required) } else { None },
                 ..Default::default()
             };
             if let Err(e) = client.update_custom_reward(broadcaster_id, &rd.reward_id, &body).await {

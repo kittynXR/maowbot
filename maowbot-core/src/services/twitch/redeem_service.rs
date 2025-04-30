@@ -259,7 +259,8 @@ impl RedeemService {
             is_managed: false,
             plugin_name: None,
             command_name: None,
-            is_user_input_required: false,
+            is_input_required: false,
+            redeem_prompt_text: None,
         };
         self.redeem_repo.create_redeem(&rd).await?;
         Ok(rd)
