@@ -145,6 +145,15 @@ async fn send_ai_response_to_chat(
     info!("🚀 ASKAI: Attempting to send AI response to chat channel: {}", channel);
     info!("🚀 ASKAI: Response to send: '{}'", response);
     
+    // Make sure the channel name starts with a # prefix for Twitch IRC
+    let channel_with_hash = if !channel.starts_with('#') {
+        format!("#{}", channel)
+    } else {
+        channel.to_string()
+    };
+    
+    info!("🚀 ASKAI: Using channel name with hash: {}", channel_with_hash);
+    
     // Find a Twitch IRC credential to respond with
     let platform_mgr = &ctx.redeem_service.platform_manager;
     
@@ -156,14 +165,13 @@ async fn send_ai_response_to_chat(
         info!("🚀 ASKAI: Active credential details: user_id={}, platform={:?}, is_bot={}, is_broadcaster={}", 
             active_cred.user_id, active_cred.platform, active_cred.is_bot, active_cred.is_broadcaster);
         
-        // Use the active credential's username to send message with hard-coded working channel name for testing
         info!("🚀 ASKAI: Attempting to send message using credential: {} to channel: {}", 
-              active_cred.user_name, channel);
+              active_cred.user_name, channel_with_hash);
         
-        // First try with the provided channel
-        match platform_mgr.send_twitch_irc_message(&active_cred.user_name, channel, response).await {
+        // Use the proper channel format with # prefix
+        match platform_mgr.send_twitch_irc_message(&active_cred.user_name, &channel_with_hash, response).await {
             Ok(_) => {
-                info!("🚀 ASKAI: Successfully sent message using active credential to channel: {}", channel);
+                info!("🚀 ASKAI: Successfully sent message using active credential to channel: {}", channel_with_hash);
                 return Ok(());
             },
             Err(e) => {
@@ -195,7 +203,7 @@ async fn send_ai_response_to_chat(
             for cred in &all_irc_creds {
                 if cred.user_name.to_lowercase() == "maowbot" {
                     info!("🚀 ASKAI: Found known-working credential 'maowBot', trying it first");
-                    match platform_mgr.send_twitch_irc_message("maowBot", channel, response).await {
+                    match platform_mgr.send_twitch_irc_message("maowBot", &channel_with_hash, response).await {
                         Ok(_) => {
                             info!("🚀 ASKAI: Successfully sent message using 'maowBot' credential");
                             return Ok(());
@@ -211,7 +219,7 @@ async fn send_ai_response_to_chat(
             // Try bot credential next
             if let Some(bot_cred) = all_irc_creds.iter().find(|c| c.is_bot) {
                 info!("🚀 ASKAI: Found bot credential: {}", bot_cred.user_name);
-                match platform_mgr.send_twitch_irc_message(&bot_cred.user_name, channel, response).await {
+                match platform_mgr.send_twitch_irc_message(&bot_cred.user_name, &channel_with_hash, response).await {
                     Ok(_) => {
                         info!("🚀 ASKAI: Successfully sent message using bot credential");
                         return Ok(());
@@ -227,7 +235,7 @@ async fn send_ai_response_to_chat(
             // Try broadcaster credential next
             if let Some(broadcaster_cred) = all_irc_creds.iter().find(|c| c.is_broadcaster) {
                 info!("🚀 ASKAI: Found broadcaster credential: {}", broadcaster_cred.user_name);
-                match platform_mgr.send_twitch_irc_message(&broadcaster_cred.user_name, channel, response).await {
+                match platform_mgr.send_twitch_irc_message(&broadcaster_cred.user_name, &channel_with_hash, response).await {
                     Ok(_) => {
                         info!("🚀 ASKAI: Successfully sent message using broadcaster credential");
                         return Ok(());
@@ -244,7 +252,7 @@ async fn send_ai_response_to_chat(
             if !all_irc_creds.is_empty() {
                 let first_cred = &all_irc_creds[0];
                 info!("🚀 ASKAI: Using first available credential: {}", first_cred.user_name);
-                match platform_mgr.send_twitch_irc_message(&first_cred.user_name, channel, response).await {
+                match platform_mgr.send_twitch_irc_message(&first_cred.user_name, &channel_with_hash, response).await {
                     Ok(_) => {
                         info!("🚀 ASKAI: Successfully sent message using first available credential");
                         return Ok(());
@@ -430,9 +438,16 @@ pub async fn handle_askai_redeem(
                 
                 // Try to send a follow-up confirmation message for debugging
                 let fallback_msg = "[DEBUG] AI response was successfully sent by the askai redeem handler";
+                // Use same channel hash format approach as the main function
+                let login_with_hash = if !broadcaster_login.starts_with('#') {
+                    format!("#{}", broadcaster_login)
+                } else {
+                    broadcaster_login.to_string()
+                };
+                
                 match ctx.redeem_service.platform_manager.send_twitch_irc_message(
                     "maowBot",  // Most likely name of the bot
-                    broadcaster_login,
+                    &login_with_hash,
                     fallback_msg
                 ).await {
                     Ok(_) => info!("🚀 ASKAI: Sent confirmation message about successful AI response"),
@@ -449,9 +464,16 @@ pub async fn handle_askai_redeem(
                 {
                     if let Some(bot_cred) = creds.iter().find(|c| c.is_bot) {
                         let fallback_msg = format!("[ERROR] Failed to process AI redeem: {}", e);
+                        // Make sure error message uses proper channel format
+                        let login_with_hash = if !broadcaster_login.starts_with('#') {
+                            format!("#{}", broadcaster_login)
+                        } else {
+                            broadcaster_login.to_string()
+                        };
+                        
                         if let Err(e2) = ctx.redeem_service.platform_manager.send_twitch_irc_message(
                             &bot_cred.user_name,
-                            broadcaster_login,
+                            &login_with_hash,
                             &fallback_msg
                         ).await {
                             error!("🚀 ASKAI: Even fallback error message failed: {:?}", e2);
@@ -607,6 +629,7 @@ pub async fn handle_askmao_redeem(
     
     // Send the response to chat
     if let Some(broadcaster_login) = &redemption.broadcaster_login {
+        // Use proper broadcaster_login
         if let Err(e) = send_ai_response_to_chat(ctx, broadcaster_login, &response).await {
             error!("Failed to send askmaow response to chat: {:?}", e);
         }
@@ -719,6 +742,7 @@ pub async fn handle_askai_search_redemption(
     
     // Send the response to chat
     if let Some(broadcaster_login) = &redemption.broadcaster_login {
+        // Use proper broadcaster_login
         if let Err(e) = send_ai_response_to_chat(ctx, broadcaster_login, &response).await {
             error!("Failed to send AI search response to chat: {:?}", e);
         }
