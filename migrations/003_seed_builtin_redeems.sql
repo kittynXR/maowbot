@@ -16,7 +16,7 @@ INSERT INTO redeems (
     is_managed,
     created_at,
     updated_at,
-    plugin_name,git checkout main
+    plugin_name,
     command_name
 )
 VALUES (
