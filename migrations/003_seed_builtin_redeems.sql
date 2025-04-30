@@ -9,7 +9,7 @@ INSERT INTO redeems (
     reward_name,
     cost,
     is_input_required,
-    chat_prompt,
+    redeem_prompt_text,
     is_active,
     dynamic_pricing,
     active_offline,
