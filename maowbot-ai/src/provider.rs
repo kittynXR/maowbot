@@ -99,29 +99,49 @@ impl ModelProvider for OpenAIProvider {
         // Combine system message (if added) with other messages
         all_messages.append(&mut formatted_messages);
         
-        // Build the request payload
+        // Build the request payload - simpler version with only required fields
         let mut request_payload = json!({
             "model": self.config.default_model,
             "messages": all_messages,
             "max_tokens": 1000,
-            "temperature": 0.7,
         });
         
-        // Check if this is a web search request (we'll use gpt-4.1 model)
-        if self.config.default_model == "gpt-4.1" || 
-           self.config.options.get("enable_web_search").map_or(false, |v| v == "true") {
-            tracing::info!("Using GPT-4.1 with web search capabilities");
-            
-            // Set model to gpt-4.1 explicitly
-            request_payload["model"] = json!("gpt-4.1");
-            
-            // Add web search options
-            request_payload["web_search_options"] = json!({
-                "search_context_size": "low"
-            });
-        }
+        // Check if we should use web search
+        let use_web_search = self.config.options.get("enable_web_search").map_or(false, |v| v == "true") ||
+                            self.config.default_model == "gpt-4o-search-preview" || 
+                            self.config.default_model == "gpt-4o" ||
+                            self.config.default_model == "gpt-4.1";
+                            
+        tracing::info!("Web search check: enable_web_search={}, model={}", 
+                     self.config.options.get("enable_web_search").map_or("false", |v| v), 
+                     self.config.default_model);
         
+        if use_web_search {
+            tracing::info!("Using web search capabilities with gpt-4o-search-preview");
+            
+            // Set model to gpt-4o-search-preview explicitly
+            request_payload["model"] = json!("gpt-4o-search-preview");
+            
+            // IMPORTANT: This is the ONLY parameter needed for web search - no others required
+            request_payload["web_search_options"] = json!({
+                      "search_context_size": "low"
+            });
+            
+            tracing::info!("Web search enabled: model={}, web_search=true", 
+                         request_payload["model"].as_str().unwrap_or("unknown"));
+        } else {
+            tracing::info!("Standard chat completion without web search");
+        }
         // Request to OpenAI API
+        // Convert request payload to pretty-printed JSON for logging
+        let payload_json = serde_json::to_string_pretty(&request_payload)
+            .unwrap_or_else(|_| format!("{:?}", request_payload));
+        
+        // Log the final API call details
+        tracing::info!("Making API call to {}/chat/completions", api_base);
+        tracing::info!("Final API request payload:\n{}", payload_json);
+        
+        // Send the request
         let response = self.client
             .post(format!("{}/chat/completions", api_base))
             .header("Authorization", format!("Bearer {}", self.config.api_key))
@@ -129,18 +149,51 @@ impl ModelProvider for OpenAIProvider {
             .send()
             .await?;
         
-        let data = response.json::<serde_json::Value>().await?;
+        // Get the raw response text first for better error handling
+        let response_text = response.text().await?;
+        tracing::debug!("Raw API response: {}", response_text);
         
-        let choices = data["choices"].as_array()
-            .ok_or_else(|| anyhow::anyhow!("Invalid response format"))?;
+        // Try to parse as JSON
+        let data = match serde_json::from_str::<serde_json::Value>(&response_text) {
+            Ok(json) => json,
+            Err(e) => {
+                tracing::error!("Failed to parse API response as JSON: {:?}", e);
+                tracing::error!("Response text: {}", response_text);
+                return Err(anyhow::anyhow!("API returned non-JSON response: {}", e));
+            }
+        };
+        
+        // Check for API errors
+        if let Some(error) = data.get("error") {
+            tracing::error!("API returned error: {:?}", error);
+            let error_message = error.get("message").and_then(|m| m.as_str()).unwrap_or("Unknown error");
+            return Err(anyhow::anyhow!("API error: {}", error_message));
+        }
+        
+        // Extract choices
+        let choices = match data.get("choices").and_then(|c| c.as_array()) {
+            Some(choices) => choices,
+            None => {
+                tracing::error!("Response missing 'choices' array: {:?}", data);
+                return Err(anyhow::anyhow!("Response missing 'choices' array"));
+            }
+        };
         
         if choices.is_empty() {
+            tracing::error!("API returned empty choices array");
             return Err(anyhow::anyhow!("No completions returned"));
         }
         
-        let content = choices[0]["message"]["content"].as_str()
-            .ok_or_else(|| anyhow::anyhow!("Invalid response format"))?
-            .to_string();
+        // Extract content from first choice
+        let message = &choices[0].get("message").ok_or_else(|| {
+            tracing::error!("First choice missing 'message': {:?}", choices[0]);
+            anyhow::anyhow!("Response choice missing 'message'")
+        })?;
+        
+        let content = message.get("content").and_then(|c| c.as_str()).ok_or_else(|| {
+            tracing::error!("Message missing 'content': {:?}", message);
+            anyhow::anyhow!("Response message missing 'content'")
+        })?.to_string();
         
         Ok(content)
     }
@@ -201,53 +254,118 @@ impl ModelProvider for OpenAIProvider {
             })
             .collect();
         
+        // Build request payload
+        let request_payload = json!({
+            "model": self.config.default_model,
+            "messages": all_messages,
+            "functions": formatted_functions,
+            "function_call": "auto",
+            "max_tokens": 1000
+        });
+        
+        // Convert request payload to pretty-printed JSON for logging
+        let payload_json = serde_json::to_string_pretty(&request_payload)
+            .unwrap_or_else(|_| format!("{:?}", request_payload));
+        
+        // Log the final API call details
+        tracing::info!("Making API call to {}/chat/completions for function calling", api_base);
+        tracing::info!("Final API request payload:\n{}", payload_json);
+        
+        // Send the request
         let response = self.client
             .post(format!("{}/chat/completions", api_base))
             .header("Authorization", format!("Bearer {}", self.config.api_key))
-            .json(&json!({
-                "model": self.config.default_model,
-                "messages": all_messages,
-                "functions": formatted_functions,
-                "function_call": "auto",
-                "max_tokens": 1000,
-                "temperature": 0.7,
-            }))
+            .json(&request_payload)
             .send()
             .await?;
         
-        let data = response.json::<serde_json::Value>().await?;
+        // Get the raw response text first for better error handling
+        let response_text = response.text().await?;
+        tracing::debug!("Raw API response: {}", response_text);
         
-        let choices = data["choices"].as_array()
-            .ok_or_else(|| anyhow::anyhow!("Invalid response format"))?;
+        // Try to parse as JSON
+        let data = match serde_json::from_str::<serde_json::Value>(&response_text) {
+            Ok(json) => json,
+            Err(e) => {
+                tracing::error!("Failed to parse API response as JSON: {:?}", e);
+                tracing::error!("Response text: {}", response_text);
+                return Err(anyhow::anyhow!("API returned non-JSON response: {}", e));
+            }
+        };
+        
+        // Check for API errors
+        if let Some(error) = data.get("error") {
+            tracing::error!("API returned error: {:?}", error);
+            let error_message = error.get("message").and_then(|m| m.as_str()).unwrap_or("Unknown error");
+            return Err(anyhow::anyhow!("API error: {}", error_message));
+        }
+        
+        // Extract choices
+        let choices = match data.get("choices").and_then(|c| c.as_array()) {
+            Some(choices) => choices,
+            None => {
+                tracing::error!("Response missing 'choices' array: {:?}", data);
+                return Err(anyhow::anyhow!("Response missing 'choices' array"));
+            }
+        };
         
         if choices.is_empty() {
+            tracing::error!("API returned empty choices array");
             return Err(anyhow::anyhow!("No completions returned"));
         }
         
-        let message = &choices[0]["message"];
-        let content = message["content"].as_str().map(|s| s.to_string());
-        
-        let function_call = if message["function_call"].is_object() {
-            let function_call_obj = &message["function_call"];
-            let name = function_call_obj["name"].as_str()
-                .ok_or_else(|| anyhow::anyhow!("Invalid function call format"))?
-                .to_string();
-            
-            let arguments_str = function_call_obj["arguments"].as_str()
-                .ok_or_else(|| anyhow::anyhow!("Invalid function call arguments"))?;
-            
-            let arguments_value: serde_json::Value = serde_json::from_str(arguments_str)?;
-            
-            let mut arguments = HashMap::new();
-            if let Some(obj) = arguments_value.as_object() {
-                for (key, value) in obj {
-                    arguments.insert(key.clone(), value.clone());
-                }
+        // Extract content and function call
+        let message = match choices[0].get("message") {
+            Some(msg) => msg,
+            None => {
+                tracing::error!("First choice missing 'message': {:?}", choices[0]);
+                return Err(anyhow::anyhow!("Response choice missing 'message'"));
             }
-            
-            Some(FunctionCall { name, arguments })
-        } else {
-            None
+        };
+        
+        let content = message.get("content").and_then(|c| c.as_str()).map(|s| s.to_string());
+        
+        let function_call = match message.get("function_call") {
+            Some(fc) if fc.is_object() => {
+                // Extract function name
+                let name = match fc.get("name").and_then(|n| n.as_str()) {
+                    Some(name) => name.to_string(),
+                    None => {
+                        tracing::error!("Function call missing 'name': {:?}", fc);
+                        return Err(anyhow::anyhow!("Invalid function call format - missing name"));
+                    }
+                };
+                
+                // Extract arguments
+                let arguments_str = match fc.get("arguments").and_then(|a| a.as_str()) {
+                    Some(args) => args,
+                    None => {
+                        tracing::error!("Function call missing 'arguments': {:?}", fc);
+                        return Err(anyhow::anyhow!("Invalid function call format - missing arguments"));
+                    }
+                };
+                
+                // Parse arguments JSON
+                let arguments_value = match serde_json::from_str::<serde_json::Value>(arguments_str) {
+                    Ok(value) => value,
+                    Err(e) => {
+                        tracing::error!("Failed to parse function arguments JSON: {:?}", e);
+                        tracing::error!("Arguments string: {}", arguments_str);
+                        return Err(anyhow::anyhow!("Invalid function arguments JSON: {}", e));
+                    }
+                };
+                
+                // Build arguments map
+                let mut arguments = HashMap::new();
+                if let Some(obj) = arguments_value.as_object() {
+                    for (key, value) in obj {
+                        arguments.insert(key.clone(), value.clone());
+                    }
+                }
+                
+                Some(FunctionCall { name, arguments })
+            },
+            _ => None
         };
         
         Ok(ChatResponse { content, function_call })

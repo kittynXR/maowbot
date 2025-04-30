@@ -375,6 +375,72 @@ impl AiService {
         }
     }
     
+    /// Get the current provider configuration if available
+    pub async fn get_current_provider_config(&self) -> anyhow::Result<Option<ProviderConfig>> {
+        tracing::info!("Getting current provider configuration");
+        
+        // If we have repositories, try to get the configuration from the database
+        if let (Some(config_repo), Some(provider_repo), Some(cred_repo), Some(model_repo)) = 
+            (&self.config_repo, &self.provider_repo, &self.ai_credential_repo, &self.model_repo) {
+            
+            // Try to get the default configuration
+            match config_repo.get_default_configuration().await {
+                Ok(Some(config)) => {
+                    tracing::info!("Found default config: provider={}, model={}", 
+                                 config.provider.name, config.model.name);
+                    
+                    // Create provider config from database entities
+                    let mut options = std::collections::HashMap::new();
+                    
+                    // Add web search option
+                    options.insert("enable_web_search".to_string(), "true".to_string());
+                    
+                    let provider_config = ProviderConfig {
+                        provider_type: config.provider.name.clone(),
+                        api_key: config.credential.api_key.clone(),
+                        default_model: config.model.name.clone(),
+                        api_base: config.credential.api_base.clone(),
+                        options,
+                    };
+                    
+                    return Ok(Some(provider_config));
+                },
+                Ok(None) => {
+                    tracing::info!("No default AI configuration found in database");
+                },
+                Err(e) => {
+                    tracing::error!("Error loading default configuration: {:?}", e);
+                }
+            }
+        }
+        
+        // If we couldn't get it from the database, try to infer it from the current providers
+        let providers = self.client.provider().get_all().await;
+        if !providers.is_empty() {
+            let default_provider = &providers[0];
+            tracing::info!("Found provider: {}", default_provider);
+            
+            // Construct a basic config with just the provider type and default model
+            // We don't have access to the API key anymore, but the caller should handle this
+            let provider_config = ProviderConfig {
+                provider_type: default_provider.clone(),
+                api_key: "".to_string(), // The caller needs to handle this
+                default_model: "gpt-4o-search-preview".to_string(), // Default for web search
+                api_base: None,
+                options: {
+                    let mut opts = std::collections::HashMap::new();
+                    opts.insert("enable_web_search".to_string(), "true".to_string());
+                    opts
+                },
+            };
+            
+            return Ok(Some(provider_config));
+        }
+        
+        // No configuration found
+        Ok(None)
+    }
+    
     /// Configure a provider with the given configuration and persist to database
     pub async fn configure_provider(&self, config: ProviderConfig) -> anyhow::Result<()> {
         // First, configure the provider internally
@@ -459,6 +525,17 @@ impl AiService {
                     updated_at: now,
                 };
                 model_repo.create_model(&model).await?;
+            }
+            
+            // If we have config_repo, store that web search is enabled
+            if let Some(config_repo) = &self.config_repo {
+                if let Ok(Some(_config)) = config_repo.get_default_configuration().await {
+                    // For now, just log that we're using web search
+                    tracing::info!("Using web search with default configuration");
+                    
+                    // In the future, we might want to update the configuration to store this
+                    // preference, but for now we'll handle it at runtime
+                }
             }
         }
         

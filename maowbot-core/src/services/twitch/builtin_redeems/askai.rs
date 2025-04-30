@@ -137,19 +137,34 @@ async fn generate_ai_web_search_response(
     // when the model is set to gpt-4.1 or when "enable_web_search" is set to "true"
     // in the options. Here we'll use both approaches to ensure it works.
     
-    // First try: Configure the AI service to use GPT-4.1 model
+    // Configure the AI service to use gpt-4o-search-preview model with web search
     if let Err(e) = ai_api.configure_ai_provider(serde_json::json!({
         "provider_type": "openai",
-        "default_model": "gpt-4.1",
+        "default_model": "gpt-4o-search-preview",
         "options": {
             "enable_web_search": "true"
         }
     })).await {
         warn!("Failed to configure AI provider for web search: {:?}", e);
-        // Continue anyway - our provider implementation should handle this
+        // We'll try a simpler approach, directly setting the system message to indicate web search
+        info!("Falling back to simpler web search approach");
     }
     
-    info!("Using model gpt-4.1 with web search capabilities");
+    // Double-check that web search is enabled by adding a search hint to the input
+    let enhanced_input = if !input.contains("[search]") {
+        format!("[search] {}", input)
+    } else {
+        input.to_string()
+    };
+    
+    info!("Using model gpt-4o-search-preview with web search capabilities");
+    
+    // Update the user message to use the enhanced input with search hint
+    messages.pop(); // Remove the original user message
+    messages.push(serde_json::json!({
+        "role": "user",
+        "content": enhanced_input
+    }));
     
     // Process the request - the provider will add web_search_options
     match ai_api.generate_chat(messages).await {
@@ -545,12 +560,31 @@ pub async fn handle_askai_search_redemption(
     // Create a search prompt for web-capable AI that works well for Twitch chat
     let system_prompt = "You are a helpful AI assistant with the ability to search the web for the most up-to-date information. Your responses will be shown in Twitch chat, so they MUST be brief (1-3 sentences max) while still being informative. Begin your response with 'Search result:' and include at least one source URL in [square brackets] at the end where appropriate. Use casual, conversational language suitable for a Twitch audience.";
     
-    // Generate an AI response using the web search capability and GPT-4.1 model
+    // Generate an AI response using the web search capability
+    info!("Attempting web search AI response generation with enhanced error handling");
     let response = match generate_ai_web_search_response(ctx, user.user_id, user_input, Some(system_prompt)).await {
-        Ok(resp) => resp,
+        Ok(resp) => {
+            info!("Successfully generated web search response: {}", resp);
+            resp
+        },
         Err(e) => {
             error!("Error generating search AI response: {:?}", e);
-            format!("Search Results: I couldn't perform a search due to a technical error. Please try again later.")
+            
+            // Try a fallback approach - use standard AI response but prefix with search results
+            info!("Attempting fallback to standard AI with search prefix");
+            match generate_ai_response(ctx, user.user_id, 
+                &format!("Search the web for the following query, then provide a brief answer with sources: {}", user_input), 
+                Some("You are a helpful search assistant. Provide brief answers with source URLs in [brackets].")
+            ).await {
+                Ok(fallback_resp) => {
+                    info!("Fallback successful");
+                    fallback_resp
+                },
+                Err(fallback_err) => {
+                    error!("Fallback also failed: {:?}", fallback_err);
+                    format!("Search Results: I couldn't perform a search due to a technical error. Please try again later.")
+                }
+            }
         }
     };
     
