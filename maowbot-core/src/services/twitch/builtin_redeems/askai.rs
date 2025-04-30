@@ -8,6 +8,7 @@ use std::sync::Arc;
 use crate::Error;
 use crate::services::twitch::redeem_service::RedeemHandlerContext;
 use crate::platforms::twitch::requests::channel_points::Redemption;
+use crate::services::message_sender::{MessageSender, MessageResponse};
 
 // Helper function to generate an AI text response
 async fn generate_ai_response(
@@ -136,7 +137,7 @@ async fn generate_ai_response(
     }
 }
 
-// Helper function to send AI response to chat
+// Helper function to send AI response to chat using the shared MessageSender
 async fn send_ai_response_to_chat(
     ctx: &RedeemHandlerContext<'_>,
     channel: &str,
@@ -145,134 +146,34 @@ async fn send_ai_response_to_chat(
     info!("🚀 ASKAI: Attempting to send AI response to chat channel: {}", channel);
     info!("🚀 ASKAI: Response to send: '{}'", response);
     
-    // Make sure the channel name starts with a # prefix for Twitch IRC
-    let channel_with_hash = if !channel.starts_with('#') {
-        format!("#{}", channel)
-    } else {
-        channel.to_string()
-    };
+    // Create a message sender instance using the platform manager and credentials repo
+    let message_sender = MessageSender::new(
+        ctx.redeem_service.credentials_repo.clone(),
+        ctx.redeem_service.platform_manager.clone()
+    );
     
-    info!("🚀 ASKAI: Using channel name with hash: {}", channel_with_hash);
+    // Get the credential ID from the active credential if available
+    let specified_credential_id = ctx.active_credential.as_ref().map(|cred| cred.credential_id);
     
-    // Find a Twitch IRC credential to respond with
-    let platform_mgr = &ctx.redeem_service.platform_manager;
+    // Send the message using our shared message sender
+    let result = message_sender.send_twitch_message(
+        channel,
+        response,
+        specified_credential_id,
+        // Use Uuid::nil() as a fallback if no user is available
+        Uuid::nil()
+    ).await;
     
-    // Try several methods to find a suitable credential
-    if let Some(active_cred) = &ctx.active_credential {
-        info!("🚀 ASKAI: Using active credential ({}) from context to send message", active_cred.user_name);
-        
-        // Add more diagnostic info about this credential
-        info!("🚀 ASKAI: Active credential details: user_id={}, platform={:?}, is_bot={}, is_broadcaster={}", 
-            active_cred.user_id, active_cred.platform, active_cred.is_bot, active_cred.is_broadcaster);
-        
-        info!("🚀 ASKAI: Attempting to send message using credential: {} to channel: {}", 
-              active_cred.user_name, channel_with_hash);
-        
-        // Use the proper channel format with # prefix
-        match platform_mgr.send_twitch_irc_message(&active_cred.user_name, &channel_with_hash, response).await {
-            Ok(_) => {
-                info!("🚀 ASKAI: Successfully sent message using active credential to channel: {}", channel_with_hash);
-                return Ok(());
-            },
-            Err(e) => {
-                warn!("🚀 ASKAI: Failed to send message with active credential: {:?}", e);
-                // Continue to try other methods
-            }
-        }
-    } else {
-        info!("🚀 ASKAI: No active credential found in context");
-    }
-    
-    // If we get here, try to find a bot credential from the repository
-    info!("🚀 ASKAI: Looking for a bot credential to send message");
-    match ctx.redeem_service.credentials_repo
-        .list_credentials_for_platform(&maowbot_common::models::platform::Platform::TwitchIRC)
-        .await 
-    {
-        Ok(all_irc_creds) => {
-            info!("🚀 ASKAI: Found {} Twitch IRC credentials", all_irc_creds.len());
-            
-            // Dump details about all credentials for debugging
-            for (i, cred) in all_irc_creds.iter().enumerate() {
-                info!("🚀 ASKAI: Credential #{}: user_name={}, is_bot={}, is_broadcaster={}", 
-                      i, cred.user_name, cred.is_bot, cred.is_broadcaster);
-            }
-            
-            // First, try with a known-working hard-coded credential
-            // Try to use the credential "maowBot" to send the message
-            for cred in &all_irc_creds {
-                if cred.user_name.to_lowercase() == "maowbot" {
-                    info!("🚀 ASKAI: Found known-working credential 'maowBot', trying it first");
-                    match platform_mgr.send_twitch_irc_message("maowBot", &channel_with_hash, response).await {
-                        Ok(_) => {
-                            info!("🚀 ASKAI: Successfully sent message using 'maowBot' credential");
-                            return Ok(());
-                        },
-                        Err(e) => {
-                            warn!("🚀 ASKAI: Failed to send message with 'maowBot' credential: {:?}", e);
-                        }
-                    }
-                    break;
-                }
-            }
-            
-            // Try bot credential next
-            if let Some(bot_cred) = all_irc_creds.iter().find(|c| c.is_bot) {
-                info!("🚀 ASKAI: Found bot credential: {}", bot_cred.user_name);
-                match platform_mgr.send_twitch_irc_message(&bot_cred.user_name, &channel_with_hash, response).await {
-                    Ok(_) => {
-                        info!("🚀 ASKAI: Successfully sent message using bot credential");
-                        return Ok(());
-                    },
-                    Err(e) => {
-                        warn!("🚀 ASKAI: Failed to send message with bot credential: {:?}", e);
-                    }
-                }
-            } else {
-                info!("🚀 ASKAI: No bot credential found");
-            }
-            
-            // Try broadcaster credential next
-            if let Some(broadcaster_cred) = all_irc_creds.iter().find(|c| c.is_broadcaster) {
-                info!("🚀 ASKAI: Found broadcaster credential: {}", broadcaster_cred.user_name);
-                match platform_mgr.send_twitch_irc_message(&broadcaster_cred.user_name, &channel_with_hash, response).await {
-                    Ok(_) => {
-                        info!("🚀 ASKAI: Successfully sent message using broadcaster credential");
-                        return Ok(());
-                    },
-                    Err(e) => {
-                        warn!("🚀 ASKAI: Failed to send message with broadcaster credential: {:?}", e);
-                    }
-                }
-            } else {
-                info!("🚀 ASKAI: No broadcaster credential found");
-            }
-            
-            // If all else fails, try any credential
-            if !all_irc_creds.is_empty() {
-                let first_cred = &all_irc_creds[0];
-                info!("🚀 ASKAI: Using first available credential: {}", first_cred.user_name);
-                match platform_mgr.send_twitch_irc_message(&first_cred.user_name, &channel_with_hash, response).await {
-                    Ok(_) => {
-                        info!("🚀 ASKAI: Successfully sent message using first available credential");
-                        return Ok(());
-                    },
-                    Err(e) => {
-                        warn!("🚀 ASKAI: Failed to send message with first available credential: {:?}", e);
-                    }
-                }
-            } else {
-                warn!("🚀 ASKAI: No credentials available at all");
-            }
+    match result {
+        Ok(_) => {
+            info!("🚀 ASKAI: Successfully sent AI response to channel: {}", channel);
+            Ok(())
         },
         Err(e) => {
-            error!("🚀 ASKAI: Failed to list credentials: {:?}", e);
+            error!("🚀 ASKAI: Failed to send AI response: {:?}", e);
+            Err(e)
         }
     }
-    
-    // If we reach here, we couldn't send the message with any credential
-    warn!("🚀 ASKAI: Failed to find any suitable credential to send AI response");
-    Err(Error::Internal("No credential available to send AI response".to_string()))
 }
 
 // Helper function to convert Twitch user ID string to UUID user ID

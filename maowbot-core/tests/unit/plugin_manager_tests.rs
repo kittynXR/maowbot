@@ -23,7 +23,8 @@ use maowbot_core::repositories::postgres::platform_identity::PlatformIdentityRep
 use maowbot_core::platforms::manager::PlatformManager;
 use maowbot_core::services::user_service::UserService;
 use maowbot_core::services::{CommandService, RedeemService};
-use maowbot_common::traits::repository_traits::{CommandUsageRepository, RedeemUsageRepository};
+use maowbot_common::traits::repository_traits::{CommandUsageRepository, RedeemUsageRepository, CommandRepository, CredentialsRepository, BotConfigRepository};
+use maowbot_core::eventbus::EventBus;
 use mockall::mock;
 use async_trait::async_trait;
 
@@ -48,6 +49,58 @@ mock! {
     }
 }
 
+mock! {
+    CommandRepo {}
+    #[async_trait]
+    impl CommandRepository for CommandRepo {
+        async fn create_command(&self, cmd: &maowbot_common::models::command::Command) -> Result<(), Error>;
+        async fn list_commands(&self, platform: &str) -> Result<Vec<maowbot_common::models::command::Command>, Error>;
+        async fn update_command(&self, cmd: &maowbot_common::models::command::Command) -> Result<(), Error>;
+        async fn get_command_by_id(&self, command_id: uuid::Uuid) -> Result<Option<maowbot_common::models::command::Command>, Error>;
+        async fn get_command_by_name(&self, platform: &str, command_name: &str) -> Result<Option<maowbot_common::models::command::Command>, Error>;
+        async fn delete_command(&self, command_id: uuid::Uuid) -> Result<(), Error>;
+    }
+}
+
+mock! {
+    CredentialsRepo {}
+    #[async_trait]
+    impl CredentialsRepository for CredentialsRepo {
+        async fn get_credentials(&self, platform: &maowbot_common::models::platform::Platform, user_id: uuid::Uuid) -> Result<Option<maowbot_common::models::platform::PlatformCredential>, Error>;
+        async fn get_credential_by_id(&self, credential_id: uuid::Uuid) -> Result<Option<maowbot_common::models::platform::PlatformCredential>, Error>;
+        async fn get_credential_by_provider_id(&self, platform: &maowbot_common::models::platform::Platform, provider_user_id: &str) -> Result<Option<maowbot_common::models::platform::PlatformCredential>, Error>;
+        async fn save_credential(&self, cred: &maowbot_common::models::platform::PlatformCredential) -> Result<(), Error>;
+        async fn list_credentials_for_platform(&self, platform: &maowbot_common::models::platform::Platform) -> Result<Vec<maowbot_common::models::platform::PlatformCredential>, Error>;
+        async fn list_credentials_for_user(&self, user_id: uuid::Uuid) -> Result<Vec<maowbot_common::models::platform::PlatformCredential>, Error>;
+        async fn delete_credential(&self, credential_id: uuid::Uuid) -> Result<(), Error>;
+        async fn get_broadcaster_credential(&self, platform: &maowbot_common::models::platform::Platform) -> Result<Option<maowbot_common::models::platform::PlatformCredential>, Error>;
+    }
+}
+
+mock! {
+    BotConfigRepo {}
+    #[async_trait]
+    impl BotConfigRepository for BotConfigRepo {
+        async fn get_config(&self, key: &str) -> Result<Option<serde_json::Value>, Error>;
+        async fn set_config(&self, key: &str, value: &serde_json::Value) -> Result<(), Error>;
+        async fn delete_config(&self, key: &str) -> Result<(), Error>;
+        async fn list_keys(&self) -> Result<Vec<String>, Error>;
+    }
+}
+
+mock! {
+    RedeemRepo {}
+    #[async_trait]
+    impl maowbot_common::traits::repository_traits::RedeemRepository for RedeemRepo {
+        async fn create_redeem(&self, redeem: &maowbot_common::models::redeem::Redeem) -> Result<(), Error>;
+        async fn list_redeems(&self, platform: &str) -> Result<Vec<maowbot_common::models::redeem::Redeem>, Error>;
+        async fn update_redeem(&self, redeem: &maowbot_common::models::redeem::Redeem) -> Result<(), Error>;
+        async fn get_redeem_by_id(&self, redeem_id: uuid::Uuid) -> Result<Option<maowbot_common::models::redeem::Redeem>, Error>;
+        async fn get_redeem_by_name(&self, platform: &str, redeem_name: &str) -> Result<Option<maowbot_common::models::redeem::Redeem>, Error>;
+        async fn delete_redeem(&self, redeem_id: uuid::Uuid) -> Result<(), Error>;
+    }
+}
+
 // This is a simplified test that checks that PluginManager can be created
 #[tokio::test]
 async fn test_plugin_manager_creation() -> Result<(), Error> {
@@ -64,10 +117,38 @@ async fn test_plugin_manager_creation() -> Result<(), Error> {
     let analytics_repo = Arc::new(PostgresAnalyticsRepository::new(pool.clone()));
     let user_analysis_repo = Arc::new(PostgresUserAnalysisRepository::new(pool.clone()));
     let platform_identity_repo = Arc::new(PlatformIdentityRepository::new(pool.clone()));
-    let platform_manager = Arc::new(PlatformManager::new());
+    let platform_manager = Arc::new(PlatformManager::new(
+        Arc::new(UserService::new(Arc::new(UserRepository::new(pool.clone())))),
+        Arc::new(crate::eventbus::EventBus::new()),
+        Arc::new(MockCredentialsRepo::new()),
+        Arc::new(PostgresDiscordRepository::new(pool.clone())),
+    ));
     let user_service = Arc::new(UserService::new(Arc::new(UserRepository::new(pool.clone()))));
-    let command_service = Arc::new(CommandService::new(pool.clone()));
-    let redeem_service = Arc::new(RedeemService::new(pool.clone()));
+    
+    // Create a mock CommandService since this test doesn't need a real one
+    let command_repo = Arc::new(MockCommandRepo::new());
+    let command_usage_repo = Arc::new(MockCommandUsageRepo::new());
+    let credentials_repo = Arc::new(MockCredentialsRepo::new());
+    let bot_config_repo = Arc::new(MockBotConfigRepo::new());
+    
+    let command_service = Arc::new(CommandService::new(
+        command_repo,
+        command_usage_repo,
+        credentials_repo,
+        user_service.clone(),
+        bot_config_repo,
+        platform_manager.clone(),
+    ));
+    // Create a mock RedeemService
+    let redeem_repo = Arc::new(MockRedeemRepo::new());
+    let redeem_usage_repo = Arc::new(MockRedeemUsageRepo::new());
+    let redeem_service = Arc::new(RedeemService::new(
+        redeem_repo, 
+        redeem_usage_repo.clone(),
+        user_service.clone(),
+        platform_manager.clone(),
+        credentials_repo.clone(),
+    ));
     
     let mut mock_cmd_usage_repo = MockCommandUsageRepo::new();
     let mut mock_redeem_usage_repo = MockRedeemUsageRepo::new();

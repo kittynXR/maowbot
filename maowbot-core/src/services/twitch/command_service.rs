@@ -17,6 +17,7 @@ use maowbot_common::models::platform::PlatformCredential;
 use crate::Error;
 use crate::services::twitch::builtin_commands::handle_builtin_command;
 use crate::services::user_service::UserService;
+use crate::services::message_sender::{MessageSender, MessageResponse};
 
 /// Context passed to built-in command handlers.
 pub struct CommandContext<'a> {
@@ -32,13 +33,8 @@ pub struct CommandContext<'a> {
 }
 
 /// Response from command handlers: multiple lines + which credential we used + which channel.
-#[derive(Debug, Clone)]
-pub struct CommandResponse {
-    pub texts: Vec<String>,
-    pub respond_credential_id: Option<Uuid>,
-    pub platform: String,
-    pub channel: String,
-}
+/// This is now just a type alias for the shared MessageResponse type
+pub type CommandResponse = MessageResponse;
 
 /// Tracks command cooldowns globally, etc.
 #[derive(Debug, Default)]
@@ -55,6 +51,12 @@ pub struct CommandService {
     cooldowns: Arc<Mutex<CooldownTracker>>,
 
     pub bot_config_repo: Arc<dyn BotConfigRepository + Send + Sync>,
+    
+    // Platform manager reference for sending messages
+    pub platform_manager: Arc<crate::platforms::manager::PlatformManager>,
+    
+    // Message sender for handling outgoing messages
+    pub message_sender: MessageSender,
 
     // ----------------------------------------------------------------
     // NEW: an in-memory cache of commands, loaded once at startup or
@@ -70,8 +72,15 @@ impl CommandService {
         credentials_repo: Arc<dyn CredentialsRepository + Send + Sync>,
         user_service: Arc<UserService>,
         bot_config_repo: Arc<dyn BotConfigRepository + Send + Sync>,
+        platform_manager: Arc<crate::platforms::manager::PlatformManager>,
     ) -> Self {
         debug!("Initializing CommandService");
+        
+        // Create MessageSender instance
+        let message_sender = MessageSender::new(
+            credentials_repo.clone(),
+            platform_manager.clone()
+        );
 
         let svc = Self {
             command_repo,
@@ -80,6 +89,8 @@ impl CommandService {
             user_service,
             cooldowns: Arc::new(Mutex::new(CooldownTracker::default())),
             bot_config_repo,
+            platform_manager,
+            message_sender,
             commands_cache: Arc::new(Mutex::new(HashMap::new())),
         };
 

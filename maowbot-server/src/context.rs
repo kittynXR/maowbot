@@ -170,14 +170,6 @@ impl ServerContext {
             ChatCache::new(user_analysis_repo.as_ref().clone(), cache_conf)
         ));
 
-        let command_service = Arc::new(CommandService::new(
-            cmd_repo.clone(),
-            cmd_usage_repo.clone(),
-            creds_repo_arc.clone(),
-            user_service.clone(),
-            bot_config_repo.clone(),
-        ));
-
         // Create a Discord repository
         let discord_repo = Arc::new(maowbot_core::repositories::postgres::discord::PostgresDiscordRepository::new(db.pool().clone()));
         
@@ -187,6 +179,16 @@ impl ServerContext {
             event_bus.clone(),
             creds_repo_arc.clone(),
             discord_repo.clone(), // Pass Discord repository to PlatformManager
+        ));
+
+        // Command service - now with platform_manager
+        let command_service = Arc::new(CommandService::new(
+            cmd_repo.clone(),
+            cmd_usage_repo.clone(),
+            creds_repo_arc.clone(),
+            user_service.clone(),
+            bot_config_repo.clone(),
+            platform_manager.clone(),
         ));
 
         // Message service
