@@ -96,7 +96,7 @@ async fn generate_ai_web_search_response(
     user_id: Uuid,
     input: &str,
     system_prompt: Option<&str>
-) -> Result<String, Error> {
+) -> Result<(String, serde_json::Value), Error> {
     info!("Generating AI web search response for user {}", user_id);
     
     // Get the AI API the same way as in generate_ai_response
@@ -112,19 +112,33 @@ async fn generate_ai_web_search_response(
             Arc::new(ai_impl.clone())
         } else {
             warn!("AI API is not available through any means, falling back to placeholder response");
-            if let Some(prompt) = system_prompt {
-                return Ok(format!("Web search AI response to '{}' with prompt '{}'", input, prompt));
+            let placeholder_content = if let Some(prompt) = system_prompt {
+                format!("Web search AI response to '{}' with prompt '{}'", input, prompt)
             } else {
-                return Ok(format!("Web search AI response to '{}'", input));
-            }
+                format!("Web search AI response to '{}'", input)
+            };
+            
+            // Return placeholder content with empty annotations
+            let json_value = serde_json::json!({
+                "content": placeholder_content.clone(),
+                "annotations": []
+            });
+            return Ok((placeholder_content, json_value));
         }
     } else {
         warn!("AI API is not available through any means, falling back to placeholder response");
-        if let Some(prompt) = system_prompt {
-            return Ok(format!("Web search AI response to '{}' with prompt '{}'", input, prompt));
+        let placeholder_content = if let Some(prompt) = system_prompt {
+            format!("Web search AI response to '{}' with prompt '{}'", input, prompt)
         } else {
-            return Ok(format!("Web search AI response to '{}'", input));
-        }
+            format!("Web search AI response to '{}'", input)
+        };
+        
+        // Return placeholder content with empty annotations
+        let json_value = serde_json::json!({
+            "content": placeholder_content.clone(),
+            "annotations": []
+        });
+        return Ok((placeholder_content, json_value));
     };
     
     // Create messages with system prompt if provided
@@ -143,8 +157,8 @@ async fn generate_ai_web_search_response(
     }));
     
     // The OpenAI provider has been modified to automatically add web search options
-    // when the model is set to gpt-4.1 or when "enable_web_search" is set to "true"
-    // in the options. Here we'll use both approaches to ensure it works.
+    // when the model is set to gpt-4o-search-preview and "enable_web_search" is set to "true"
+    // in the options.
     
     // Configure the AI service to use gpt-4o-search-preview model with web search
     if let Err(e) = ai_api.configure_ai_provider(serde_json::json!({
@@ -176,49 +190,26 @@ async fn generate_ai_web_search_response(
     }));
     
     // Process the request - the provider will add web_search_options
-    match ai_api.generate_chat(messages).await {
-        Ok(response) => Ok(response),
+    // We need to use the functions API to get both content and citations
+    match ai_api.generate_with_functions(messages).await {
+        Ok(response_data) => {
+            // Extract the text content from the response
+            let content = response_data.get("content")
+                .and_then(|c| c.as_str())
+                .unwrap_or_else(|| {
+                    warn!("AI response missing content field - might be function calling format");
+                    "Sorry, I couldn't generate a response with the search results."
+                })
+                .to_string();
+                
+            // Store the full response data for source extraction
+            info!("Generated web search response with citations");
+            
+            Ok((content, response_data))
+        },
         Err(e) => {
             error!("Error generating AI web search response: {:?}", e);
             Err(Error::Internal(format!("AI API web search error: {}", e)))
-        }
-    }
-}
-
-// Helper function to send AI response to chat using the shared MessageSender
-async fn send_ai_response_to_chat(
-    ctx: &RedeemHandlerContext<'_>,
-    channel: &str,
-    response: &str,
-) -> Result<(), Error> {
-    info!("Sending AI response to chat channel: {}", channel);
-    
-    // Create a message sender instance using the platform manager and credentials repo
-    let message_sender = MessageSender::new(
-        ctx.redeem_service.credentials_repo.clone(),
-        ctx.redeem_service.platform_manager.clone()
-    );
-    
-    // Get the credential ID from the active credential if available
-    let specified_credential_id = ctx.active_credential.as_ref().map(|cred| cred.credential_id);
-    
-    // Send the message using our shared message sender
-    let result = message_sender.send_twitch_message(
-        channel,
-        response,
-        specified_credential_id,
-        // Use Uuid::nil() as a fallback if no user is available
-        Uuid::nil()
-    ).await;
-    
-    match result {
-        Ok(_) => {
-            info!("Successfully sent AI response to channel: {}", channel);
-            Ok(())
-        },
-        Err(e) => {
-            error!("Failed to send AI response: {:?}", e);
-            Err(e)
         }
     }
 }
@@ -362,7 +353,26 @@ pub async fn handle_askai_redeem(
     
     // Send the response to chat
     if let Some(broadcaster_login) = &redemption.broadcaster_login {
-        if let Err(e) = send_ai_response_to_chat(ctx, broadcaster_login, &response).await {
+        // Create message sender
+        let message_sender = MessageSender::new(
+            ctx.redeem_service.credentials_repo.clone(),
+            ctx.redeem_service.platform_manager.clone()
+        );
+        
+        // Create an empty JSON object for regular responses (no sources)
+        let empty_response = serde_json::json!({
+            "content": response.clone(),
+            "annotations": []
+        });
+        
+        // Send the response using the enhanced AI response sender
+        if let Err(e) = message_sender.send_ai_response_to_twitch(
+            broadcaster_login,
+            &response,
+            Some(&empty_response),
+            ctx.active_credential.as_ref().map(|cred| cred.credential_id),
+            user.user_id
+        ).await {
             error!("Failed to send AI response to chat: {:?}", e);
         }
     } else {
@@ -512,7 +522,26 @@ pub async fn handle_askmao_redeem(
     
     // Send the response to chat
     if let Some(broadcaster_login) = &redemption.broadcaster_login {
-        if let Err(e) = send_ai_response_to_chat(ctx, broadcaster_login, &response).await {
+        // Create message sender
+        let message_sender = MessageSender::new(
+            ctx.redeem_service.credentials_repo.clone(),
+            ctx.redeem_service.platform_manager.clone()
+        );
+        
+        // Create an empty JSON object for regular responses (no sources)
+        let empty_response = serde_json::json!({
+            "content": response.clone(),
+            "annotations": []
+        });
+        
+        // Send the response using the enhanced AI response sender
+        if let Err(e) = message_sender.send_ai_response_to_twitch(
+            broadcaster_login,
+            &response,
+            Some(&empty_response),
+            ctx.active_credential.as_ref().map(|cred| cred.credential_id),
+            user.user_id
+        ).await {
             error!("Failed to send askmaow response to chat: {:?}", e);
         }
     } else {
@@ -605,14 +634,14 @@ pub async fn handle_askai_search_redemption(
     };
     
     // Create a search prompt for web-capable AI that works well for Twitch chat
-    let system_prompt = "You are a helpful AI assistant with the ability to search the web for the most up-to-date information. Your responses will be shown in Twitch chat, so they MUST be brief (1-3 sentences max) while still being informative. Begin your response with 'Search result:' and include at least one source URL in [square brackets] at the end where appropriate. Use casual, conversational language suitable for a Twitch audience.";
+    let system_prompt = "You are a helpful AI assistant with the ability to search the web for the most up-to-date information. Your responses will be shown in Twitch chat, so they MUST be brief (1-3 sentences max) while still being informative. Begin your response with 'Search result:' and use casual, conversational language suitable for a Twitch audience. Don't include URLs in your response text, as those will be handled separately.";
     
     // Generate an AI response using the web search capability
     info!("Attempting web search AI response generation with enhanced error handling");
-    let response = match generate_ai_web_search_response(ctx, user.user_id, user_input, Some(system_prompt)).await {
-        Ok(resp) => {
+    let (response, raw_response) = match generate_ai_web_search_response(ctx, user.user_id, user_input, Some(system_prompt)).await {
+        Ok((resp, raw)) => {
             info!("Successfully generated web search response: {}", resp);
-            resp
+            (resp, raw)
         },
         Err(e) => {
             error!("Error generating search AI response: {:?}", e);
@@ -620,24 +649,47 @@ pub async fn handle_askai_search_redemption(
             // Try a fallback approach - use standard AI response but prefix with search results
             info!("Attempting fallback to standard AI with search prefix");
             match generate_ai_response(ctx, user.user_id, 
-                &format!("Search the web for the following query, then provide a brief answer with sources: {}", user_input), 
-                Some("You are a helpful search assistant. Provide brief answers with source URLs in [brackets].")
+                &format!("Search the web for the following query, then provide a brief answer: {}", user_input), 
+                Some("You are a helpful search assistant. Provide brief answers.")
             ).await {
                 Ok(fallback_resp) => {
                     info!("Fallback successful");
-                    fallback_resp
+                    // Create a response with no annotations
+                    let fallback_raw = serde_json::json!({
+                        "content": fallback_resp,
+                        "annotations": []
+                    });
+                    (fallback_resp, fallback_raw)
                 },
                 Err(fallback_err) => {
                     error!("Fallback also failed: {:?}", fallback_err);
-                    format!("Search Results: I couldn't perform a search due to a technical error. Please try again later.")
+                    let error_msg = format!("Search Results: I couldn't perform a search due to a technical error. Please try again later.");
+                    let error_raw = serde_json::json!({
+                        "content": error_msg,
+                        "annotations": []
+                    });
+                    (error_msg, error_raw)
                 }
             }
         }
     };
     
-    // Send the response to chat
+    // Send the response to chat with raw response data that includes annotations
     if let Some(broadcaster_login) = &redemption.broadcaster_login {
-        if let Err(e) = send_ai_response_to_chat(ctx, broadcaster_login, &response).await {
+        // Create message sender
+        let message_sender = MessageSender::new(
+            ctx.redeem_service.credentials_repo.clone(),
+            ctx.redeem_service.platform_manager.clone()
+        );
+        
+        // Send the response using the enhanced AI response sender which handles sources
+        if let Err(e) = message_sender.send_ai_response_to_twitch(
+            broadcaster_login,
+            &response,
+            Some(&raw_response),
+            ctx.active_credential.as_ref().map(|cred| cred.credential_id),
+            user.user_id
+        ).await {
             error!("Failed to send AI search response to chat: {:?}", e);
         }
     } else {

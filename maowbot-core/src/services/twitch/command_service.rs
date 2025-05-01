@@ -145,7 +145,9 @@ impl CommandService {
     ) -> Result<Option<CommandResponse>, Error> {
         debug!("handle_chat_line() received message: '{}'", message_text);
 
+        // -----------------------------------------------------------------
         // 1) Must start with '!'
+        // -----------------------------------------------------------------
         if !message_text.trim().starts_with('!') {
             return Ok(None);
         }
@@ -157,7 +159,49 @@ impl CommandService {
             String::new()
         };
 
-        // 2) Look up command in our in-memory cache
+        // -----------------------------------------------------------------
+        // 2) Built-in meta commands (handled without DB)
+        // -----------------------------------------------------------------
+        match cmd_part.to_lowercase().as_str() {
+            "continue" => {
+                let sent = self
+                    .message_sender
+                    .handle_continue_command(channel, None, user_id)
+                    .await?;
+
+                if !sent {
+                    self.message_sender
+                        .send_twitch_message(channel, "No continuation available.", None, user_id)
+                        .await
+                        .ok();
+                }
+                return Ok(None);
+            }
+            "sources" => {
+                let sent = self
+                    .message_sender
+                    .handle_sources_command(channel, None, user_id)
+                    .await?;
+
+                if !sent {
+                    self.message_sender
+                        .send_twitch_message(
+                            channel,
+                            "No recent AI message found. Sources not available.",
+                            None,
+                            user_id,
+                        )
+                        .await
+                        .ok();
+                }
+                return Ok(None);
+            }
+            _ => { /* fall through to DB commands */ }
+        }
+
+        // -----------------------------------------------------------------
+        // 3) Look up command in cache / DB
+        // -----------------------------------------------------------------
         let cmd_opt = self.find_command_in_cache(platform, cmd_part);
         let cmd = match cmd_opt {
             Some(c) => c,
@@ -166,7 +210,6 @@ impl CommandService {
                 return Ok(None);
             }
         };
-
         if !cmd.is_active {
             debug!("Command '{}' is inactive.", cmd.command_name);
             return Ok(None);
@@ -266,6 +309,50 @@ impl CommandService {
             }
         }
 
+        // Check for special commands: !sources and !continue
+        match cmd_part.to_lowercase().as_str() {
+            "continue" => {
+                let sent = self
+                    .message_sender
+                    .handle_continue_command(channel, None, user_id)
+                    .await?;
+
+                if !sent {
+                    // Gracefully inform the user – quick inline response
+                    self.message_sender
+                        .send_twitch_message(
+                            channel,
+                            "No continuation available.",
+                            None,
+                            user_id,
+                        )
+                        .await
+                        .ok();
+                }
+                return Ok(None); // Already handled
+            }
+            "sources" => {
+                let sent = self
+                    .message_sender
+                    .handle_sources_command(channel, None, user_id)
+                    .await?;
+
+                if !sent {
+                    self.message_sender
+                        .send_twitch_message(
+                            channel,
+                            "No recent AI message found. Sources not available.",
+                            None,
+                            user_id,
+                        )
+                        .await
+                        .ok();
+                }
+                return Ok(None);
+            }
+            _ => { /* fallthrough to DB-defined commands */ }
+        }
+        
         // 9) Check for built-in logic
         if let Some(response_str) = handle_builtin_command(&cmd, &ctx, &user, &args).await? {
             let lines: Vec<String> = response_str
