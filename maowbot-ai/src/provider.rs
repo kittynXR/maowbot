@@ -124,7 +124,7 @@ impl ModelProvider for OpenAIProvider {
             
             // IMPORTANT: This is the ONLY parameter needed for web search - no others required
             request_payload["web_search_options"] = json!({
-                      "search_context_size": "low"
+                      "search_context_size": "medium"
             });
             
             tracing::info!("Web search enabled: model={}, web_search=true", 
