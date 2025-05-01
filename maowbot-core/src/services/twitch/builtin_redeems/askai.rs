@@ -62,6 +62,7 @@ async fn generate_ai_response(
             })
         ];
         
+        // Use the generic chat endpoint without function calling
         match ai_api.generate_chat(messages).await {
             Ok(response) => Ok(response),
             Err(e) => {
@@ -70,8 +71,16 @@ async fn generate_ai_response(
             }
         }
     } else {
-        // Use the process_user_message method that handles conversation history
-        match ai_api.process_user_message(user_id, input).await {
+        // Create a basic message with just the user input
+        let messages = vec![
+            serde_json::json!({
+                "role": "user",
+                "content": input
+            })
+        ];
+        
+        // Use the generic chat endpoint without function calling
+        match ai_api.generate_chat(messages).await {
             Ok(response) => Ok(response),
             Err(e) => {
                 error!("Error generating AI response: {:?}", e);
@@ -323,6 +332,25 @@ pub async fn handle_askai_redeem(
         }
     };
     
+    // Configure the AI API to use gpt-4o without web search
+    let ai_api_opt = match ctx.redeem_service.get_ai_api() {
+        Some(api) => Some(api),
+        None => ctx.redeem_service.platform_manager.get_ai_api()
+    };
+    
+    if let Some(ai_api) = ai_api_opt {
+        // Configure the provider explicitly to use gpt-4o without web search
+        if let Err(e) = ai_api.configure_ai_provider(serde_json::json!({
+            "provider_type": "openai",
+            "default_model": "gpt-4o",
+            "options": {
+                "enable_web_search": "false"
+            }
+        })).await {
+            warn!("Failed to configure AI provider for standard response: {:?}", e);
+        }
+    }
+    
     // Generate an AI response using real AI API
     let response = match generate_ai_response(ctx, user.user_id, user_input, None).await {
         Ok(resp) => resp,
@@ -450,6 +478,25 @@ pub async fn handle_askmao_redeem(
             return Err(e);
         }
     };
+    
+    // Configure the AI API to use gpt-4o without web search
+    let ai_api_opt = match ctx.redeem_service.get_ai_api() {
+        Some(api) => Some(api),
+        None => ctx.redeem_service.platform_manager.get_ai_api()
+    };
+    
+    if let Some(ai_api) = ai_api_opt {
+        // Configure the provider explicitly to use gpt-4o without web search
+        if let Err(e) = ai_api.configure_ai_provider(serde_json::json!({
+            "provider_type": "openai",
+            "default_model": "gpt-4o",
+            "options": {
+                "enable_web_search": "false"
+            }
+        })).await {
+            warn!("Failed to configure AI provider for cat-like response: {:?}", e);
+        }
+    }
     
     // Create a cat-like prompt for Maowbot
     let system_prompt = "You are Maowbot, a sassy and humorous cat-like AI. Respond with cat-like mannerisms, occasional 'meow' sounds, and a playful attitude. Your responses should be brief, funny, and slightly sarcastic while still being helpful. Limit responses to 1-2 sentences when possible.";
