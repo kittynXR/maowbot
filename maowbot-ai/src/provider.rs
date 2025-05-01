@@ -62,139 +62,112 @@ impl ModelProvider for OpenAIProvider {
         
         Ok(text)
     }
-    
+   
     async fn chat(&self, messages: Vec<ChatMessage>) -> anyhow::Result<String> {
-        let api_base = self.config.api_base.clone().unwrap_or_else(|| {
-            "https://api.openai.com/v1".to_string()
-        });
-        
-        // Check if there's already a system message in the messages
-        let has_system_message = messages.iter().any(|msg| msg.role == "system");
-        
-        // Create a vector to hold all messages, potentially with a system message added
+        let api_base = self
+            .config
+            .api_base
+            .clone()
+            .unwrap_or_else(|| "https://api.openai.com/v1".to_string());
+
+        /* ---------- 1. build message array (unchanged) ---------- */
+        let has_system_message = messages.iter().any(|m| m.role == "system");
         let mut all_messages = Vec::new();
-        
-        // Add system message from config if not already present
+
         if !has_system_message {
-            // Check if there's a system_prompt in the options
-            if let Some(system_prompt) = self.config.options.get("system_prompt") {
-                all_messages.push(json!({
-                    "role": "system",
-                    "content": system_prompt
-                }));
+            if let Some(sys) = self.config.options.get("system_prompt") {
+                all_messages.push(json!({ "role": "system", "content": sys }));
             }
         }
-        
-        // Add the user messages
-        let mut formatted_messages: Vec<serde_json::Value> = messages
+
+        let mut formatted: Vec<serde_json::Value> = messages
             .iter()
-            .map(|msg| {
-                json!({
-                    "role": msg.role,
-                    "content": msg.content
-                })
-            })
+            .map(|m| json!({ "role": m.role, "content": m.content }))
             .collect();
-        
-        // Combine system message (if added) with other messages
-        all_messages.append(&mut formatted_messages);
-        
-        // Build the request payload - simpler version with only required fields
-        let mut request_payload = json!({
+
+        all_messages.append(&mut formatted);
+
+        /* ---------- 2. decide whether to enable web-search ---------- */
+        // - enable if the *caller* asked for it in options, OR
+        // - the model name itself already includes "-search" (e.g. gpt-4o-search-preview)
+        let opt_flag = self
+            .config
+            .options
+            .get("enable_web_search")
+            .map(|v| v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false);
+
+        let model_contains_search = self
+            .config
+            .default_model
+            .to_lowercase()
+            .contains("-search");
+
+        let use_web_search = opt_flag || model_contains_search;
+
+        /* ---------- 3. prepare request payload ---------- */
+        let mut payload = json!({
             "model": self.config.default_model,
             "messages": all_messages,
-            "max_tokens": 1000,
+            "max_tokens": 1000
         });
-        
-        // Check if we should use web search
-        let use_web_search = self.config.options.get("enable_web_search").map_or(false, |v| v == "true") ||
-                            self.config.default_model == "gpt-4o-search-preview" || 
-                            self.config.default_model == "gpt-4o" ||
-                            self.config.default_model == "gpt-4.1";
-                            
-        tracing::info!("Web search check: enable_web_search={}, model={}", 
-                     self.config.options.get("enable_web_search").map_or("false", |v| v), 
-                     self.config.default_model);
-        
+
         if use_web_search {
-            tracing::info!("Using web search capabilities with gpt-4o-search-preview");
-            
-            // Set model to gpt-4o-search-preview explicitly
-            request_payload["model"] = json!("gpt-4o-search-preview");
-            
-            // IMPORTANT: This is the ONLY parameter needed for web search - no others required
-            request_payload["web_search_options"] = json!({
-                      "search_context_size": "medium"
-            });
-            
-            tracing::info!("Web search enabled: model={}, web_search=true", 
-                         request_payload["model"].as_str().unwrap_or("unknown"));
+            // If the caller supplied a normal model (e.g. gpt-4o) **and**
+            // asked for web search via `enable_web_search=true`,
+            // transparently upgrade it to the matching search-preview variant.
+            if !model_contains_search {
+                payload["model"] = json!("gpt-4o-search-preview");
+            }
+
+            payload["web_search_options"] = json!({ "search_context_size": "medium" });
+            tracing::info!(
+                "🔍 Web search enabled → model={}",
+                payload["model"].as_str().unwrap_or("unknown")
+            );
         } else {
-            tracing::info!("Standard chat completion without web search");
+            tracing::info!("Standard chat completion (no web search) → model={}", self.config.default_model);
         }
-        // Request to OpenAI API
-        // Convert request payload to pretty-printed JSON for logging
-        let payload_json = serde_json::to_string_pretty(&request_payload)
-            .unwrap_or_else(|_| format!("{:?}", request_payload));
-        
-        // Log the final API call details
-        tracing::info!("Making API call to {}/chat/completions", api_base);
-        tracing::info!("Final API request payload:\n{}", payload_json);
-        
-        // Send the request
-        let response = self.client
+
+        /* ---------- 4. fire request & handle response (unchanged) ---------- */
+        let payload_json = serde_json::to_string_pretty(&payload)
+            .unwrap_or_else(|_| format!("{:?}", payload));
+        tracing::info!("Making API call to {}/chat/completions\n{}", api_base, payload_json);
+
+        let response = self
+            .client
             .post(format!("{}/chat/completions", api_base))
             .header("Authorization", format!("Bearer {}", self.config.api_key))
-            .json(&request_payload)
+            .json(&payload)
             .send()
             .await?;
-        
-        // Get the raw response text first for better error handling
-        let response_text = response.text().await?;
-        tracing::debug!("Raw API response: {}", response_text);
-        
-        // Try to parse as JSON
-        let data = match serde_json::from_str::<serde_json::Value>(&response_text) {
-            Ok(json) => json,
-            Err(e) => {
-                tracing::error!("Failed to parse API response as JSON: {:?}", e);
-                tracing::error!("Response text: {}", response_text);
-                return Err(anyhow::anyhow!("API returned non-JSON response: {}", e));
-            }
-        };
-        
-        // Check for API errors
-        if let Some(error) = data.get("error") {
-            tracing::error!("API returned error: {:?}", error);
-            let error_message = error.get("message").and_then(|m| m.as_str()).unwrap_or("Unknown error");
-            return Err(anyhow::anyhow!("API error: {}", error_message));
+
+        let raw = response.text().await?;
+        tracing::debug!("Raw API response: {}", raw);
+
+        let data: serde_json::Value = serde_json::from_str(&raw)
+            .map_err(|e| anyhow::anyhow!("API returned non-JSON: {}", e))?;
+
+        if let Some(err) = data.get("error") {
+            let msg = err
+                .get("message")
+                .and_then(|m| m.as_str())
+                .unwrap_or("unknown error");
+            return Err(anyhow::anyhow!("API error: {}", msg));
         }
-        
-        // Extract choices
-        let choices = match data.get("choices").and_then(|c| c.as_array()) {
-            Some(choices) => choices,
-            None => {
-                tracing::error!("Response missing 'choices' array: {:?}", data);
-                return Err(anyhow::anyhow!("Response missing 'choices' array"));
-            }
-        };
-        
+
+        let choices = data["choices"]
+            .as_array()
+            .ok_or_else(|| anyhow::anyhow!("Missing choices"))?;
         if choices.is_empty() {
-            tracing::error!("API returned empty choices array");
             return Err(anyhow::anyhow!("No completions returned"));
         }
-        
-        // Extract content from first choice
-        let message = &choices[0].get("message").ok_or_else(|| {
-            tracing::error!("First choice missing 'message': {:?}", choices[0]);
-            anyhow::anyhow!("Response choice missing 'message'")
-        })?;
-        
-        let content = message.get("content").and_then(|c| c.as_str()).ok_or_else(|| {
-            tracing::error!("Message missing 'content': {:?}", message);
-            anyhow::anyhow!("Response message missing 'content'")
-        })?.to_string();
-        
+
+        let content = choices[0]["message"]["content"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("Missing content"))?
+            .to_owned();
+
         Ok(content)
     }
     
