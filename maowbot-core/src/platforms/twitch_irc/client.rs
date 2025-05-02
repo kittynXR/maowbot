@@ -183,7 +183,7 @@ impl TwitchIrcClient {
         tx_outgoing.send(format!("PASS {}", oauth_token)).ok();
         tx_outgoing.send(format!("NICK {}", username)).ok();
         tx_outgoing
-            .send("CAP REQ :twitch.tv/commands twitch.tv/tags twitch.tv/membership".to_string())
+            .send("CAP REQ :twitch.tv/commands twitch.tv/tags twitch.tv/membership twitch.tv/commands".to_string())
             .ok();
 
         let read_task = tokio::spawn(Self::reader_loop(read_half, tx_incoming.clone(), tx_outgoing.clone()));
