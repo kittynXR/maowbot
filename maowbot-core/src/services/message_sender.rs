@@ -28,7 +28,7 @@ static PENDING_SOURCES: Lazy<Mutex<HashMap<String, VecDeque<Vec<String>>>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
 
 // Convert Vec<(title,url)> → VecDeque<Vec<String>>
-fn push_pending_sources(channel: &str, list: Vec<(String, String)>) {
+pub fn push_pending_sources(channel: &str, list: Vec<(String, String)>) {
     let q: VecDeque<Vec<String>> = list
         .into_iter()
         .map(|(t, u)| vec![t, u])

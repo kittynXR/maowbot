@@ -8,7 +8,7 @@ use std::sync::Arc;
 use crate::Error;
 use crate::services::twitch::redeem_service::RedeemHandlerContext;
 use crate::platforms::twitch::requests::channel_points::Redemption;
-use crate::services::message_sender::{MessageSender, MessageResponse};
+use crate::services::message_sender::{MessageSender, MessageResponse, push_pending_sources};
 
 // Helper function to generate an AI text response
 async fn generate_ai_response(
@@ -517,42 +517,29 @@ pub async fn handle_askai_search_redemption(
         redemption.user_id, redemption.reward.title
     );
 
-    // Get the user input from the redemption
+    // 1) Extract user input, or cancel if empty
     let user_input = if !redemption.user_input.trim().is_empty() {
         redemption.user_input.trim()
     } else {
-        // No user input or empty input, mark as failed
         if let Some(client) = &ctx.helix_client {
-            let broadcaster_id = &redemption.broadcaster_id;
-            let reward_id = &redemption.reward.id;
-            let redemption_id = &redemption.id;
-
-            info!("No user input provided for 'ask ai with search' redeem, canceling redemption");
-
-            // Cancel by setting status = "CANCELED"
             let _ = client
                 .update_redemption_status(
-                    broadcaster_id,
-                    reward_id,
-                    &[&redemption_id],
+                    &redemption.broadcaster_id,
+                    &redemption.reward.id,
+                    &[&redemption.id],
                     "CANCELED",
                 )
                 .await?;
-            return Ok(());
-        } else {
-            return Err(Error::Internal("No Helix client available".to_string()));
         }
+        return Ok(());
     };
-
     info!("Received askai_search redeem with input: {}", user_input);
-    
-    // Get the user from the Twitch ID
+
+    // 2) Map Twitch user → our User
     let user = match get_user_from_twitch_id(ctx, &redemption.user_id).await {
-        Ok(user) => user,
+        Ok(u) => u,
         Err(e) => {
             error!("Failed to get user for AI search redeem: {:?}", e);
-            
-            // Try to cancel the redemption since we can't process it
             if let Some(client) = &ctx.helix_client {
                 let _ = client
                     .update_redemption_status(
@@ -563,91 +550,102 @@ pub async fn handle_askai_search_redemption(
                     )
                     .await;
             }
-            
             return Err(e);
         }
     };
-    
-    // Create a search prompt for web-capable AI that works well for Twitch chat
-    let system_prompt = "You are a helpful AI assistant with the ability to search the web for the most up-to-date information. Your responses will be shown in Twitch chat, so they MUST be brief (1-3 sentences max) while still being informative. Begin your response with 'Search result:' and use casual, conversational language suitable for a Twitch audience. Don't include URLs in your response text, as those will be handled separately.";
-    
-    // Generate an AI response using the web search capability
+
+    // 3) Build our custom system prompt for searches
+    let system_prompt = "\
+You are a helpful AI assistant with the ability to search the web \
+for the most up-to-date information. Your responses will be shown \
+in Twitch chat, so they MUST be brief (1-3 sentences max) while \
+still being informative. Begin your response with 'Search result:' \
+and use casual, conversational language suitable for a Twitch \
+audience.";
+
+    // 4) Call the search‐capable endpoint
     info!("Attempting web search AI response generation with enhanced error handling");
-    let (response, raw_response) = match generate_ai_web_search_response(ctx, user.user_id, user_input, Some(system_prompt)).await {
+    let (response, raw_response) = match generate_ai_web_search_response(
+        ctx,
+        user.user_id,
+        user_input,
+        Some(system_prompt),
+    )
+        .await
+    {
         Ok((resp, raw)) => {
             info!("Successfully generated web search response: {}", resp);
             (resp, raw)
-        },
+        }
         Err(e) => {
             error!("Error generating search AI response: {:?}", e);
-            
-            // Try a fallback approach - use standard AI response but prefix with search results
-            info!("Attempting fallback to standard AI with search prefix");
-            match generate_ai_response(ctx, user.user_id, 
-                &format!("Search the web for the following query, then provide a brief answer: {}", user_input), 
-                Some("You are a helpful search assistant. Provide brief answers.")
-            ).await {
-                Ok(fallback_resp) => {
-                    info!("Fallback successful");
-                    // Create a response with no annotations
-                    let fallback_raw = serde_json::json!({
-                        "content": fallback_resp,
-                        "annotations": []
-                    });
-                    (fallback_resp, fallback_raw)
-                },
-                Err(fallback_err) => {
-                    error!("Fallback also failed: {:?}", fallback_err);
-                    let error_msg = format!("Search Results: I couldn't perform a search due to a technical error. Please try again later.");
-                    let error_raw = serde_json::json!({
-                        "content": error_msg,
-                        "annotations": []
-                    });
-                    (error_msg, error_raw)
-                }
-            }
+            // fallback to plain AI if search‐endpoint fails…
+            let fallback = generate_ai_response(
+                ctx,
+                user.user_id,
+                &format!("Search the web for: {}", user_input),
+                Some("You are a helpful search assistant. Provide brief answers."),
+            )
+                .await
+                .unwrap_or_else(|_| {
+                    "Sorry, I couldn't perform a search right now. Please try again later."
+                        .to_string()
+                });
+            let raw = json!({ "content": fallback, "annotations": [], "sources": [] });
+            (fallback, raw)
         }
     };
-    
-    // Send the response to chat with raw response data that includes annotations
+
+    // ──────────────────────────────────────────────────────────────────────────
+    // ★ NEW: cache any sources for the upcoming `!sources` command
+    if let Some(arr) = raw_response.get("sources").and_then(|v| v.as_array()) {
+        let formatted: Vec<(String, String)> = arr
+            .iter()
+            .filter_map(|s| {
+                let title = s.get("title")?.as_str()?.to_string();
+                let url = s.get("url")?.as_str()?.to_string();
+                Some((title, url))
+            })
+            .collect();
+        if let Some(channel) = &redemption.broadcaster_login {
+            push_pending_sources(channel, formatted.clone());
+            info!("🔗 Cached {} sources for channel {}", formatted.len(), channel);
+        }
+    }
+    // ──────────────────────────────────────────────────────────────────────────
+
+    // 5) Send the AI reply (the '*' markers remain, but URLs are now stashed)
     if let Some(broadcaster_login) = &redemption.broadcaster_login {
-        // Create message sender
         let message_sender = MessageSender::new(
             ctx.redeem_service.credentials_repo.clone(),
-            ctx.redeem_service.platform_manager.clone()
+            ctx.redeem_service.platform_manager.clone(),
         );
-        
-        // Send the response using the enhanced AI response sender which handles sources
-        if let Err(e) = message_sender.send_ai_response_to_twitch(
-            broadcaster_login,
-            &response,
-            Some(&raw_response),
-            ctx.active_credential.as_ref().map(|cred| cred.credential_id),
-            user.user_id
-        ).await {
+        if let Err(e) = message_sender
+            .send_ai_response_to_twitch(
+                broadcaster_login,
+                &response,
+                Some(&raw_response),
+                ctx.active_credential.as_ref().map(|c| c.credential_id),
+                user.user_id,
+            )
+            .await
+        {
             error!("Failed to send AI search response to chat: {:?}", e);
         }
     } else {
         error!("No broadcaster login found in redemption");
     }
-    
-    // Mark the redemption as complete
-    if let Some(client) = &ctx.helix_client {
-        let broadcaster_id = &redemption.broadcaster_id;
-        let reward_id = &redemption.reward.id;
-        let redemption_id = &redemption.id;
 
-        info!("Completing AI search redeem");
-        
-        // Set status to "FULFILLED"
+    // 6) Finally, mark the redemption as fulfilled
+    if let Some(client) = &ctx.helix_client {
         let _ = client
             .update_redemption_status(
-                broadcaster_id,
-                reward_id,
-                &[&redemption_id],
+                &redemption.broadcaster_id,
+                &redemption.reward.id,
+                &[&redemption.id],
                 "FULFILLED",
             )
-            .await?;
+            .await;
     } else {
         warn!("No Helix client available, can't update redeem status");
     }
