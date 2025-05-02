@@ -27,6 +27,25 @@ static PENDING_CONTINUATIONS: Lazy<Mutex<HashMap<String, VecDeque<String>>>> =
 static PENDING_SOURCES: Lazy<Mutex<HashMap<String, VecDeque<Vec<String>>>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
 
+// Convert Vec<(title,url)> → VecDeque<Vec<String>>
+fn push_pending_sources(channel: &str, list: Vec<(String, String)>) {
+    let q: VecDeque<Vec<String>> = list
+        .into_iter()
+        .map(|(t, u)| vec![t, u])
+        .collect();
+
+    PENDING_SOURCES
+        .lock()
+        .insert(channel.to_lowercase(), q);
+}
+
+fn take_pending_sources(channel: &str) -> Option<VecDeque<Vec<String>>> {
+    PENDING_SOURCES
+        .lock()
+        .remove(&channel.to_lowercase())
+}
+
+
 /// Maximum length for Twitch chat messages
 pub const TWITCH_MAX_MSG_LENGTH: usize = 450;
 const MAX_TWITCH_MSG_LEN: usize = 450;
@@ -288,32 +307,28 @@ impl MessageSender {
         &self,
         channel: &str,
         respond_credential_id: Option<Uuid>,
-        user_id: Uuid,
+        as_user_id: Uuid,
     ) -> Result<bool, Error> {
-        // 1) pull the *entire list* of citations while the lock is held
-        let sources_opt = {
-            let mut map = PENDING_SOURCES.lock();
-            if let Some(dq) = map.get_mut(channel) {
-                dq.pop_front()
-            } else {
-                None
+        if let Some(q) = take_pending_sources(channel) {
+            if q.is_empty() {
+                return Ok(false);
             }
-        };
 
-        // 2) nothing?
-        let sources = match sources_opt {
-            Some(s) => s,
-            None => return Ok(false),
-        };
+            for (idx, pair) in q.iter().enumerate() {
+                // pair = ["title", "url"]
+                let title = pair.get(0).cloned().unwrap_or_default();
+                let url   = pair.get(1).cloned().unwrap_or_default();
+                let line  = format!("{}): {} — {}", idx + 1, title, url);
 
-        // 3) send each citation – lock already released
-        for line in sources {
-            self.send_twitch_message(channel, &line, respond_credential_id, user_id)
-                .await
-                .ok();
+                self.send_twitch_message(channel, &line, respond_credential_id, as_user_id)
+                    .await
+                    .ok();
+            }
+            return Ok(true);
         }
-        Ok(true)
+        Ok(false) // nothing cached
     }
+
 
     /// Send a message to Twitch IRC, handling truncation if needed
     pub async fn send_twitch_message(
@@ -395,59 +410,45 @@ impl MessageSender {
     pub async fn send_ai_response_to_twitch(
         &self,
         channel: &str,
-        text: &str,
-        raw_json: Option<&serde_json::Value>,
+        plain_text: &str,
+        raw_response: Option<&serde_json::Value>,
         respond_credential_id: Option<Uuid>,
-        user_id: Uuid,
+        as_user_id: Uuid,
     ) -> Result<(), Error> {
-        /* 1) Split text into ≤500‑char pieces (sync) */
-        const MAX: usize = 500;
-        let mut pieces = VecDeque::new();
-        if text.len() > MAX {
-            let mut start = 0;
-            while start < text.len() {
-                let end   = (start + MAX).min(text.len());
-                let split = text[start..end]
-                    .rfind(' ')
-                    .map(|i| start + i)
-                    .unwrap_or(end);
-                pieces.push_back(text[start..split].trim().to_string());
-                start = split;
-            }
-        } else {
-            pieces.push_back(text.to_string());
-        }
+        use serde_json::Value;
 
-        /* 2) Send first piece immediately (await) */
-        if let Some(first) = pieces.pop_front() {
-            self.send_twitch_message(channel, &first, respond_credential_id, user_id)
-                .await?;
-        }
-
-        /* 3) 100 % synchronous queue updates — NO await after this point */
-
-        /* 3a) queue remaining chunks for !continue */
-        if !pieces.is_empty() {
-            let mut cont_q = PENDING_CONTINUATIONS.lock();
-            cont_q
-                .entry(channel.to_string())
-                .or_default()
-                .extend(pieces); // VecDeque<String>
-        }
-
-        /* 3b) queue sources for !sources */
-        if let Some(raw) = raw_json {
-            let sources = extract_sources(raw);
-            if !sources.is_empty() {
-                PENDING_SOURCES
-                    .lock()
-                    .entry(channel.to_string())
-                    .or_default()
-                    .push_back(sources); // Vec<String>
+        // --------------------------------------------------------
+        // 1)  Extract & cache any sources that came back
+        // --------------------------------------------------------
+        if let Some(raw) = raw_response {
+            if let Some(arr) = raw.get("sources").and_then(|v| v.as_array()) {
+                let mut collected = Vec::new();
+                for src in arr {
+                    let title = src
+                        .get("title")
+                        .and_then(Value::as_str)
+                        .unwrap_or("source")
+                        .to_string();
+                    let url = src
+                        .get("url")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .to_string();
+                    if !url.is_empty() {
+                        collected.push((title, url));
+                    }
+                }
+                if !collected.is_empty() {
+                    push_pending_sources(channel, collected);
+                }
             }
         }
 
-        Ok(())
+        // --------------------------------------------------------
+        // 2)  Delegate to the existing text‑sending helper
+        // --------------------------------------------------------
+        self.send_twitch_message(channel, plain_text, respond_credential_id, as_user_id)
+            .await
     }
 
     /// Send a response consisting of multiple message lines
