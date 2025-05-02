@@ -6,6 +6,7 @@
 pub mod ping_command;
 pub mod followage_command;
 pub mod vrchat_commands;
+pub mod vanish;
 
 use maowbot_common::models::Command;
 use maowbot_common::models::user::User;
@@ -32,6 +33,10 @@ pub async fn handle_builtin_command(
     }
     else if cname == "followage" {
         let resp = handle_followage(cmd, ctx, user, raw_args).await?;
+        return Ok(Some(resp));
+    }
+    else if cname == "vanish" {
+        let resp = vanish::handle_vanish(cmd, ctx, user, raw_args).await?;
         return Ok(Some(resp));
     }
     else if cname == "world" {
