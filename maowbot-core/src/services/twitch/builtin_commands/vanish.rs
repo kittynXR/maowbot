@@ -1,70 +1,57 @@
-//! !vanish ‑– immediately purges the caller’s messages by issuing a 1‑second timeout.
+//! Built-in `!vanish` command, now calling our centralized TwitchApi.
 //!
-//! Usage:  !vanish [true|false]
-//!   └─ optional flag         → if truthy, send a little “poof” line after timing out.
-//!
-//! Behaviour
-//! ---------
-//! • Sends “/timeout <user> 1” – Twitch clears the user’s chat history for the session.
-//! • If the flag is truthy ( yes | y | true | 1 ), an extra chat line is sent
-//!   after the timeout so the user sees a confirmation.
-//!
-//! There is intentionally **no** internal cooldown – that’s left 0 in the DB.
+//! Usage: `!vanish [yes|y|true|1]`
+//! • Always issues a 1s timeout (purge) on the caller.
+//! • If a truthy flag is present, sends a “🪄 … has vanished!” confirmation.
 
 use crate::Error;
 use crate::services::twitch::command_service::CommandContext;
 use maowbot_common::models::{Command, user::User};
 use maowbot_common::models::platform::Platform::TwitchIRC;
+use maowbot_common::traits::repository_traits::CredentialsRepository;
+use maowbot_common::traits::api::TwitchApi;
 
-/// Truthy test for the optional flag (`true`, `1`, `yes`, `y`)
-fn is_truthy(s: &str) -> bool {
-    matches!(s.trim().to_ascii_lowercase().as_str(),
-        "true" | "1" | "yes" | "y")
+/// Returns true for “yes, y, true, 1”
+fn is_truthy(flag: &str) -> bool {
+    matches!(flag.trim().to_ascii_lowercase().as_str(), "yes" | "y" | "true" | "1")
 }
 
-/// Built‑in handler.
 pub async fn handle_vanish(
     _cmd: &Command,
     ctx: &CommandContext<'_>,
     user: &User,
     raw_args: &str,
 ) -> Result<String, Error> {
-
-    //----------------------------------
-    // 1.  Figure out the caller’s login
-    //----------------------------------
-    let mut login = user
-        .global_username
-        .clone()
-        .unwrap_or_default();
-
-    // If we don’t have a stored global_username, fall back to the Twitch credential.
+    // 1) Resolve target login
+    let mut login = user.global_username.clone().unwrap_or_else(String::new);
     if login.is_empty() {
-        if let Ok(Some(cred)) =
-            ctx.credentials_repo
-                .get_credentials(&TwitchIRC, user.user_id)
-                .await
+        if let Ok(Some(cred)) = ctx
+            .credentials_repo
+            .get_credentials(&TwitchIRC, user.user_id)
+            .await
         {
             login = cred.user_name.clone();
         }
     }
-
-    // Ultimate fallback – shouldn’t happen, but keeps the command functional.
     if login.is_empty() {
         login = user.user_id.to_string();
     }
 
-    //----------------------------------
-    // 2.  Build the response string(s)
-    //----------------------------------
-    let mut resp = format!("/timeout {} 1", login);
-
-    // Optional message after the timeout.
-    if is_truthy(raw_args) {
-        // “<SPLIT>” lets the CommandService send two separate lines.
-        resp.push_str("<SPLIT>");
-        resp.push_str(&format!("🪄 {} has vanished!", login));
+    // 2) Invoke our new timeout API
+    if let Some(api) = &ctx.plugin_manager {
+        // pick which bot account to send from:
+        let sender = ctx
+            .respond_credential_name
+            .as_deref()
+            .unwrap_or_else(|| ctx.channel.strip_prefix('#').unwrap_or(ctx.channel));
+        api.timeout_twitch_user(sender, ctx.channel, &login, 1, None)
+            .await?;
     }
 
-    Ok(resp)
+    // 3) Optionally confirm
+    if is_truthy(raw_args) {
+        Ok(format!("🪄 {} has vanished!", login))
+    } else {
+        Ok(String::new())
+    }
 }

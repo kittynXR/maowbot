@@ -13,6 +13,7 @@ use maowbot_common::traits::repository_traits::{
     CredentialsRepository,
     UserRepo
 };
+use crate::plugins::manager::PluginManager;
 use maowbot_common::models::platform::PlatformCredential;
 use crate::Error;
 use crate::services::twitch::builtin_commands::handle_builtin_command;
@@ -30,6 +31,7 @@ pub struct CommandContext<'a> {
 
     pub credentials_repo: &'a Arc<dyn CredentialsRepository + Send + Sync>,
     pub bot_config_repo: &'a Arc<dyn BotConfigRepository + Send + Sync>,
+    pub plugin_manager: Option<Arc<PluginManager>>,
 }
 
 /// Response from command handlers: multiple lines + which credential we used + which channel.
@@ -300,6 +302,7 @@ impl CommandService {
             respond_credential_name: None,
             credentials_repo: &self.credentials_repo,
             bot_config_repo: &self.bot_config_repo,
+            plugin_manager: self.platform_manager.plugin_manager(),
         };
 
         // If there's a respond_with_credential, see if we can load that credential’s user_name

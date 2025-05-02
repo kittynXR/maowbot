@@ -602,6 +602,24 @@ impl PlatformManager {
         }
     }
 
+    pub async fn timeout_twitch_user(
+        &self,
+        account_name: &str,
+        channel: &str,
+        target_user: &str,
+        seconds: u32,
+        reason: Option<&str>,
+    ) -> Result<(), Error> {
+        let mut cmd = format!(".timeout {} {}", target_user, seconds);
+        if let Some(r) = reason {
+            if !r.trim().is_empty() {
+                cmd.push(' ');
+                cmd.push_str(r.trim());
+            }
+        }
+        // Re‑use the existing message pipe
+        self.send_twitch_irc_message(account_name, channel, &cmd).await
+    }
     // -------------------------------------------------------------
     // NEW HELPER: Having each TTV-IRC instance join channels
     // of all other Twitch-IRC credentials.

@@ -20,4 +20,9 @@ impl TwitchApi for PluginManager {
     async fn send_twitch_irc_message(&self, account_name: &str, channel: &str, text: &str) -> Result<(), Error> {
         self.platform_manager.send_twitch_irc_message(account_name, channel, text).await
     }
+    async fn timeout_twitch_user(&self, account_name: &str, channel: &str, target_user: &str, seconds: u32, reason: Option<&str>, ) -> Result<(), Error> {
+        self.platform_manager
+            .timeout_twitch_user(account_name, channel, target_user, seconds, reason)
+            .await
+    }
 }

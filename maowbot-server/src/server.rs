@@ -574,6 +574,10 @@ impl maowbot_common::traits::api::TwitchApi for BotApiWrapper {
     async fn send_twitch_irc_message(&self, account_name: &str, channel: &str, text: &str) -> Result<(), maowbot_common::error::Error> {
         self.plugin_manager.send_twitch_irc_message(account_name, channel, text).await
     }
+
+    async fn timeout_twitch_user(&self, account_name: &str, channel: &str, target_user: &str, seconds: u32, reason: Option<&str>) -> Result<(), Error> {
+        self.plugin_manager.timeout_twitch_user(account_name, channel, target_user, seconds, reason).await
+    }
 }
 
 // VrchatApi

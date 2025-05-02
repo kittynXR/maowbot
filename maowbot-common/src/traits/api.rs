@@ -196,6 +196,8 @@ pub trait TwitchApi: Send + Sync {
     async fn join_twitch_irc_channel(&self, account_name: &str, channel: &str) -> Result<(), Error>;
     async fn part_twitch_irc_channel(&self, account_name: &str, channel: &str) -> Result<(), Error>;
     async fn send_twitch_irc_message(&self, account_name: &str, channel: &str, text: &str) -> Result<(), Error>;
+
+async fn timeout_twitch_user(&self, account_name: &str, channel: &str, target_user: &str, seconds: u32, reason: Option<&str>, ) -> Result<(), Error>;
 }
 
 #[async_trait]
