@@ -2,3 +2,4 @@
 pub mod channel_points;
 pub mod follow;
 pub(crate) mod stream;
+pub mod ban;

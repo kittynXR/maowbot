@@ -604,21 +604,50 @@ impl PlatformManager {
 
     pub async fn timeout_twitch_user(
         &self,
-        account_name: &str,
-        channel: &str,
-        target_user: &str,
-        seconds: u32,
-        reason: Option<&str>,
+        _account_name: &str,                 // kept for API parity – no longer used
+        channel:       &str,                 // e.g. "#kittyn"
+        target_user:   &str,                 // login name
+        seconds:       u32,                  // 0 = perm‑ban, else timeout
+        reason:        Option<&str>,
     ) -> Result<(), Error> {
-        let mut cmd = format!(".timeout {} {}", target_user, seconds);
-        if let Some(r) = reason {
-            if !r.trim().is_empty() {
-                cmd.push(' ');
-                cmd.push_str(r.trim());
-            }
-        }
-        // Re‑use the existing message pipe
-        self.send_twitch_irc_message(account_name, channel, &cmd).await
+        // --- 1. Grab broadcaster credential (must include `moderator:manage:banned_users`). ---
+        let cred = self.credentials_repo
+            .get_broadcaster_credential(&maowbot_common::models::platform::Platform::Twitch)
+            .await?
+            .ok_or_else(|| Error::Platform("No broadcaster Twitch credential found".into()))?;
+
+        let client_id = cred
+            .additional_data
+            .as_ref()
+            .and_then(|d| d.get("client_id").and_then(|v| v.as_str()))
+            .ok_or_else(|| Error::Platform("Broadcaster credential missing client_id".into()))?;
+
+        let broadcaster_id = cred
+            .platform_id
+            .clone()
+            .ok_or_else(|| Error::Platform("Broadcaster credential missing platform_id".into()))?;
+
+        let helix = crate::platforms::twitch::client::TwitchHelixClient::new(
+            &cred.primary_token,
+            client_id,
+        );
+
+        // --- 2. Resolve user‑id of the target login. ---
+        let user_id = helix
+            .fetch_user_id(target_user)
+            .await?
+            .ok_or_else(|| Error::Platform(format!("Unknown Twitch login: {target_user}")))?;
+
+        // --- 3. Issue the ban / timeout. Moderator = broadcaster for simplicity. ---
+        helix
+            .ban_user(
+                &broadcaster_id,
+                &broadcaster_id,                 // moderator = broadcaster
+                &user_id,
+                if seconds == 0 { None } else { Some(seconds) },
+                reason,
+            )
+            .await
     }
     // -------------------------------------------------------------
     // NEW HELPER: Having each TTV-IRC instance join channels
