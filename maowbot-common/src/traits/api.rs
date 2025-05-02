@@ -330,7 +330,9 @@ pub trait AiApi: Send + Sync {
     
     /// Generate a chat completion
     async fn generate_chat(&self, messages: Vec<serde_json::Value>) -> Result<String, Error>;
-    
+
+    async fn generate_with_search(&self, messages: Vec<serde_json::Value>) -> Result<serde_json::Value, Error>;
+
     /// Generate a completion with function calling
     async fn generate_with_functions(&self, messages: Vec<serde_json::Value>) -> Result<serde_json::Value, Error>;
     

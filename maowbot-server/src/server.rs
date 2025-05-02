@@ -291,7 +291,19 @@ impl maowbot_common::traits::api::AiApi for BotApiWrapper {
             None => Err(maowbot_common::error::Error::Internal("AI service not configured".to_string())),
         }
     }
-    
+
+    async fn generate_with_search(
+        &self,
+        messages: Vec<Value>,
+    ) -> Result<Value, maowbot_common::error::Error> {
+        match &self.plugin_manager.ai_api_impl {
+            Some(ai) => ai.generate_with_search(messages).await,
+            None => Err(maowbot_common::error::Error::Internal(
+                "AI service not configured".to_string(),
+            )),
+        }
+    }
+
     /// Generate a completion with function calling
     async fn generate_with_functions(&self, messages: Vec<Value>) -> Result<Value, maowbot_common::error::Error> {
         match &self.plugin_manager.ai_api_impl {

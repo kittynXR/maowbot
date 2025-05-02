@@ -32,7 +32,7 @@ use crate::traits::ChatMessage;
 /// AI service for integrating with MaowBot core
 pub struct AiService {
     /// The AI client
-    client: Arc<AiClient>,
+    pub client: Arc<AiClient>,
     /// Whether AI is enabled
     enabled: RwLock<bool>,
     /// User repository for looking up users
@@ -1301,7 +1301,32 @@ impl maowbot_common::traits::api::AiApi for MaowBotAiServiceApi {
         self.service.client.chat(chat_messages).await
             .map_err(|e| maowbot_common::error::Error::Internal(format!("AI error: {}", e)))
     }
-    
+
+    async fn generate_with_search(
+        &self,
+        messages: Vec<serde_json::Value>,
+    ) -> Result<serde_json::Value, maowbot_common::error::Error> {
+        use crate::traits::ChatMessage; // local path is crate::traits
+
+        // JSON → ChatMessage
+        let chat_messages = messages
+            .into_iter()
+            .filter_map(|m| {
+                Some(ChatMessage {
+                    role:    m.get("role")?.as_str()?.to_string(),
+                    content: m.get("content")?.as_str()?.to_string(),
+                })
+            })
+            .collect::<Vec<_>>();
+
+        // Delegate **via the inner AiClient**:
+        self.service
+            .client                       // ← the AiClient
+            .chat_with_search(chat_messages)
+            .await
+            .map_err(|e| maowbot_common::error::Error::Internal(format!("AI error: {e}")))
+    }
+
     /// Generate a completion with function calling
     async fn generate_with_functions(&self, messages: Vec<serde_json::Value>) -> Result<serde_json::Value, maowbot_common::error::Error> {
         // Convert from serde_json::Value to ChatMessage

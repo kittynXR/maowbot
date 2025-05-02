@@ -23,6 +23,10 @@ use once_cell::sync::Lazy;
 static PENDING_CONTINUATIONS: Lazy<Mutex<HashMap<String, VecDeque<String>>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
 
+/// NEW: Global citation queue for `!sources`
+static PENDING_SOURCES: Lazy<Mutex<HashMap<String, VecDeque<Vec<String>>>>> =
+    Lazy::new(|| Mutex::new(HashMap::new()));
+
 /// Maximum length for Twitch chat messages
 pub const TWITCH_MAX_MSG_LENGTH: usize = 450;
 const MAX_TWITCH_MSG_LEN: usize = 450;
@@ -245,270 +249,69 @@ impl MessageSender {
     }
     
     /// Extract source citations from OpenAI API response
-    pub fn extract_sources(&self, response: &Value) -> Vec<SourceCitation> {
-        let mut sources = Vec::new();
-        
-        // Check if the response has annotations
-        if let Some(annotations) = response.get("annotations").and_then(|a| a.as_array()) {
-            for annotation in annotations {
-                // Try the standard OpenAI format first (url_citation)
-                if let Some(url_citation) = annotation.get("url_citation") {
-                    let url = url_citation.get("url").and_then(|u| u.as_str()).unwrap_or("unknown").to_string();
-                    let title = url_citation.get("title").and_then(|t| t.as_str()).unwrap_or("Unknown source").to_string();
-                    
-                    sources.push(SourceCitation { url, title });
-                }
-                // Also check for citations in other formats
-                else if let Some(citation) = annotation.get("citation") {
-                    if let Some(url) = citation.get("url").and_then(|u| u.as_str()) {
-                        let title = citation.get("title")
-                            .and_then(|t| t.as_str())
-                            .or_else(|| citation.get("name").and_then(|n| n.as_str()))
-                            .unwrap_or("Unknown source")
-                            .to_string();
-                        
-                        sources.push(SourceCitation { url: url.to_string(), title });
-                    }
-                }
-                // Check for direct url field
-                else if let Some(url) = annotation.get("url").and_then(|u| u.as_str()) {
-                    let title = annotation.get("title")
-                        .and_then(|t| t.as_str())
-                        .unwrap_or("Unknown source")
-                        .to_string();
-                    
-                    sources.push(SourceCitation { url: url.to_string(), title });
-                }
-            }
-        }
-        
-        // Also check for different response formats (some API responses use different structure)
-        if sources.is_empty() {
-            // Check for sources field at the top level
-            if let Some(sources_array) = response.get("sources").and_then(|s| s.as_array()) {
-                for source in sources_array {
-                    let url = source.get("url").and_then(|u| u.as_str()).unwrap_or("unknown").to_string();
-                    let title = source.get("title")
-                        .and_then(|t| t.as_str())
-                        .or_else(|| source.get("name").and_then(|n| n.as_str()))
-                        .unwrap_or("Unknown source")
-                        .to_string();
-                    
-                    sources.push(SourceCitation { url, title });
-                }
-            }
-            
-            // Check for citations field at the top level
-            if let Some(citations_array) = response.get("citations").and_then(|c| c.as_array()) {
-                for citation in citations_array {
-                    let url = citation.get("url").and_then(|u| u.as_str()).unwrap_or("unknown").to_string();
-                    let title = citation.get("title")
-                        .and_then(|t| t.as_str())
-                        .or_else(|| citation.get("name").and_then(|n| n.as_str()))
-                        .unwrap_or("Unknown source")
-                        .to_string();
-                    
-                    sources.push(SourceCitation { url, title });
-                }
-            }
-        }
-        
-        // Log the sources we found
-        debug!("Extracted {} sources from AI response", sources.len());
-        for (i, source) in sources.iter().enumerate() {
-            debug!("Source {}: {} - {}", i+1, source.title, source.url);
-        }
-        
-        sources
-    }
+
     
     /// Handles the !continue command - sends the next segment of a truncated message
     pub async fn handle_continue_command(
         &self,
         channel: &str,
-        credential_id: Option<Uuid>,
-        message_sender_user_id: Uuid,
+        respond_credential_id: Option<Uuid>,
+        user_id: Uuid,
     ) -> Result<bool, Error> {
-        // Normalize both forms so we can look-up either
-        let channel_with_hash = if channel.starts_with('#') {
-            channel.to_string()
-        } else {
-            format!("#{}", channel)
-        };
-
-        /* ----------------------------------------------------------------
-         *  STEP 1 – try the PENDING_CONTINUATIONS queue (used by the
-         *  standard send_twitch_message splitter).
-         * ---------------------------------------------------------------- */
-        if let Some(next_seg) = MessageSender::pop_next_segment(&channel_with_hash) {
-            // Send this next chunk
-            self.send_twitch_message(
-                channel,             // user-supplied form (keeps consistency)
-                &next_seg,
-                credential_id,
-                message_sender_user_id,
-            )
-            .await?;
-
-            // If more remain, remind the user
-            if MessageSender::has_pending(&channel_with_hash) {
-                self.send_twitch_message(
-                    channel,
-                    "Type !continue for more",
-                    credential_id,
-                    message_sender_user_id,
-                )
-                .await
-                .ok();
-            }
-            return Ok(true);
-        }
-
-        /* ----------------------------------------------------------------
-         *  STEP 2 – fall back to the older LAST_MESSAGES context
-         *  (used by send_ai_response_to_twitch).
-         * ---------------------------------------------------------------- */
-        let (segment_opt, ctx_cred_id, has_more) = {
-            let mut map = LAST_MESSAGES.lock();
-            if let Some(ctx) = map.get_mut(&channel_with_hash) {
-                if ctx.current_segment + 1 < ctx.segments.len() {
-                    ctx.current_segment += 1;
-                    (
-                        Some(ctx.segments[ctx.current_segment].clone()),
-                        ctx.credential_id,
-                        ctx.current_segment + 1 < ctx.segments.len(),
-                    )
-                } else {
-                    (None, ctx.credential_id, false)
-                }
+        // 1) grab next queued chunk **without awaiting**
+        let next_chunk_opt = {
+            let mut map = PENDING_CONTINUATIONS.lock();
+            if let Some(dq) = map.get_mut(channel) {
+                dq.pop_front()
             } else {
-                (None, None, false)
+                None
             }
         };
 
-        if let Some(seg) = segment_opt {
-            self.send_twitch_message(
-                channel,
-                &seg,
-                credential_id.or(ctx_cred_id),
-                message_sender_user_id,
-            )
-            .await?;
+        // 2) nothing queued?
+        let chunk = match next_chunk_opt {
+            Some(c) => c,
+            None => return Ok(false),
+        };
 
-            if has_more {
-                self.send_twitch_message(
-                    channel,
-                    "Type !continue for more",
-                    credential_id.or(ctx_cred_id),
-                    message_sender_user_id,
-                )
-                .await
-                .ok();
-            }
-            return Ok(true);
-        }
-
-        // Nothing available
-        Ok(false)
+        // 3) send it (may await) – no lock is held here
+        self.send_twitch_message(channel, &chunk, respond_credential_id, user_id)
+            .await
+            .ok();
+        Ok(true)
     }
-    
-    /// Handles the !sources command - sends the sources for an AI response
-    pub async fn handle_sources_command(&self, channel: &str, credential_id: Option<Uuid>, message_sender_user_id: Uuid) -> Result<bool, Error> {
-        let normalized_channel = if channel.starts_with('#') {
-            channel.to_string()
-        } else {
-            format!("#{}", channel)
-        };
-        
-        // Debug log for troubleshooting
-        debug!("Looking for sources context for channel: {} (normalized: {})", channel, normalized_channel);
-        
-        // Get the sources and credential_id from the context atomically
-        let (sources, context_credential_id, has_context) = {
-            let contexts = LAST_MESSAGES.lock();
-            
-            // Debug log the available contexts for troubleshooting
-            debug!("Available message contexts: {:?}", contexts.keys().collect::<Vec<_>>());
-            
-            if let Some(context) = contexts.get(&normalized_channel) {
-                // Clone the sources and credential_id from the context to avoid holding the lock across await points
-                debug!("Found sources context with {} sources", context.sources.len());
-                (context.sources.clone(), context.credential_id, true)
+
+    /*───────────────────────────────────────────────────────────*/
+    /* !sources                                                  */
+    /*───────────────────────────────────────────────────────────*/
+    pub async fn handle_sources_command(
+        &self,
+        channel: &str,
+        respond_credential_id: Option<Uuid>,
+        user_id: Uuid,
+    ) -> Result<bool, Error> {
+        // 1) pull the *entire list* of citations while the lock is held
+        let sources_opt = {
+            let mut map = PENDING_SOURCES.lock();
+            if let Some(dq) = map.get_mut(channel) {
+                dq.pop_front()
             } else {
-                // Try with alternative channel name format (without #)
-                let alt_channel = channel.trim_start_matches('#').to_string();
-                debug!("Trying alternative channel format: {}", alt_channel);
-                
-                if let Some(context) = contexts.get(&alt_channel) {
-                    debug!("Found sources context in alt format with {} sources", context.sources.len());
-                    (context.sources.clone(), context.credential_id, true)
-                } else {
-                    debug!("No sources context found for channel");
-                    (Vec::new(), None, false)
-                }
+                None
             }
         };
-        
-        // If we have no context at all, return a specific message
-        if !has_context {
-            // No message context exists at all
-            self.send_twitch_message(
-                channel,
-                "No recent AI message found. Sources are only available for recent AI responses.",
-                credential_id,
-                message_sender_user_id
-            ).await?;
-            return Ok(true);
+
+        // 2) nothing?
+        let sources = match sources_opt {
+            Some(s) => s,
+            None => return Ok(false),
+        };
+
+        // 3) send each citation – lock already released
+        for line in sources {
+            self.send_twitch_message(channel, &line, respond_credential_id, user_id)
+                .await
+                .ok();
         }
-        
-        // If we have context but no sources
-        if sources.is_empty() {
-            self.send_twitch_message(
-                channel,
-                "No sources were used in the most recent AI response.",
-                credential_id.or(context_credential_id),
-                message_sender_user_id
-            ).await?;
-            return Ok(true);
-        }
-        
-        // We have sources, let's display them
-        // Construct sources message
-        let mut sources_msg = "Sources: ".to_string();
-        for (i, source) in sources.iter().enumerate() {
-            // Format the source with title and URL
-            let source_text = format!("{}. {} [{}]", i+1, source.title, source.url);
-            
-            // Check if adding this source would exceed the limit
-            if sources_msg.len() + source_text.len() > TWITCH_MAX_MSG_LENGTH {
-                // Send what we have so far
-                self.send_twitch_message(
-                    channel,
-                    &sources_msg,
-                    credential_id.or(context_credential_id),
-                    message_sender_user_id
-                ).await?;
-                
-                // Start a new message
-                sources_msg = format!("More sources: {}. {} [{}]", i+1, source.title, source.url);
-            } else {
-                if i > 0 {
-                    sources_msg.push_str(" | ");
-                }
-                sources_msg.push_str(&format!("{}. {} [{}]", i+1, source.title, source.url));
-            }
-        }
-        
-        // Send any remaining sources
-        if !sources_msg.is_empty() {
-            self.send_twitch_message(
-                channel,
-                &sources_msg,
-                credential_id.or(context_credential_id),
-                message_sender_user_id
-            ).await?;
-        }
-        
         Ok(true)
     }
 
@@ -592,104 +395,59 @@ impl MessageSender {
     pub async fn send_ai_response_to_twitch(
         &self,
         channel: &str,
-        message: &str,
-        raw_response: Option<&Value>,
-        specified_credential_id: Option<Uuid>,
-        message_sender_user_id: Uuid,
+        text: &str,
+        raw_json: Option<&serde_json::Value>,
+        respond_credential_id: Option<Uuid>,
+        user_id: Uuid,
     ) -> Result<(), Error> {
-        // Extract sources if raw response is provided
-        let sources = if let Some(response) = raw_response {
-            self.extract_sources(response)
-        } else {
-            Vec::new()
-        };
-        
-        // Split the message into segments if it's too long
-        let segments = self.split_message(message);
-        let has_multiple_segments = segments.len() > 1;
-        
-        // Prepare channel name with hash
-        let channel_with_hash = if !channel.starts_with('#') {
-            format!("#{}", channel)
-        } else {
-            channel.to_string()
-        };
-        
-        // Also store the channel name without hash for alternative lookup
-        let channel_without_hash = channel.trim_start_matches('#').to_string();
-        
-        debug!("Setting up AI response context for channel: {} (with hash: {}, without hash: {})",
-               channel, channel_with_hash, channel_without_hash);
-        
-        // Find a credential to send the message
-        let credential_opt = self.select_response_credential(&TwitchIRC, specified_credential_id, message_sender_user_id).await?;
-        
-        if let Some(credential) = credential_opt {
-            // Create or update the message context
-            {
-                let context = MessageContext {
-                    full_message: message.to_string(),
-                    channel: channel_with_hash.clone(),
-                    segments: segments.clone(),
-                    current_segment: 0,
-                    sources: sources.clone(),
-                    credential_id: specified_credential_id,
-                    timestamp: std::time::SystemTime::now(),
-                };
-                
-                // Store the context atomically with both channel name formats
-                let mut contexts = LAST_MESSAGES.lock();
-                
-                // Store with hash
-                contexts.insert(channel_with_hash.clone(), context.clone());
-                
-                // Also store without hash for robustness
-                if !channel_without_hash.is_empty() && channel_without_hash != channel_with_hash {
-                    let mut alt_context = context;
-                    alt_context.channel = channel_without_hash.clone();
-                    contexts.insert(channel_without_hash.clone(), alt_context);
-                    debug!("Stored message context under both formats: {} and {}", 
-                           channel_with_hash, channel_without_hash);
-                }
+        /* 1) Split text into ≤500‑char pieces (sync) */
+        const MAX: usize = 500;
+        let mut pieces = VecDeque::new();
+        if text.len() > MAX {
+            let mut start = 0;
+            while start < text.len() {
+                let end   = (start + MAX).min(text.len());
+                let split = text[start..end]
+                    .rfind(' ')
+                    .map(|i| start + i)
+                    .unwrap_or(end);
+                pieces.push_back(text[start..split].trim().to_string());
+                start = split;
             }
-            
-            // Send only the first segment
-            self.platform_manager.send_twitch_irc_message(
-                &credential.user_name,
-                &channel_with_hash,
-                &segments[0]
-            ).await?;
-            
-            // Add appropriate hints based on what's available
-            if has_multiple_segments && !sources.is_empty() {
-                // Both continuation and sources are available
-                self.platform_manager.send_twitch_irc_message(
-                    &credential.user_name,
-                    &channel_with_hash,
-                    "Type !continue for more text or !sources to see the sources"
-                ).await?;
-            } else if has_multiple_segments {
-                // Only continuation is available
-                self.platform_manager.send_twitch_irc_message(
-                    &credential.user_name,
-                    &channel_with_hash,
-                    "Type !continue to see more of the message"
-                ).await?;
-            } else if !sources.is_empty() {
-                // Only sources are available
-                self.platform_manager.send_twitch_irc_message(
-                    &credential.user_name,
-                    &channel_with_hash,
-                    "Type !sources to see the sources for this information"
-                ).await?;
-            }
-            
-            Ok(())
         } else {
-            let err_msg = format!("No credential available to send AI response to {}", channel);
-            warn!("{}", err_msg);
-            Err(Error::Internal(err_msg))
+            pieces.push_back(text.to_string());
         }
+
+        /* 2) Send first piece immediately (await) */
+        if let Some(first) = pieces.pop_front() {
+            self.send_twitch_message(channel, &first, respond_credential_id, user_id)
+                .await?;
+        }
+
+        /* 3) 100 % synchronous queue updates — NO await after this point */
+
+        /* 3a) queue remaining chunks for !continue */
+        if !pieces.is_empty() {
+            let mut cont_q = PENDING_CONTINUATIONS.lock();
+            cont_q
+                .entry(channel.to_string())
+                .or_default()
+                .extend(pieces); // VecDeque<String>
+        }
+
+        /* 3b) queue sources for !sources */
+        if let Some(raw) = raw_json {
+            let sources = extract_sources(raw);
+            if !sources.is_empty() {
+                PENDING_SOURCES
+                    .lock()
+                    .entry(channel.to_string())
+                    .or_default()
+                    .push_back(sources); // Vec<String>
+            }
+        }
+
+        Ok(())
     }
 
     /// Send a response consisting of multiple message lines
@@ -757,4 +515,33 @@ impl MessageSender {
 
         chunks
     }
+}
+
+fn extract_sources(raw: &serde_json::Value) -> Vec<String> {
+    if let Some(arr) = raw.get("sources").and_then(|v| v.as_array()) {
+        return arr
+            .iter()
+            .filter_map(|s| {
+                Some(format!(
+                    "{} — {}",
+                    s.get("title")?.as_str()?,
+                    s.get("url")?.as_str()?
+                ))
+            })
+            .collect();
+    }
+    if let Some(arr) = raw.get("annotations").and_then(|v| v.as_array()) {
+        return arr
+            .iter()
+            .filter_map(|a| {
+                let c = a.get("url_citation")?;
+                Some(format!(
+                    "{} — {}",
+                    c.get("title")?.as_str()?,
+                    c.get("url")?.as_str()?
+                ))
+            })
+            .collect();
+    }
+    Vec::new()
 }

@@ -170,6 +170,99 @@ impl ModelProvider for OpenAIProvider {
 
         Ok(content)
     }
+
+    async fn chat_with_search(
+        &self,
+        messages: Vec<ChatMessage>,
+    ) -> anyhow::Result<serde_json::Value> {
+        /* ----------------  build full payload  ---------------- */
+        let api_base = self
+            .config
+            .api_base
+            .clone()
+            .unwrap_or_else(|| "https://api.openai.com/v1".into());
+
+        let mut all = Vec::new();
+        if !messages.iter().any(|m| m.role == "system") {
+            if let Some(sys) = self.config.options.get("system_prompt") {
+                all.push(json!({ "role": "system", "content": sys }));
+            }
+        }
+        all.extend(messages.iter().map(|m| json!({ "role": m.role, "content": m.content })));
+
+        let model = if self
+            .config
+            .default_model
+            .to_lowercase()
+            .contains("-search")
+        {
+            self.config.default_model.clone()
+        } else {
+            "gpt-4o-search-preview".into()
+        };
+
+        let payload = json!({
+            "model": model,
+            "messages": all,
+            "max_tokens": 1000,
+            "web_search_options": { "search_context_size": "medium" }
+        });
+
+        let raw = self
+            .client
+            .post(format!("{}/chat/completions", api_base))
+            .header("Authorization", format!("Bearer {}", self.config.api_key))
+            .json(&payload)
+            .send()
+            .await?
+            .text()
+            .await?;
+
+        let data: serde_json::Value = serde_json::from_str(&raw)
+            .map_err(|e| anyhow::anyhow!("API returned non‑JSON: {}", e))?;
+
+        /* ----------------  pull content & annotations  ---------------- */
+        let msg   = &data["choices"][0]["message"];
+        let text  = msg["content"].as_str().unwrap_or("").to_owned();
+        let anns  = msg["annotations"].as_array().cloned().unwrap_or_default();
+
+        /* ---- strip URLs from the text & leave ‘*’ markers ---- */
+        // collect ranges first, then rebuild string to avoid shifting indices
+        let mut ranges: Vec<(usize, usize, String, String)> = anns
+            .iter()
+            .filter_map(|a| {
+                let cite = &a["url_citation"];
+                Some((
+                    cite["start_index"].as_u64()? as usize,
+                    cite["end_index"].as_u64()? as usize,
+                    cite["title"].as_str()?.to_owned(),
+                    cite["url"].as_str()?.to_owned(),
+                ))
+            })
+            .collect();
+
+        ranges.sort_by_key(|r| r.0);               // ascending
+        let mut cleaned = String::new();
+        let mut last    = 0usize;
+        for (s, e, ..) in &ranges {
+            cleaned.push_str(&text[last..*s]);
+            cleaned.push('*');
+            last = *e;
+        }
+        cleaned.push_str(&text[last..]);
+
+        // build a friendlier sources array
+        let sources: Vec<serde_json::Value> = ranges
+            .into_iter()
+            .map(|(_, _, title, url)| json!({ "title": title, "url": url }))
+            .collect();
+
+        Ok(json!({
+            "content":     cleaned.trim(),
+            "annotations": anns,      // keep raw for backward compat
+            "sources":     sources
+        }))
+    }
     
     async fn chat_with_functions(
         &self, 
@@ -444,7 +537,13 @@ impl ModelProvider for AnthropicProvider {
         
         Ok(completion)
     }
-    
+
+    async fn chat_with_search(&self, messages: Vec<ChatMessage>)
+                              -> anyhow::Result<serde_json::Value> {
+        // naïve fallback: just run normal chat
+        Ok(serde_json::json!({ "content": self.chat(messages).await?, "annotations": [], "sources": [] }))
+    }
+
     async fn chat_with_functions(
         &self, 
         messages: Vec<ChatMessage>,

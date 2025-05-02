@@ -95,123 +95,58 @@ async fn generate_ai_web_search_response(
     ctx: &RedeemHandlerContext<'_>,
     user_id: Uuid,
     input: &str,
-    system_prompt: Option<&str>
+    system_prompt: Option<&str>,
 ) -> Result<(String, serde_json::Value), Error> {
-    info!("Generating AI web search response for user {}", user_id);
-    
-    // Get the AI API the same way as in generate_ai_response
-    let ai_api_opt = match ctx.redeem_service.get_ai_api() {
-        Some(api) => Some(api),
-        None => ctx.redeem_service.platform_manager.get_ai_api()
-    };
-    
+    tracing::info!("Generating AI web search response for user {}", user_id);
+
+    // 1) Resolve the AI API impl
+    let ai_api_opt = ctx
+        .redeem_service
+        .get_ai_api()
+        .or_else(|| ctx.redeem_service.platform_manager.get_ai_api());
     let ai_api = if let Some(api) = ai_api_opt {
         api
-    } else if let Some(plugin_manager) = ctx.redeem_service.platform_manager.plugin_manager() {
-        if let Some(ai_impl) = &plugin_manager.ai_api_impl {
+    } else if let Some(pm) = ctx.redeem_service.platform_manager.plugin_manager() {
+        if let Some(ai_impl) = &pm.ai_api_impl {
             Arc::new(ai_impl.clone())
         } else {
-            warn!("AI API is not available through any means, falling back to placeholder response");
-            let placeholder_content = if let Some(prompt) = system_prompt {
-                format!("Web search AI response to '{}' with prompt '{}'", input, prompt)
-            } else {
-                format!("Web search AI response to '{}'", input)
-            };
-            
-            // Return placeholder content with empty annotations
-            let json_value = serde_json::json!({
-                "content": placeholder_content.clone(),
-                "annotations": []
-            });
-            return Ok((placeholder_content, json_value));
+            tracing::warn!("AI API unavailable; returning placeholder");
+            let ph = system_prompt
+                .map(|p| format!("Web search AI to '{}' with prompt '{}'", input, p))
+                .unwrap_or_else(|| format!("Web search AI to '{}'", input));
+            let raw = serde_json::json!({ "content": ph.clone(), "annotations": [], "sources": [] });
+            return Ok((ph, raw));
         }
     } else {
-        warn!("AI API is not available through any means, falling back to placeholder response");
-        let placeholder_content = if let Some(prompt) = system_prompt {
-            format!("Web search AI response to '{}' with prompt '{}'", input, prompt)
-        } else {
-            format!("Web search AI response to '{}'", input)
-        };
-        
-        // Return placeholder content with empty annotations
-        let json_value = serde_json::json!({
-            "content": placeholder_content.clone(),
-            "annotations": []
-        });
-        return Ok((placeholder_content, json_value));
+        tracing::warn!("AI API unavailable; returning placeholder");
+        let ph = system_prompt
+            .map(|p| format!("Web search AI to '{}' with prompt '{}'", input, p))
+            .unwrap_or_else(|| format!("Web search AI to '{}'", input));
+        let raw = serde_json::json!({ "content": ph.clone(), "annotations": [], "sources": [] });
+        return Ok((ph, raw));
     };
-    
-    // Create messages with system prompt if provided
-    let mut messages = Vec::new();
-    
+
+    // 2) Build the messages array
+    let mut msgs = Vec::new();
     if let Some(prompt) = system_prompt {
-        messages.push(serde_json::json!({
-            "role": "system",
-            "content": prompt
-        }));
+        msgs.push(serde_json::json!({ "role": "system", "content": prompt }));
     }
-    
-    messages.push(serde_json::json!({
-        "role": "user",
-        "content": input
-    }));
-    
-    // The OpenAI provider has been modified to automatically add web search options
-    // when the model is set to gpt-4o-search-preview and "enable_web_search" is set to "true"
-    // in the options.
-    
-    // Configure the AI service to use gpt-4o-search-preview model with web search
-    if let Err(e) = ai_api.configure_ai_provider(serde_json::json!({
-        "provider_type": "openai",
-        "default_model": "gpt-4o-search-preview",
-        "options": {
-            "enable_web_search": "true"
-        }
-    })).await {
-        warn!("Failed to configure AI provider for web search: {:?}", e);
-        // We'll try a simpler approach, directly setting the system message to indicate web search
-        info!("Falling back to simpler web search approach");
-    }
-    
-    // Double-check that web search is enabled by adding a search hint to the input
-    let enhanced_input = if !input.contains("[search]") {
-        format!("[search] {}", input)
-    } else {
-        input.to_string()
-    };
-    
-    info!("Using model gpt-4o-search-preview with web search capabilities");
-    
-    // Update the user message to use the enhanced input with search hint
-    messages.pop(); // Remove the original user message
-    messages.push(serde_json::json!({
-        "role": "user",
-        "content": enhanced_input
-    }));
-    
-    // Process the request - the provider will add web_search_options
-    // We need to use the functions API to get both content and citations
-    match ai_api.generate_with_functions(messages).await {
-        Ok(response_data) => {
-            // Extract the text content from the response
-            let content = response_data.get("content")
-                .and_then(|c| c.as_str())
-                .unwrap_or_else(|| {
-                    warn!("AI response missing content field - might be function calling format");
-                    "Sorry, I couldn't generate a response with the search results."
-                })
-                .to_string();
-                
-            // Store the full response data for source extraction
-            info!("Generated web search response with citations");
-            
-            Ok((content, response_data))
-        },
-        Err(e) => {
-            error!("Error generating AI web search response: {:?}", e);
-            Err(Error::Internal(format!("AI API web search error: {}", e)))
-        }
-    }
+    msgs.push(serde_json::json!({ "role": "user",   "content": input  }));
+
+    // 3) Call the new search-aware endpoint
+    let raw = ai_api
+        .generate_with_search(msgs)
+        .await
+        .map_err(|e| Error::Internal(format!("AI API error: {}", e)))?;
+
+    // 4) Extract the brief chat text
+    let text = raw
+        .get("content")
+        .and_then(|c| c.as_str())
+        .unwrap_or("")
+        .to_string();
+
+    Ok((text, raw))
 }
 
 // Helper function to convert Twitch user ID string to UUID user ID

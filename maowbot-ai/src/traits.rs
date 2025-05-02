@@ -14,7 +14,9 @@ pub trait ModelProvider: Send + Sync {
     
     /// Generate a chat completion with context
     async fn chat(&self, messages: Vec<ChatMessage>) -> anyhow::Result<String>;
-    
+
+    async fn chat_with_search(&self, messages: Vec<ChatMessage>) -> anyhow::Result<serde_json::Value>;
+
     /// Generate a chat completion with function calling capabilities
     async fn chat_with_functions(
         &self, 

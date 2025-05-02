@@ -117,7 +117,15 @@ impl AiClient {
         
         Ok(response)
     }
-    
+
+    pub async fn chat_with_search(
+        &self,
+        messages: Vec<ChatMessage>,
+    ) -> anyhow::Result<serde_json::Value> {
+        let provider = self.get_provider(None).await?;
+        provider.chat_with_search(messages).await
+    }
+
     /// Chat with function calling capabilities
     pub async fn chat_with_functions(
         &self,
@@ -335,6 +343,30 @@ impl maowbot_common::traits::api::AiApi for MaowBotAiApi {
             
         self.client.chat(chat_messages).await
             .map_err(|e| maowbot_common::error::Error::Internal(format!("AI error: {}", e)))
+    }
+
+    async fn generate_with_search(
+        &self,
+        messages: Vec<serde_json::Value>,
+    ) -> Result<serde_json::Value, maowbot_common::error::Error> {
+        use crate::traits::ChatMessage;           // correct local path
+
+        // JSON → ChatMessage
+        let chat_messages = messages
+            .into_iter()
+            .filter_map(|m| {
+                Some(ChatMessage {
+                    role:    m.get("role")?.as_str()?.to_string(),
+                    content: m.get("content")?.as_str()?.to_string(),
+                })
+            })
+            .collect::<Vec<_>>();
+
+        // Delegate to the AiClient helper we added earlier
+        self.client
+            .chat_with_search(chat_messages)
+            .await
+            .map_err(|e| maowbot_common::error::Error::Internal(format!("AI error: {e}")))
     }
     
     /// Generate a completion with function calling

@@ -6,6 +6,7 @@ use maowbot_common::traits::api::AiApi;
 use maowbot_common::error::Error;
 use maowbot_ai::plugins::ai_service::AiService;
 use serde_json::Value;
+use maowbot_ai::traits::ChatMessage;
 
 /// Implementation of the AiApi trait for the PluginManager
 #[derive(Clone)]
@@ -50,7 +51,36 @@ impl AiApi for AiApiImpl {
             None => Err(Error::Internal("AI service not configured".to_string())),
         }
     }
-    
+
+    async fn generate_with_search(
+        &self,
+        messages: Vec<serde_json::Value>,
+    ) -> Result<serde_json::Value, maowbot_common::error::Error> {
+
+        // 1) JSON → ChatMessage
+        let chat_messages = messages
+            .into_iter()
+            .filter_map(|m| {
+                Some(ChatMessage {
+                    role:    m.get("role")?.as_str()?.to_string(),
+                    content: m.get("content")?.as_str()?.to_string(),
+                })
+            })
+            .collect::<Vec<_>>();
+
+        // 2) Grab the inner AiService
+        let svc = self
+            .ai_service
+            .as_ref()
+            .ok_or_else(|| maowbot_common::error::Error::Internal("AiService not initialised".into()))?;
+
+        // 3) Delegate to its AiClient
+        svc.client
+            .chat_with_search(chat_messages)
+            .await
+            .map_err(|e| maowbot_common::error::Error::Internal(format!("AI error: {e}")))
+    }
+
     /// Generate a completion with function calling
     async fn generate_with_functions(&self, messages: Vec<Value>) -> Result<Value, Error> {
         match &self.ai_service {
