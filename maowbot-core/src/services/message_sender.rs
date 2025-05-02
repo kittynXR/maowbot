@@ -27,24 +27,19 @@ static PENDING_CONTINUATIONS: Lazy<Mutex<HashMap<String, VecDeque<String>>>> =
 static PENDING_SOURCES: Lazy<Mutex<HashMap<String, VecDeque<Vec<String>>>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
 
+fn norm_channel(ch: &str) -> String {
+    ch.trim_start_matches('#').to_lowercase()
+}
+
 // Convert Vec<(title,url)> → VecDeque<Vec<String>>
 pub fn push_pending_sources(channel: &str, list: Vec<(String, String)>) {
-    let q: VecDeque<Vec<String>> = list
-        .into_iter()
-        .map(|(t, u)| vec![t, u])
-        .collect();
-
-    PENDING_SOURCES
-        .lock()
-        .insert(channel.to_lowercase(), q);
+    let q: VecDeque<Vec<String>> = list.into_iter().map(|(t, u)| vec![t, u]).collect();
+    PENDING_SOURCES.lock().insert(norm_channel(channel), q);
 }
 
 fn take_pending_sources(channel: &str) -> Option<VecDeque<Vec<String>>> {
-    PENDING_SOURCES
-        .lock()
-        .remove(&channel.to_lowercase())
+    PENDING_SOURCES.lock().remove(&norm_channel(channel))
 }
-
 
 /// Maximum length for Twitch chat messages
 pub const TWITCH_MAX_MSG_LENGTH: usize = 450;
