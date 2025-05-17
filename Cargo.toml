@@ -5,11 +5,12 @@ members = [
     "maowbot-ai",
     "maowbot-common",
     "maowbot-core",
+    "maowbot-gui",
     "maowbot-osc",
     "maowbot-proto",
     "maowbot-server",
     "maowbot-tui",
-    "plugins/plugin_hello"
+    "plugins/plugin_hello",
 ]
 
 [workspace.package]
@@ -44,6 +45,7 @@ tokio-util = { version = "^0.7" }
 native-tls = "^0.2"
 tokio-test = { version = "^0.4" }
 tokio-stream = { version = "0.1.17", features = ["net"] }
+
 
 dashmap = "^6.1"
 rcgen = "^0.13"

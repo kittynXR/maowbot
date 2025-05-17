@@ -18,6 +18,7 @@ message PluginStreamRequest {
     Shutdown       shutdown        = 5;
     SwitchScene    switch_scene    = 6;
     SendChat       send_chat       = 7;
+    GameInput      game_input      = 8;
   }
 }
 
@@ -66,6 +67,7 @@ message PluginStreamResponse {
     StatusResponse       status_response     = 5;
     CapabilityResponse   capability_response = 6;
     ForceDisconnect      force_disconnect    = 7;
+    GameEvent            game_event          = 8;
   }
 }
 
@@ -99,4 +101,20 @@ message CapabilityResponse {
 
 message ForceDisconnect {
   string reason = 1;
+}
+
+// ───────────────────────────────────────────────
+//  Overlay‑specific traffic
+// ───────────────────────────────────────────────
+
+// Plugin → Bot : user input or UI action originating in the HUD.
+message GameInput {
+  string control = 1;   // e.g. "chat_pos", "bet", "jump"
+  string value   = 2;   // optional payload (JSON, number, etc.)
+}
+
+// Bot → Plugin : event emitted by maowbot (mini‑game result, trivia question, etc.)
+message GameEvent {
+  string name = 1;      // "slot_result", "trivia_question", …
+  string json = 2;      // free‑form JSON payload
 }

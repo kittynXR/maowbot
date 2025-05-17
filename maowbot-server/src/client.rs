@@ -72,6 +72,13 @@ pub async fn run_client(args: Args) -> Result<(), Error> {
                         error!("Server forced disconnect => {}", fd.reason);
                         break;
                     }
+                    RespPayload::GameEvent(ge) => {
+                        println!("GameEvent => {}: {}", ge.name, ge.json);
+                    },
+                    // Fallback if prost adds more variants in future:
+                    _ => {
+                        println!("Received unknown plugin response variant.");
+                    }
                 }
             }
         }

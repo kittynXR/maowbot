@@ -1,9 +1,11 @@
+// maowbot-tui/src/commands/connectivity.rs
+
 use std::sync::Arc;
 use std::io::{stdin, stdout, Write};
 use std::str::FromStr;
 
 use maowbot_common::models::platform::Platform;
-use maowbot_common::models::platform::PlatformCredential;
+// use maowbot_common::models::platform::PlatformCredential;
 use maowbot_common::traits::api::BotApi;
 use maowbot_core::Error;
 

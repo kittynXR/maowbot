@@ -4,16 +4,23 @@ use async_trait::async_trait;
 use futures_util::StreamExt;
 use tokio::time::{sleep, Duration};
 use tokio_tungstenite::tungstenite::protocol::Message;
-use tokio_tungstenite::connect_async;
+use tokio_tungstenite::{connect_async, MaybeTlsStream, WebSocketStream};
+use tokio::net::TcpStream;
+
 use tracing::{error, info, warn, debug, trace};
 use std::sync::Arc;
+use chrono::Utc;
 use reqwest::Client as ReqwestClient;
 use serde_json::json;
 
 use crate::Error;
 use maowbot_common::models::platform::PlatformCredential;
+use maowbot_common::traits::auth_traits::PlatformAuthenticator;
 use maowbot_common::traits::platform_traits::{ConnectionStatus, PlatformAuth, PlatformIntegration};
+use maowbot_common::traits::repository_traits::CredentialsRepository;
 use crate::eventbus::{EventBus, BotEvent};
+use crate::platforms::twitch_eventsub::TwitchEventSubAuthenticator;
+use crate::repositories::postgres::credentials::PostgresCredentialsRepository;
 use super::events::{
     parse_twitch_notification,
     EventSubNotificationEnvelope,
@@ -70,163 +77,104 @@ impl TwitchEventSubPlatform {
         }
     }
 
-    /// The main loop that attempts to connect to wss://eventsub.wss.twitch.tv/ws
-    /// and handle keepalives, notifications, etc.
+    /// Entrypoint — keeps the socket alive and hops when Twitch says so.
     pub async fn start_loop(&mut self) -> Result<(), Error> {
-        let url = "wss://eventsub.wss.twitch.tv/ws";
+        let mut url = "wss://eventsub.wss.twitch.tv/ws".to_string();   // initial endpoint
 
         loop {
-            // connect
-            let connect_result = connect_async(url).await;
-            let (mut ws, _resp) = match connect_result {
+            let (mut ws, _) = match connect_async(&url).await {
                 Ok(pair) => pair,
                 Err(e) => {
-                    error!("[TwitchEventSub] WebSocket connect failed: {}", e);
+                    error!("[EventSub] connect error: {e}");
                     self.connection_status = ConnectionStatus::Reconnecting;
                     sleep(Duration::from_secs(15)).await;
                     continue;
                 }
             };
 
-            info!("[TwitchEventSub] Connected to {}. Starting read loop...", url);
+            info!("[EventSub] connected → {}", url);
             self.connection_status = ConnectionStatus::Connected;
 
-            // run_read_loop returns Ok(bool) where the bool indicates "session_reconnect"
-            let read_loop_result = self.run_read_loop(&mut ws).await;
-
-            match read_loop_result {
-                Ok(need_reconnect) => {
-                    if need_reconnect {
-                        warn!("[TwitchEventSub] 'session_reconnect' triggered -> reconnecting...");
-                        self.connection_status = ConnectionStatus::Reconnecting;
-                        // Close the existing connection properly first
-                        if let Err(e) = ws.close(None).await {
-                            warn!("[TwitchEventSub] Error closing websocket: {}", e);
-                        }
-                        // Add a small delay before reconnecting to ensure socket is closed
-                        sleep(Duration::from_secs(1)).await;
-                        continue;
-                    } else {
-                        info!("[TwitchEventSub] WebSocket read loop ended normally. Exiting loop.");
-                        break;
-                    }
+            match self.run_read_loop(&mut ws).await {
+                Ok(Some(new_url)) => {          // Twitch sent session_reconnect
+                    warn!("[EventSub] reconnecting → {}", new_url);
+                    url = new_url;
+                    self.connection_status = ConnectionStatus::Reconnecting;
+                    let _ = ws.close(None).await;
+                    sleep(Duration::from_millis(500)).await;
+                    continue;
                 }
-                Err(e) => {
-                    error!("[TwitchEventSub] read loop error => {}", e);
+                Ok(None) => {                   // graceful close
+                    info!("[EventSub] websocket closed.");
+                    self.connection_status = ConnectionStatus::Disconnected;
+                    break;
+                }
+                Err(e) => {                     // hard error
+                    error!("[EventSub] loop error: {e}");
                     self.connection_status = ConnectionStatus::Reconnecting;
                     sleep(Duration::from_secs(15)).await;
-                    continue;
                 }
             }
         }
-
         Ok(())
     }
 
+    /// Reads until the socket closes or a reconnect URL arrives.
+    /// `Ok(Some(url))` → caller must reconnect to `url`.
     async fn run_read_loop(
         &mut self,
-        ws: &mut tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>,
-    ) -> Result<bool, Error> {
-        while let Some(msg_result) = ws.next().await {
-            let msg = match msg_result {
-                Ok(m) => m,
-                Err(e) => {
-                    return Err(Error::Platform(format!(
-                        "TwitchEventSub WebSocket error: {}",
-                        e
-                    )));
-                }
-            };
+        ws: &mut WebSocketStream<MaybeTlsStream<TcpStream>>,
+    ) -> Result<Option<String>, Error> {
+        while let Some(msg_res) = ws.next().await {
+            let msg = msg_res.map_err(|e| Error::Platform(format!("ws error: {e}")))?;
 
-            // Use helper method to check for WebSocket control frames.
-            if Self::is_ws_control(&msg) {
-                if tracing::enabled!(tracing::Level::TRACE) {
-                    trace!("[TwitchEventSub] WS control frame: {:?}", msg);
-                }
-                if msg.is_close() {
-                    // remote closed
-                    return Ok(false);
-                }
-                continue;
-            }
+            // control frames
+            if msg.is_close() { return Ok(None); }
+            if msg.is_ping() || msg.is_pong() { continue; }
 
-            // handle text messages
-            if let Message::Text(txt) = msg {
-                let parsed: serde_json::Value = match serde_json::from_str(&txt) {
-                    Ok(v) => v,
-                    Err(e) => {
-                        error!("Could not parse incoming message as JSON => {}", e);
-                        continue;
-                    }
-                };
+            // text frames
+            let Message::Text(txt) = msg else { continue };
+            let parsed: serde_json::Value = serde_json::from_str(&txt)
+                .map_err(|e| Error::Platform(format!("bad json: {e}")))?;
 
-                // Log TEXT message using helper method that filters health check messages.
-                Self::log_text_message(&txt, &parsed);
+            Self::log_text_message(&txt, &parsed);
 
-                let msg_type = parsed
-                    .get("metadata")
-                    .and_then(|m| m.get("message_type"))
-                    .and_then(|v| v.as_str());
-
-                match msg_type {
-                    Some("session_welcome") => {
-                        info!("[TwitchEventSub] session_welcome => connected OK.");
-
-                        let session_id = parsed
-                            .get("payload")
-                            .and_then(|p| p.get("session"))
-                            .and_then(|s| s.get("id"))
-                            .and_then(|id| id.as_str())
-                            .unwrap_or("");
-                        debug!("[TwitchEventSub] session_id='{}'", session_id);
-
-                        // Attempt to subscribe to events you want:
-                        if let Err(e) = self.subscribe_all_events(session_id).await {
-                            error!("Error subscribing to events => {:?}", e);
+            match parsed.get("metadata")
+                .and_then(|m| m.get("message_type"))
+                .and_then(|v| v.as_str()) {
+                Some("session_welcome") => {
+                    if let Some(id) = parsed.pointer("/payload/session/id").and_then(|v| v.as_str()) {
+                        if let Err(e) = self.subscribe_all_events(id).await {
+                            error!("subscribe failed: {e:?}");
                         }
                     }
-                    Some("session_keepalive") => {
-                        // Health check message; already logged in log_text_message if trace is enabled.
-                        trace!("[TwitchEventSub] session_keepalive => no action needed");
-                    }
-                    Some("session_reconnect") => {
-                        warn!("[TwitchEventSub] session_reconnect => must reconnect soon.");
-                        return Ok(true);
-                    }
-                    Some("notification") => {
-                        if let Some(payload) = parsed.get("payload") {
-                            let env_res = serde_json::from_value::<EventSubNotificationEnvelope>(payload.clone());
-                            let envelope = match env_res {
-                                Ok(e) => e,
-                                Err(e) => {
-                                    error!("Could not parse payload as Envelope => {}", e);
-                                    continue;
-                                }
-                            };
-                            let sub_type = &envelope.subscription.sub_type;
-                            let event_val = &envelope.event;
-                            if let Some(parsed_event) = parse_twitch_notification(sub_type, event_val) {
+                }
+                Some("session_keepalive") => trace!("keepalive"),
+                Some("session_reconnect") => {
+                    let url = parsed.pointer("/payload/session/reconnect_url")
+                        .and_then(|v| v.as_str())
+                        .ok_or_else(|| Error::Platform("missing reconnect_url".into()))?
+                        .to_string();
+                    return Ok(Some(url));
+                }
+                Some("notification") => {
+                    if let Some(payload) = parsed.get("payload") {
+                        if let Ok(env) = serde_json::from_value::<EventSubNotificationEnvelope>(payload.clone()) {
+                            if let Some(evt) = parse_twitch_notification(&env.subscription.sub_type, &env.event) {
                                 if let Some(bus) = &self.event_bus {
-                                    bus.publish(BotEvent::TwitchEventSub(parsed_event)).await;
+                                    bus.publish(BotEvent::TwitchEventSub(evt)).await;
                                 }
-                            } else {
-                                warn!("[TwitchEventSub] Unknown subscription.type='{}'", sub_type);
                             }
                         }
                     }
-                    Some("revocation") => {
-                        warn!("[TwitchEventSub] subscription was REVOKED. Possibly missing scope.");
-                    }
-                    other => {
-                        debug!("[TwitchEventSub] Unrecognized message_type={:?}", other);
-                    }
                 }
+                Some("revocation") => warn!("subscription revoked – check scopes"),
+                other => debug!("unhandled message_type={:?}", other),
             }
         }
-
-        // if we drop out of the while, WS is closed
-        Ok(false)
+        Ok(None)        // natural close
     }
+
 
     /// Modify this function to add your new channel points event subscriptions.
     async fn subscribe_all_events(&self, session_id: &str) -> Result<(), Error> {
@@ -372,6 +320,7 @@ impl PlatformIntegration for TwitchEventSubPlatform {
         if matches!(self.connection_status, ConnectionStatus::Connected) {
             return Ok(());
         }
+        
         self.connection_status = ConnectionStatus::Connecting;
         Ok(())
     }

@@ -648,6 +648,9 @@ impl PluginManager {
                     let _ = plugin.send(err).await;
                 }
             }
+            _ => {
+                debug!("Received unknown or unhandled plugin payload variant.");
+            }
         }
     }
 

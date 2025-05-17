@@ -1,0 +1,46 @@
+[package]
+name = "maowbot-gui"
+version.workspace = true
+edition.workspace = true
+#build = "build.rs"
+
+[dependencies]
+maowbot-proto = { path = "../maowbot-proto" }
+
+bevy = { version = "0.16", default-features = false, features = [
+    "bevy_winit", "bevy_render", "bevy_core_pipeline",
+    "bevy_asset", "bevy_scene",
+    "bevy_text", "bevy_ui", "bevy_sprite", "bevy_gizmos",
+    "bevy_pbr", "bevy_window",
+    "png", "x11",
+] }
+
+bevy_egui   = "^0.34"
+bevy_rich_text3d = "^0.3"
+
+#ovr_overlay = "0"
+#bevy_oxr = "0.3"
+#bevy_mod_openxr = { version = "0.3" }
+
+#openvr = { version = "^0.7" }
+#openvr-sys2 = { version = "^0.1" }
+
+# OpenXR support
+
+
+tonic = { workspace = true }
+tokio = { workspace = true }
+tokio-stream = { workspace = true }
+
+#spout_texture_share = { version = "0.1.0", optional = true }
+thread_local = "1.1.8"
+tracing = { workspace = true }
+tower = { version = "^0.5" }
+http = "1.2.0"
+
+[features]
+#default = ["spout"]
+#spout = ["spout_texture_share"]
+
+[build-dependencies]
+bindgen = "0.71"
