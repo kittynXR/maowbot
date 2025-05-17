@@ -103,81 +103,112 @@ impl UserManager for DefaultUserManager {
         platform: Platform,
         platform_user_id: &str,
         platform_username: Option<&str>,
-    ) -> Result<User, Error> {
-        // 1) prune old cache entries
-        self.prune_cache().await;
-
-        // 2) unify the platform_user_id by forcing to lowercase (or do a case-insensitive DB search).
-        //    We'll store it in DB as all-lowercase to avoid duplicates like "Kittyn" vs "kittyn".
-        let lower_id = platform_user_id.to_lowercase();
-
-        // 3) check in-memory cache
-        if let Some(mut entry) = self.user_cache.get_mut(&(platform.clone(), lower_id.clone())) {
-            entry.last_access = Utc::now();
-            return Ok(entry.user.clone());
+    ) -> Result<User, Error>
+    {
+        // ------------------------------------------------------------
+        // 0.  Normalise IDs that come from the platform.
+        //     – Twitch IRC occasionally gives us *either* the numeric
+        //       user-id or the display-name, depending on message type.
+        //     – Everything is forced to lowercase so we never create
+        //       “Kittyn” vs “kittyn” duplicates.
+        // ------------------------------------------------------------
+        let lower_id = platform_user_id.to_ascii_lowercase();
+        let mut lower_name = platform_username
+            .unwrap_or("")
+            .trim()
+            .to_ascii_lowercase();
+        if lower_name.is_empty() {
+            lower_name = lower_id.clone();
         }
 
-        // 4) check DB for a matching identity
-        let existing_ident = self
+        // ------------------------------------------------------------
+        // 1.  Fast path:   in-memory cache hit?
+        // ------------------------------------------------------------
+        self.prune_cache().await;
+        if let Some(mut cached) = self.user_cache.get_mut(&(platform.clone(), lower_id.clone())) {
+            cached.last_access = Utc::now();
+            return Ok(cached.user.clone());
+        }
+
+        // ------------------------------------------------------------
+        // 2.  DB lookup on PRIMARY key (platform_user_id).
+        // ------------------------------------------------------------
+        if let Some(ident) = self
             .identity_repo
             .get_by_platform(platform.clone(), &lower_id)
-            .await?;
-
-        let user = if let Some(ident) = existing_ident {
+            .await?
+        {
             let db_user = self.user_repo
                 .get(ident.user_id)
                 .await?
                 .ok_or_else(|| Error::Database(sqlx::Error::RowNotFound))?;
 
-            // Cache it
             self.insert_into_cache(platform.clone(), &lower_id, &db_user).await;
-            db_user
-        } else {
-            // create a new user
-            let new_user_id = Uuid::new_v4();
-            let now = Utc::now();
-            let mut user = User {
-                user_id: new_user_id,
-                global_username: None,
-                created_at: now,
-                last_seen: now,
-                is_active: true,
-            };
-            // If a platform_username is provided, set the global_username at creation
-            if let Some(name) = platform_username {
-                if !name.trim().is_empty() {
-                    user.global_username = Some(name.trim().to_string());
-                }
+            return Ok(db_user);
+        }
+
+        // ------------------------------------------------------------
+        // 3.  Fallback DB lookup on DISPLAY-NAME.
+        //     If we already created an identity with the display-name
+        //     (because earlier we did *not* have the numeric id), reuse it
+        //     **and** upgrade its `platform_user_id` so we never hit the
+        //     fallback path again.
+        // ------------------------------------------------------------
+        if let Some(ident) = self
+            .identity_repo
+            .get_by_platform(platform.clone(), &lower_name)
+            .await?
+        {
+            // If we have finally obtained the “real” id (numeric for Twitch),
+            // patch the identity in-place.
+            if ident.platform_user_id != lower_id {
+                let mut patched = ident.clone();
+                patched.platform_user_id = lower_id.clone();
+                patched.last_updated = Utc::now();
+                self.identity_repo.update(&patched).await?;
             }
 
-            self.user_repo.create(&user).await?;
+            let db_user = self.user_repo
+                .get(ident.user_id)
+                .await?
+                .ok_or_else(|| Error::Database(sqlx::Error::RowNotFound))?;
 
-            // new identity
-            let new_identity_id = Uuid::new_v4();
-            let identity = PlatformIdentity {
-                platform_identity_id: new_identity_id,
-                user_id: new_user_id,
-                platform: platform.clone(),
-                // store in DB as all-lowercase
-                platform_user_id: lower_id.clone(),
-                // use the original username param if we want
-                platform_username: platform_username.unwrap_or("unknown").to_string(),
-                platform_display_name: None,
-                platform_roles: vec![],
-                platform_data: serde_json::json!({}),
-                created_at: now,
-                last_updated: now,
-            };
-            self.identity_repo.create(&identity).await?;
+            self.insert_into_cache(platform.clone(), &lower_id, &db_user).await;
+            return Ok(db_user);
+        }
 
-            // also create analysis row
-            let _analysis = self.get_or_create_user_analysis(new_user_id).await?;
-
-            // store in cache
-            self.insert_into_cache(platform.clone(), &lower_id, &user).await;
-            user
+        // ------------------------------------------------------------
+        // 4.  Nothing found → create brand-new user *and* identity.
+        // ------------------------------------------------------------
+        let now = Utc::now();
+        let new_user_id = Uuid::new_v4();
+        let mut user = User {
+            user_id: new_user_id,
+            global_username: if lower_name.is_empty() { None } else { Some(lower_name.clone()) },
+            created_at: now,
+            last_seen: now,
+            is_active: true,
         };
+        self.user_repo.create(&user).await?;
 
+        let ident = PlatformIdentity {
+            platform_identity_id: Uuid::new_v4(),
+            user_id:           new_user_id,
+            platform:          platform.clone(),
+            platform_user_id:  lower_id.clone(),
+            platform_username: lower_name.clone(),
+            platform_display_name: None,
+            platform_roles:    vec![],
+            platform_data:     serde_json::json!({}),
+            created_at:        now,
+            last_updated:      now,
+        };
+        self.identity_repo.create(&ident).await?;
+
+        // pre-create empty analysis row
+        let _ = self.get_or_create_user_analysis(new_user_id).await?;
+
+        self.insert_into_cache(platform.clone(), &lower_id, &user).await;
         Ok(user)
     }
 
