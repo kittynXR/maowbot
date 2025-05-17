@@ -321,6 +321,34 @@ impl PlatformIntegration for TwitchEventSubPlatform {
             return Ok(());
         }
         
+        let mut cred = self
+            .credentials
+            .clone()
+            .ok_or_else(|| Error::Platform("TwitchEventSub: No credential set".into()))?;
+
+        let client_id = cred
+            .additional_data
+            .as_ref()
+            .and_then(|v| v.get("client_id"))
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .or_else(|| std::env::var("TWITCH_CLIENT_ID").ok())
+            .unwrap_or_default();
+
+        let client_secret = std::env::var("TWITCH_CLIENT_SECRET").ok();
+
+        cred = crate::platforms::twitch::requests::token::ensure_valid_token(
+            &cred,
+            &client_id,
+            client_secret.as_deref(),
+            600,
+        )
+            .await?;
+        self.credentials = Some(cred);
+
+        // ------------------------------------------------------------------
+        // 2) Nothing else to do here – the real socket loop starts later.
+        // ------------------------------------------------------------------
         self.connection_status = ConnectionStatus::Connecting;
         Ok(())
     }
