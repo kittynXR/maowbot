@@ -6,7 +6,7 @@ members = [
     "maowbot-common",
     "maowbot-core",
     "maowbot-gui",
-    "maowbot-osc",
+    "maowbot-osc", "maowbot-overlay",
     "maowbot-proto",
     "maowbot-server",
     "maowbot-tui",
