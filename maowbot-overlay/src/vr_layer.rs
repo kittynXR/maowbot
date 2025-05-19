@@ -1,7 +1,7 @@
 //! vr_layer.rs – single-texture, leak-free OpenVR overlay (Windows)
 
 use bevy::prelude::*;
-use tracing::{error, info};
+use tracing::{error, info, trace};
 
 use crate::ffi;
 use windows::Win32::{
@@ -173,7 +173,7 @@ fn submit_frame(
     if ok {
         // ffi::release_last_gpu_copy();
         gpu.index ^= 1;
-        info!("frame {}", frame.0);
+        trace!("frame {}", frame.0);
     } else {
         error!("✘ SetOverlayTexture failed (frame {})", frame.0);
     }
