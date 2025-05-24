@@ -10,7 +10,10 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tracing_subscriber::EnvFilter;
 use windows::Win32::Graphics::Direct3D11::*;
-use windows::core::Interface;  // Fixed import
+use windows::core::Interface;
+use windows::Win32::Foundation::HMODULE;
+// Fixed import
+
 
 use chat::{ChatState, ChatEvent, ChatCommand};
 use overlay_grpc::start_grpc_client;
@@ -99,7 +102,7 @@ impl OverlayApp {
             D3D11CreateDevice(
                 None,
                 D3D_DRIVER_TYPE_HARDWARE,
-                None,
+                HMODULE::default(),
                 D3D11_CREATE_DEVICE_BGRA_SUPPORT,
                 Some(&[D3D_FEATURE_LEVEL_11_0]),
                 D3D11_SDK_VERSION,
