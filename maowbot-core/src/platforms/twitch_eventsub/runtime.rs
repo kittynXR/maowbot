@@ -9,18 +9,18 @@ use tokio::net::TcpStream;
 
 use tracing::{error, info, warn, debug, trace};
 use std::sync::Arc;
-use chrono::Utc;
+
 use reqwest::Client as ReqwestClient;
 use serde_json::json;
 
 use crate::Error;
 use maowbot_common::models::platform::PlatformCredential;
-use maowbot_common::traits::auth_traits::PlatformAuthenticator;
+
 use maowbot_common::traits::platform_traits::{ConnectionStatus, PlatformAuth, PlatformIntegration};
-use maowbot_common::traits::repository_traits::CredentialsRepository;
+
+use crate::platforms::twitch::requests::token::ensure_valid_token;
 use crate::eventbus::{EventBus, BotEvent};
-use crate::platforms::twitch_eventsub::TwitchEventSubAuthenticator;
-use crate::repositories::postgres::credentials::PostgresCredentialsRepository;
+
 use super::events::{
     parse_twitch_notification,
     EventSubNotificationEnvelope,
@@ -79,13 +79,40 @@ impl TwitchEventSubPlatform {
 
     /// Entrypoint — keeps the socket alive and hops when Twitch says so.
     pub async fn start_loop(&mut self) -> Result<(), Error> {
-        let mut url = "wss://eventsub.wss.twitch.tv/ws".to_string();   // initial endpoint
+        // initial endpoint
+        let mut url = "wss://eventsub.wss.twitch.tv/ws".to_string();
 
         loop {
+            // ────────────────────────────────────────────────────────────────
+            // 1) Refresh our OAuth token if it's expiring within 10m
+            // ────────────────────────────────────────────────────────────────
+            if let Some(ref cred) = self.credentials {
+                // pull client_id out of the stored additional_data (or env)
+                let client_id = cred
+                    .additional_data
+                    .as_ref()
+                    .and_then(|v| v.get("client_id"))
+                    .and_then(|j| j.as_str())
+                    .map(String::from)
+                    .or_else(|| std::env::var("TWITCH_CLIENT_ID").ok())
+                    .unwrap_or_default();
+
+                // try to load secret from env
+                let client_secret = std::env::var("TWITCH_CLIENT_SECRET").ok();
+
+                // this will clone if untouched, or call refresh() under the hood
+                let updated = ensure_valid_token(cred, &client_id, client_secret.as_deref(), 600)
+                    .await?;
+                self.credentials = Some(updated);
+            }
+
+            // ────────────────────────────────────────────────────────────────
+            // 2) (Re)connect the WebSocket
+            // ────────────────────────────────────────────────────────────────
             let (mut ws, _) = match connect_async(&url).await {
                 Ok(pair) => pair,
                 Err(e) => {
-                    error!("[EventSub] connect error: {e}");
+                    error!("[EventSub] connect error: {}", e);
                     self.connection_status = ConnectionStatus::Reconnecting;
                     sleep(Duration::from_secs(15)).await;
                     continue;
@@ -95,27 +122,37 @@ impl TwitchEventSubPlatform {
             info!("[EventSub] connected → {}", url);
             self.connection_status = ConnectionStatus::Connected;
 
+            // ────────────────────────────────────────────────────────────────
+            // 3) Read until we need to reconnect or the socket closes
+            // ────────────────────────────────────────────────────────────────
             match self.run_read_loop(&mut ws).await {
-                Ok(Some(new_url)) => {          // Twitch sent session_reconnect
+                // Twitch asked us to hop to a new URL
+                Ok(Some(new_url)) => {
                     warn!("[EventSub] reconnecting → {}", new_url);
                     url = new_url;
                     self.connection_status = ConnectionStatus::Reconnecting;
+                    // tidy up this socket
                     let _ = ws.close(None).await;
                     sleep(Duration::from_millis(500)).await;
+                    // loop ⇒ will refresh again & reconnect
                     continue;
                 }
-                Ok(None) => {                   // graceful close
-                    info!("[EventSub] websocket closed.");
+                // graceful close
+                Ok(None) => {
+                    info!("[EventSub] websocket closed gracefully.");
                     self.connection_status = ConnectionStatus::Disconnected;
                     break;
                 }
-                Err(e) => {                     // hard error
-                    error!("[EventSub] loop error: {e}");
+                // hard error — back off and retry
+                Err(e) => {
+                    error!("[EventSub] loop error: {}", e);
                     self.connection_status = ConnectionStatus::Reconnecting;
                     sleep(Duration::from_secs(15)).await;
+                    // loop ⇒ will also refresh before reconnect
                 }
             }
         }
+
         Ok(())
     }
 
