@@ -216,7 +216,7 @@ async fn main() -> Result<()> {
 
     let (mut app, _event_tx) = OverlayApp::new(is_dashboard)?;
 
-    tracing::info!("✔ Overlay started in {} mode", 
+    tracing::info!("✔ Overlay started in {} mode",
         if is_dashboard { "dashboard" } else { "HUD" });
 
     app.run()
