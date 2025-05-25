@@ -55,6 +55,10 @@ static float g_mouse_x = 0;
 static float g_mouse_y = 0;
 static bool g_mouse_down = false;
 
+static bool g_input_focused = false;
+static bool g_input_just_focused = false;
+static double g_last_cursor_blink_time = 0.0;
+static bool g_cursor_visible = true;
 // ─────────────────────────── Chat State ─────────────────────────────────
 struct ChatMessage {
     char author[64];
@@ -323,6 +327,7 @@ extern "C" bool vr_keyboard_render(VROverlayHandle_t handle,
             float btn_x = x_offset + i * (button_size + spacing);
             float btn_y = y_offset;
 
+            // Fix the coordinate check - selected_x and selected_y are already in correct coordinates
             bool is_hovered = (selected_x >= btn_x &&
                              selected_x <= btn_x + button_size &&
                              selected_y >= btn_y &&
@@ -574,6 +579,9 @@ extern "C" void imgui_init(void* device_ptr, void* context_ptr) {
     io.DisplaySize = ImVec2((float)width, (float)height);
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
 
+    // Disable automatic cursor blink - we'll handle it manually
+    io.ConfigInputTextCursorBlink = false;
+
     ImGui::StyleColorsDark();
 
     // Customize style for VR
@@ -611,6 +619,12 @@ extern "C" void imgui_inject_mouse_button(int button, bool down) {
     if (button == 0) {
         g_mouse_down = down;
     }
+}
+
+extern "C" bool imgui_get_input_focused() {
+    bool result = g_input_just_focused;
+    g_input_just_focused = false; // Clear the flag after reading
+    return result;
 }
 
 extern "C" void imgui_update_chat_state(const uint8_t* messages_ptr, size_t messages_count,
@@ -671,12 +685,28 @@ static void render_chat_window(bool is_dashboard) {
     bool reclaim_focus = false;
     ImGuiInputTextFlags input_flags = ImGuiInputTextFlags_EnterReturnsTrue;
 
+    // Check if input is about to be focused
+    bool was_focused = g_input_focused;
+
+    // Push a custom ID to ensure we can track this specific input
+    ImGui::PushID("ChatInput");
+
     if (ImGui::InputText("##Input", g_input_buffer, sizeof(g_input_buffer), input_flags)) {
         if (strlen(g_input_buffer) > 0) {
             g_message_sent = true;
             reclaim_focus = true;
         }
     }
+
+    // Check if input field is now focused
+    g_input_focused = ImGui::IsItemActive() || ImGui::IsItemFocused();
+
+    // Detect when input just gained focus
+    if (g_input_focused && !was_focused) {
+        g_input_just_focused = true;
+    }
+
+    ImGui::PopID();
 
     ImGui::SetItemDefaultFocus();
     if (reclaim_focus)

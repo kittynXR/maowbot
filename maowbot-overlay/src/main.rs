@@ -164,7 +164,7 @@ impl OverlayApp {
 
             // Print FPS every second
             if last_fps_print.elapsed() > Duration::from_secs(1) {
-                tracing::info!("FPS: {}", frame_count);
+                tracing::trace!("FPS: {}", frame_count);
                 frame_count = 0;
                 last_fps_print = Instant::now();
             }
@@ -206,9 +206,22 @@ impl OverlayApp {
             // Process controller input
             self.process_controller_input()?;
 
+            // Check if input field was just focused (only in HUD mode)
+            if !self.is_dashboard {
+                let input_focused = unsafe { ffi::imgui_get_input_focused() };
+                if input_focused && !self.show_keyboard {
+                    self.show_keyboard = true;
+                    if let Some(ref mut keyboard) = self.keyboard {
+                        keyboard.set_visible(true);
+                        tracing::info!("Showing keyboard due to input focus");
+                    }
+                }
+            }
+
             // Update keyboard if visible
             if self.show_keyboard {
                 if let Some(ref mut keyboard) = self.keyboard {
+                    // Position keyboard based on hip tracker availability
                     keyboard.position_at_hip(self.hip_tracker_index);
 
                     // Process keyboard input and check if we got text
@@ -247,7 +260,6 @@ impl OverlayApp {
     fn process_controller_input(&mut self) -> Result<()> {
         ffi::update_controllers();
 
-        let mut hit_any = false;
         let mut current_mouse_x = -100.0;
         let mut current_mouse_y = -100.0;
         let mut trigger_down = false;
@@ -263,8 +275,6 @@ impl OverlayApp {
             let hit = unsafe { ffi::vr_test_laser_intersection_main(controller_idx) };
 
             if hit.hit {
-                hit_any = true;
-
                 // Convert UV to pixel coordinates
                 // NOTE: OpenVR UV coordinates have Y=0 at bottom, but screen coordinates have Y=0 at top
                 let x = hit.u * self.gpu_context.width as f32;

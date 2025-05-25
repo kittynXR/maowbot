@@ -85,6 +85,7 @@ extern "C" {
     pub fn imgui_inject_mouse_pos(x: f32, y: f32);
     pub fn imgui_inject_mouse_button(button: i32, down: bool);
     pub fn imgui_update_laser_state(controller_idx: i32, hit: bool, x: f32, y: f32);
+    pub fn imgui_get_input_focused() -> bool;
     pub fn vr_get_controller_trigger_value(controller_idx: i32) -> f32;
     pub fn vr_wait_get_poses();
 }

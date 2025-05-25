@@ -2,6 +2,7 @@
 //!
 //! The main server logic: building the ServerContext and running the gRPC plugin service.
 
+use maowbot_core::tasks::credential_refresh::refresh_expiring_tokens;
 use std::sync::Arc;
 use std::net::SocketAddr;
 use std::time::Duration;
@@ -69,6 +70,25 @@ pub async fn run_server(args: Args) -> Result<(), Error> {
             error!("Failed to refresh credentials on startup => {:?}", e);
         }
     }
+
+    let creds_repo_clone = ctx.creds_repo.clone();
+    let auth_manager_clone = ctx.auth_manager.clone();
+    let _refresh_task = tokio::spawn(async move {
+        let mut interval = tokio::time::interval(Duration::from_secs(30 * 60)); // Every 30 minutes
+        loop {
+            interval.tick().await;
+
+            let mut auth_lock = auth_manager_clone.lock().await;
+            match refresh_expiring_tokens(
+                creds_repo_clone.as_ref(),
+                &mut *auth_lock,
+                60 // Refresh tokens expiring within 60 minutes
+            ).await {
+                Ok(_) => info!("Periodic token refresh completed"),
+                Err(e) => error!("Periodic token refresh failed: {:?}", e),
+            }
+        }
+    });
 
     // Create a proper BotApiWrapper that implements all BotApi traits including AiApi
     let bot_api = Arc::new(BotApiWrapper::new(ctx.plugin_manager.clone()));
