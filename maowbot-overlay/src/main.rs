@@ -1,9 +1,8 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod ffi;
-mod chat;
-mod overlay_grpc;
 mod keyboard;
+mod imgui_renderer;
 
 use anyhow::Result;
 use crossbeam_channel::{bounded, Receiver, Sender};
@@ -14,17 +13,13 @@ use windows::Win32::Graphics::Direct3D11::*;
 use windows::core::Interface;
 use windows::Win32::Foundation::HMODULE;
 
-use chat::{ChatState, ChatEvent, ChatCommand};
 use keyboard::VirtualKeyboard;
-use overlay_grpc::start_grpc_client;
-
-pub enum AppEvent {
-    Chat(ChatEvent),
-    Shutdown,
-}
+use maowbot_ui::{AppEvent, AppState, ChatEvent, SharedGrpcClient};
+use imgui_renderer::ImGuiOverlayRenderer;
+use maowbot_ui::events::ChatCommand;
 
 struct OverlayApp {
-    chat_state: Arc<Mutex<ChatState>>,
+    state: AppState,
     event_rx: Receiver<AppEvent>,
     command_tx: Sender<ChatCommand>,
     is_dashboard: bool,
@@ -32,6 +27,7 @@ struct OverlayApp {
     keyboard: Option<VirtualKeyboard>,
     show_keyboard: bool,
     hip_tracker_index: Option<u32>,
+    renderer: ImGuiOverlayRenderer,
 }
 
 struct GpuContext {
@@ -76,11 +72,14 @@ impl OverlayApp {
         let (command_tx, command_rx) = bounded(100);
 
         // Create shared state
-        let chat_state = Arc::new(Mutex::new(ChatState::new()));
+        let state = AppState::new();
 
         // Start gRPC client
-        let chat_state_clone = chat_state.clone();
-        start_grpc_client(event_tx.clone(), command_rx, chat_state_clone);
+        SharedGrpcClient::start(
+            "maowbot-overlay".to_string(),
+            event_tx.clone(),
+            command_rx,
+        );
 
         // Create virtual keyboard (optional, only for HUD mode)
         let keyboard = if !is_dashboard {
@@ -107,7 +106,7 @@ impl OverlayApp {
 
         Ok((
             Self {
-                chat_state,
+                state,
                 event_rx,
                 command_tx,
                 is_dashboard,
@@ -115,6 +114,7 @@ impl OverlayApp {
                 keyboard,
                 show_keyboard: false,
                 hip_tracker_index: None,
+                renderer: ImGuiOverlayRenderer::new(is_dashboard),
             },
             event_tx,
         ))
@@ -173,10 +173,11 @@ impl OverlayApp {
             while let Ok(event) = self.event_rx.try_recv() {
                 match event {
                     AppEvent::Chat(chat_event) => {
-                        let mut state = self.chat_state.lock().unwrap();
+                        let mut state = self.state.chat_state.lock().unwrap();
                         state.add_message(chat_event);
                     }
                     AppEvent::Shutdown => return Ok(()),
+                    _ => {}
                 }
             }
 
@@ -191,17 +192,7 @@ impl OverlayApp {
             }
 
             // Update ImGui state from Rust
-            {
-                let mut state = self.chat_state.lock().unwrap();
-                unsafe {
-                    ffi::imgui_update_chat_state(
-                        state.get_messages_ptr(),
-                        state.get_messages_count(),
-                        state.get_input_buffer_ptr_mut(),
-                        state.get_input_buffer_capacity(),
-                    );
-                }
-            }
+            self.renderer.update_state(&self.state);
 
             // Process controller input
             self.process_controller_input()?;
@@ -240,17 +231,8 @@ impl OverlayApp {
             self.render_frame()?;
 
             // Handle input from ImGui
-            let mut input_buffer = [0u8; 256];
-            let sent = unsafe { ffi::imgui_get_sent_message(input_buffer.as_mut_ptr(), 256) };
-
-            if sent {
-                if let Ok(text) = std::str::from_utf8(&input_buffer) {
-                    if let Some(text) = text.trim_end_matches('\0').trim().to_string().into() {
-                        if !text.is_empty() {
-                            let _ = self.command_tx.send(ChatCommand::SendMessage(text));
-                        }
-                    }
-                }
+            if let Some(message) = self.renderer.get_sent_message() {
+                let _ = self.command_tx.send(ChatCommand::SendMessage(message));
             }
 
             // No manual sleep - let VR compositor handle timing
@@ -276,9 +258,8 @@ impl OverlayApp {
 
             if hit.hit {
                 // Convert UV to pixel coordinates
-                // NOTE: OpenVR UV coordinates have Y=0 at bottom, but screen coordinates have Y=0 at top
                 let x = hit.u * self.gpu_context.width as f32;
-                let y = (1.0 - hit.v) * self.gpu_context.height as f32;  // Invert Y coordinate
+                let y = (1.0 - hit.v) * self.gpu_context.height as f32;
 
                 // Update laser state for rendering
                 unsafe {
@@ -289,7 +270,7 @@ impl OverlayApp {
                 current_mouse_x = x;
                 current_mouse_y = y;
 
-                // Check if trigger is currently pressed (not just pressed this frame)
+                // Check if trigger is currently pressed
                 let trigger_value = unsafe { ffi::vr_get_controller_trigger_value(controller_idx) };
                 if trigger_value > 0.5 {
                     trigger_down = true;

@@ -6,11 +6,13 @@ members = [
     "maowbot-common",
     "maowbot-core",
     "maowbot-gui",
-    "maowbot-osc", "maowbot-overlay",
+    "maowbot-osc",
+    "maowbot-overlay",
     "maowbot-proto",
     "maowbot-server",
     "maowbot-tui",
     "plugins/plugin_hello",
+    "maowbot-ui",
 ]
 
 [workspace.package]
@@ -19,6 +21,7 @@ edition = "2024"
 
 [workspace.dependencies]
 maowbot-proto = { path = "maowbot-proto" }
+
 http = { version = "^1.2", features = ["default"] }
 
 twitch_api = {  version="^0.7", features = ["all", "reqwest"] }
@@ -95,3 +98,5 @@ futures-core = "^0.3"
 
 lazy_static = { version = "^1.5" }
 libloading = "^0.8"
+
+crossbeam-channel = "0.5"

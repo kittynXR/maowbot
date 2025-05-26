@@ -5,17 +5,21 @@ edition     = "2021"
 build       = "build.rs"
 
 [dependencies]
+# ── UI Core ─────────────────────────────────────────────────────────────
+maowbot-ui    = { path = "../maowbot-ui" }
+
 # ── async runtime ───────────────────────────────────────────────────────
-tokio         = { workspace = true, features=["rt-multi-thread","macros","sync"] }
+tokio         = { workspace = true }
 tonic         = { workspace = true }
 tokio-stream  = { workspace = true }
 
 # ── core ────────────────────────────────────────────────────────────────
 maowbot-proto = { path = "../maowbot-proto" }
+
 tracing       = { workspace = true }
-tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }  # Added env-filter feature
+tracing-subscriber = { workspace = true }
 anyhow        = { workspace = true }
-crossbeam-channel = "0.5"
+crossbeam-channel = { workspace = true }
 
 # ── Windows ─────────────────────────────────────────────────────────────
 windows = { version = "0.61", features = [
