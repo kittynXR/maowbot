@@ -81,6 +81,7 @@ impl TwitchEventSubPlatform {
     pub async fn start_loop(&mut self) -> Result<(), Error> {
         // initial endpoint
         let mut url = "wss://eventsub.wss.twitch.tv/ws".to_string();
+        let mut current_ws: Option<WebSocketStream<MaybeTlsStream<TcpStream>>> = None;
 
         loop {
             // ────────────────────────────────────────────────────────────────
@@ -107,48 +108,64 @@ impl TwitchEventSubPlatform {
             }
 
             // ────────────────────────────────────────────────────────────────
-            // 2) (Re)connect the WebSocket
+            // 2) Connect the WebSocket if we don't have one
             // ────────────────────────────────────────────────────────────────
-            let (mut ws, _) = match connect_async(&url).await {
-                Ok(pair) => pair,
-                Err(e) => {
-                    error!("[EventSub] connect error: {}", e);
-                    self.connection_status = ConnectionStatus::Reconnecting;
-                    sleep(Duration::from_secs(15)).await;
-                    continue;
-                }
-            };
+            if current_ws.is_none() {
+                let (ws, _) = match connect_async(&url).await {
+                    Ok(pair) => pair,
+                    Err(e) => {
+                        error!("[EventSub] connect error: {}", e);
+                        self.connection_status = ConnectionStatus::Reconnecting;
+                        sleep(Duration::from_secs(15)).await;
+                        continue;
+                    }
+                };
 
-            info!("[EventSub] connected → {}", url);
-            self.connection_status = ConnectionStatus::Connected;
+                info!("[EventSub] connected → {}", url);
+                self.connection_status = ConnectionStatus::Connected;
+                current_ws = Some(ws);
+            }
 
             // ────────────────────────────────────────────────────────────────
             // 3) Read until we need to reconnect or the socket closes
             // ────────────────────────────────────────────────────────────────
-            match self.run_read_loop(&mut ws).await {
-                // Twitch asked us to hop to a new URL
-                Ok(Some(new_url)) => {
-                    warn!("[EventSub] reconnecting → {}", new_url);
-                    url = new_url;
-                    self.connection_status = ConnectionStatus::Reconnecting;
-                    // tidy up this socket
-                    let _ = ws.close(None).await;
-                    sleep(Duration::from_millis(500)).await;
-                    // loop ⇒ will refresh again & reconnect
-                    continue;
-                }
-                // graceful close
-                Ok(None) => {
-                    info!("[EventSub] websocket closed gracefully.");
-                    self.connection_status = ConnectionStatus::Disconnected;
-                    break;
-                }
-                // hard error — back off and retry
-                Err(e) => {
-                    error!("[EventSub] loop error: {}", e);
-                    self.connection_status = ConnectionStatus::Reconnecting;
-                    sleep(Duration::from_secs(15)).await;
-                    // loop ⇒ will also refresh before reconnect
+            if let Some(mut ws) = current_ws.take() {
+                match self.run_read_loop(&mut ws).await {
+                    // Twitch asked us to hop to a new URL
+                    Ok(Some(new_url)) => {
+                        warn!("[EventSub] reconnecting → {}", new_url);
+
+                        // Connect to the new URL while keeping old connection open
+                        match self.handle_reconnect(&mut ws, &new_url).await {
+                            Ok(new_ws) => {
+                                info!("[EventSub] Reconnect successful");
+                                current_ws = Some(new_ws);
+                                url = new_url;
+                                self.connection_status = ConnectionStatus::Connected;
+                            }
+                            Err(e) => {
+                                error!("[EventSub] Reconnect failed: {}", e);
+                                self.connection_status = ConnectionStatus::Reconnecting;
+                                // Close the old connection
+                                let _ = ws.close(None).await;
+                                sleep(Duration::from_secs(15)).await;
+                            }
+                        }
+                    }
+                    // graceful close
+                    Ok(None) => {
+                        info!("[EventSub] websocket closed gracefully.");
+                        self.connection_status = ConnectionStatus::Disconnected;
+                        break;
+                    }
+                    // hard error — back off and retry
+                    Err(e) => {
+                        error!("[EventSub] loop error: {}", e);
+                        self.connection_status = ConnectionStatus::Reconnecting;
+                        sleep(Duration::from_secs(15)).await;
+                        // Reset URL to default on error
+                        url = "wss://eventsub.wss.twitch.tv/ws".to_string();
+                    }
                 }
             }
         }
@@ -156,6 +173,70 @@ impl TwitchEventSubPlatform {
         Ok(())
     }
 
+    async fn handle_reconnect(
+        &mut self,
+        old_ws: &mut WebSocketStream<MaybeTlsStream<TcpStream>>,
+        new_url: &str,
+    ) -> Result<WebSocketStream<MaybeTlsStream<TcpStream>>, Error> {
+        // Connect to the new URL
+        let (mut new_ws, _) = connect_async(new_url).await
+            .map_err(|e| Error::Platform(format!("Failed to connect to reconnect URL: {}", e)))?;
+
+        info!("[EventSub] Connected to new URL, waiting for welcome message...");
+
+        // Wait for welcome message on the new connection
+        let welcome_received = tokio::time::timeout(
+            Duration::from_secs(10),
+            self.wait_for_welcome(&mut new_ws)
+        ).await;
+
+        match welcome_received {
+            Ok(Ok(())) => {
+                info!("[EventSub] Received welcome message on new connection");
+                // Now we can safely close the old connection
+                let _ = old_ws.close(None).await;
+                Ok(new_ws)
+            }
+            Ok(Err(e)) => {
+                error!("[EventSub] Error waiting for welcome: {}", e);
+                let _ = new_ws.close(None).await;
+                Err(e)
+            }
+            Err(_) => {
+                error!("[EventSub] Timeout waiting for welcome message");
+                let _ = new_ws.close(None).await;
+                Err(Error::Platform("Timeout waiting for welcome message on reconnect".into()))
+            }
+        }
+    }
+
+    async fn wait_for_welcome(
+        &mut self,
+        ws: &mut WebSocketStream<MaybeTlsStream<TcpStream>>,
+    ) -> Result<(), Error> {
+        while let Some(msg_res) = ws.next().await {
+            let msg = msg_res.map_err(|e| Error::Platform(format!("ws error: {e}")))?;
+
+            if msg.is_close() {
+                return Err(Error::Platform("Connection closed while waiting for welcome".into()));
+            }
+            if msg.is_ping() || msg.is_pong() { continue; }
+
+            let Message::Text(txt) = msg else { continue };
+            let parsed: serde_json::Value = serde_json::from_str(&txt)
+                .map_err(|e| Error::Platform(format!("bad json: {e}")))?;
+
+            if let Some("session_welcome") = parsed.get("metadata")
+                .and_then(|m| m.get("message_type"))
+                .and_then(|v| v.as_str()) {
+                debug!("[EventSub] Received welcome message on reconnect");
+                // For reconnects, we don't need to resubscribe - subscriptions are maintained
+                return Ok(());
+            }
+        }
+
+        Err(Error::Platform("Connection closed without welcome message".into()))
+    }
     /// Reads until the socket closes or a reconnect URL arrives.
     /// `Ok(Some(url))` → caller must reconnect to `url`.
     async fn run_read_loop(
