@@ -1,5 +1,6 @@
 use std::sync::Arc;
 use std::collections::{HashMap, VecDeque};
+use std::time::{Duration, SystemTime};
 use tracing::{debug, warn, info, error};
 use uuid::Uuid;
 use maowbot_common::models::platform::Platform;
@@ -20,7 +21,29 @@ use once_cell::sync::Lazy;
  *  chunk no matter which MessageSender originally created it.
  * -----------------------------------------------------------
  */
-static PENDING_CONTINUATIONS: Lazy<Mutex<HashMap<String, VecDeque<String>>>> =
+
+/// Continuation data with timestamp and user information
+#[derive(Debug, Clone)]
+struct ContinuationData {
+    /// The message chunks waiting to be sent
+    chunks: VecDeque<String>,
+    /// When this continuation was created
+    created_at: SystemTime,
+    /// The user who triggered this continuation
+    user_id: Uuid,
+}
+
+impl ContinuationData {
+    /// Check if this continuation has expired (15 minutes)
+    fn is_expired(&self) -> bool {
+        match self.created_at.elapsed() {
+            Ok(elapsed) => elapsed > Duration::from_secs(15 * 60), // 15 minutes
+            Err(_) => true, // If time went backwards, consider it expired
+        }
+    }
+}
+
+static PENDING_CONTINUATIONS: Lazy<Mutex<HashMap<String, ContinuationData>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
 
 /// NEW: Global citation queue for `!sources`
@@ -39,6 +62,18 @@ pub fn push_pending_sources(channel: &str, list: Vec<(String, String)>) {
 
 fn take_pending_sources(channel: &str) -> Option<VecDeque<Vec<String>>> {
     PENDING_SOURCES.lock().remove(&norm_channel(channel))
+}
+
+/// Clear any existing continuations for a user across all channels
+fn clear_user_continuations(user_id: Uuid) {
+    let mut continuations = PENDING_CONTINUATIONS.lock();
+    continuations.retain(|_channel, data| data.user_id != user_id);
+}
+
+/// Clean up expired continuations
+fn cleanup_expired_continuations() {
+    let mut continuations = PENDING_CONTINUATIONS.lock();
+    continuations.retain(|_channel, data| !data.is_expired());
 }
 
 /// Maximum length for Twitch chat messages
@@ -107,13 +142,23 @@ impl MessageSender {
 
     /// Pop the next queued segment for the given channel (if any).
     /// Returns `Some(next_chunk)` or `None` if nothing is waiting.
+    /// Also cleans up expired continuations.
     pub fn pop_next_segment(channel: &str) -> Option<String> {
+        // First, clean up any expired continuations
+        cleanup_expired_continuations();
+        
         // parking_lot::Mutex::lock() never returns a Result, so no `.unwrap()`
         let mut map = PENDING_CONTINUATIONS.lock();
         match map.get_mut(channel) {
-            Some(queue) => {
-                let next = queue.pop_front();
-                if queue.is_empty() {
+            Some(data) => {
+                // Check if this continuation has expired
+                if data.is_expired() {
+                    map.remove(channel);
+                    return None;
+                }
+                
+                let next = data.chunks.pop_front();
+                if data.chunks.is_empty() {
                     map.remove(channel);
                 }
                 next
@@ -123,9 +168,9 @@ impl MessageSender {
     }
 
     /// Check whether any continuation text is pending for the channel.
-       pub fn has_pending(channel: &str) -> bool {
+    pub fn has_pending(channel: &str) -> bool {
         let map = PENDING_CONTINUATIONS.lock();
-        map.get(channel).map_or(false, |q| !q.is_empty())
+        map.get(channel).map_or(false, |data| !data.chunks.is_empty() && !data.is_expired())
     }
 
     /// Determine which credential to use for sending messages on a given platform
@@ -279,11 +324,24 @@ impl MessageSender {
             channel.to_string()
         };
         
+        // First, clean up any expired continuations
+        cleanup_expired_continuations();
+        
         // 1) grab next queued chunk **without awaiting**
         let next_chunk_opt = {
             let mut map = PENDING_CONTINUATIONS.lock();
-            if let Some(dq) = map.get_mut(&normalized_channel) {
-                dq.pop_front()
+            if let Some(data) = map.get_mut(&normalized_channel) {
+                // Check if expired
+                if data.is_expired() {
+                    map.remove(&normalized_channel);
+                    None
+                } else {
+                    let chunk = data.chunks.pop_front();
+                    if data.chunks.is_empty() {
+                        map.remove(&normalized_channel);
+                    }
+                    chunk
+                }
             } else {
                 None
             }
@@ -407,17 +465,30 @@ impl MessageSender {
 
         // 4) If more remain, stash them for !continue
         if segments.len() > 1 {
+            // Clear any existing continuations for this user first
+            clear_user_continuations(message_sender_user_id);
+            
             let mut map = PENDING_CONTINUATIONS.lock();
-            let q = map
-                .entry(channel_with_hash.clone())
-                .or_insert_with(VecDeque::new);
+            
+            // Create new continuation data
+            let mut chunks = VecDeque::new();
             for seg in segments.into_iter().skip(1) {
-                q.push_back(seg);
+                chunks.push_back(seg);
             }
+            
+            let continuation_data = ContinuationData {
+                chunks: chunks.clone(),
+                created_at: SystemTime::now(),
+                user_id: message_sender_user_id,
+            };
+            
+            map.insert(channel_with_hash.clone(), continuation_data);
+            
             info!(
-                "Queued {} additional segment(s) for channel {}",
-                q.len(),
-                channel_with_hash
+                "Queued {} additional segment(s) for channel {} (user: {})",
+                chunks.len(),
+                channel_with_hash,
+                message_sender_user_id
             );
         }
 
@@ -434,6 +505,9 @@ impl MessageSender {
         as_user_id: Uuid,
     ) -> Result<(), Error> {
         use serde_json::Value;
+        
+        // Clear any existing continuations for this user when they make a new AI request
+        clear_user_continuations(as_user_id);
 
         // --------------------------------------------------------
         // 1)  Extract & cache any sources that came back

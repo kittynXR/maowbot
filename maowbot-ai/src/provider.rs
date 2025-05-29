@@ -242,17 +242,48 @@ impl ModelProvider for OpenAIProvider {
             .collect();
 
         ranges.sort_by_key(|r| r.0);               // ascending
-        let mut cleaned = String::new();
-        let mut last    = 0usize;
-        for (s, e, ..) in &ranges {
-            cleaned.push_str(&text[last..*s]);
-            cleaned.push('*');
-            last = *e;
+        
+        // Remove overlapping ranges and ensure indices are valid
+        let mut filtered_ranges = Vec::new();
+        let mut last_end = 0;
+        
+        for (start, end, title, url) in ranges {
+            // Skip invalid ranges
+            if start >= end || start >= text.len() || end > text.len() {
+                tracing::warn!("Skipping invalid annotation range: start={}, end={}, text_len={}", start, end, text.len());
+                continue;
+            }
+            
+            // Skip overlapping ranges
+            if start < last_end {
+                tracing::warn!("Skipping overlapping annotation: start={}, last_end={}", start, last_end);
+                continue;
+            }
+            
+            filtered_ranges.push((start, end, title, url));
+            last_end = end;
         }
-        cleaned.push_str(&text[last..]);
+        
+        // Build cleaned text
+        let mut cleaned = String::new();
+        let mut last = 0usize;
+        
+        for (s, e, ..) in &filtered_ranges {
+            // Ensure we're not going out of bounds
+            if last <= *s && *s <= text.len() {
+                cleaned.push_str(&text[last..*s]);
+                cleaned.push('*');
+                last = *e;
+            }
+        }
+        
+        // Add remaining text if any
+        if last < text.len() {
+            cleaned.push_str(&text[last..]);
+        }
 
         // build a friendlier sources array
-        let sources: Vec<serde_json::Value> = ranges
+        let sources: Vec<serde_json::Value> = filtered_ranges
             .into_iter()
             .map(|(_, _, title, url)| json!({ "title": title, "url": url }))
             .collect();
