@@ -579,6 +579,23 @@ impl PlatformManager {
         }
     }
 
+    pub async fn is_twitch_irc_connected(&self, account_name: &str) -> bool {
+        if let Ok(user) = self.user_svc.find_user_by_global_username(account_name).await {
+            let key = ("twitch-irc".to_string(), user.user_id.to_string());
+            
+            let guard = self.active_runtimes.lock().await;
+            if let Some(handle) = guard.get(&key) {
+                if let Some(irc_arc) = &handle.twitch_irc_instance {
+                    let irc_lock = irc_arc.lock().await;
+                    // Check if client exists and connection status is Connected
+                    return irc_lock.client.is_some() && 
+                           matches!(irc_lock.connection_status, ConnectionStatus::Connected);
+                }
+            }
+        }
+        false
+    }
+
     pub async fn send_twitch_irc_message(&self, account_name: &str, channel: &str, text: &str) -> Result<(), Error> {
         let user = self.user_svc.find_user_by_global_username(account_name).await?;
         let key = ("twitch-irc".to_string(), user.user_id.to_string());

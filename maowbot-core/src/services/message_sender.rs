@@ -1,6 +1,6 @@
 use std::sync::Arc;
 use std::collections::{HashMap, VecDeque};
-use tracing::{debug, warn, info};
+use tracing::{debug, warn, info, error};
 use uuid::Uuid;
 use maowbot_common::models::platform::Platform;
 use maowbot_common::models::platform::Platform::TwitchIRC;
@@ -272,10 +272,17 @@ impl MessageSender {
         respond_credential_id: Option<Uuid>,
         user_id: Uuid,
     ) -> Result<bool, Error> {
+        // Normalize channel name to ensure consistency with how messages are stored
+        let normalized_channel = if !channel.starts_with('#') {
+            format!("#{}", channel)
+        } else {
+            channel.to_string()
+        };
+        
         // 1) grab next queued chunk **without awaiting**
         let next_chunk_opt = {
             let mut map = PENDING_CONTINUATIONS.lock();
-            if let Some(dq) = map.get_mut(channel) {
+            if let Some(dq) = map.get_mut(&normalized_channel) {
                 dq.pop_front()
             } else {
                 None
@@ -304,7 +311,14 @@ impl MessageSender {
         respond_credential_id: Option<Uuid>,
         as_user_id: Uuid,
     ) -> Result<bool, Error> {
-        if let Some(q) = take_pending_sources(channel) {
+        // Normalize channel name to ensure consistency with how sources are stored
+        let normalized_channel = if !channel.starts_with('#') {
+            format!("#{}", channel)
+        } else {
+            channel.to_string()
+        };
+        
+        if let Some(q) = take_pending_sources(&normalized_channel) {
             if q.is_empty() {
                 return Ok(false);
             }
@@ -369,6 +383,15 @@ impl MessageSender {
                 return Err(Error::Internal(err));
             }
         };
+        
+        // Check if the IRC connection is active before attempting to send
+        if !self.platform_manager.is_twitch_irc_connected(&credential.user_name).await {
+            error!("Twitch IRC connection not active for account '{}', cannot send message", credential.user_name);
+            return Err(Error::Internal(format!(
+                "Twitch IRC not connected for account '{}'. Please check the connection status.",
+                credential.user_name
+            )));
+        }
 
         // 3) Send the FIRST chunk immediately
         info!(

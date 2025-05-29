@@ -5,6 +5,8 @@ use maowbot_common::models::user::User;
 use maowbot_ai::plugins::ai_service::AiService;
 use maowbot_common::traits::api::AiApi;
 use std::sync::Arc;
+use std::time::Duration;
+use tokio::time::timeout;
 use crate::Error;
 use crate::services::twitch::redeem_service::RedeemHandlerContext;
 use crate::platforms::twitch::requests::channel_points::Redemption;
@@ -62,12 +64,16 @@ async fn generate_ai_response(
             })
         ];
         
-        // Use the generic chat endpoint without function calling
-        match ai_api.generate_chat(messages).await {
-            Ok(response) => Ok(response),
-            Err(e) => {
+        // Use the generic chat endpoint without function calling with timeout
+        match timeout(Duration::from_secs(30), ai_api.generate_chat(messages)).await {
+            Ok(Ok(response)) => Ok(response),
+            Ok(Err(e)) => {
                 error!("Error generating AI response: {:?}", e);
                 Err(Error::Internal(format!("AI API error: {}", e)))
+            }
+            Err(_) => {
+                error!("AI response generation timed out after 30 seconds");
+                Err(Error::Internal("AI response timed out".to_string()))
             }
         }
     } else {
@@ -79,12 +85,16 @@ async fn generate_ai_response(
             })
         ];
         
-        // Use the generic chat endpoint without function calling
-        match ai_api.generate_chat(messages).await {
-            Ok(response) => Ok(response),
-            Err(e) => {
+        // Use the generic chat endpoint without function calling with timeout
+        match timeout(Duration::from_secs(30), ai_api.generate_chat(messages)).await {
+            Ok(Ok(response)) => Ok(response),
+            Ok(Err(e)) => {
                 error!("Error generating AI response: {:?}", e);
                 Err(Error::Internal(format!("AI API error: {}", e)))
+            }
+            Err(_) => {
+                error!("AI response generation timed out after 30 seconds");
+                Err(Error::Internal("AI response timed out".to_string()))
             }
         }
     }
@@ -133,11 +143,14 @@ async fn generate_ai_web_search_response(
     }
     msgs.push(serde_json::json!({ "role": "user",   "content": input  }));
 
-    // 3) Call the new search-aware endpoint
-    let raw = ai_api
-        .generate_with_search(msgs)
-        .await
-        .map_err(|e| Error::Internal(format!("AI API error: {}", e)))?;
+    // 3) Call the new search-aware endpoint with timeout
+    let raw = timeout(
+        Duration::from_secs(45), // Slightly longer timeout for web search
+        ai_api.generate_with_search(msgs)
+    )
+    .await
+    .map_err(|_| Error::Internal("AI web search timed out".to_string()))?
+    .map_err(|e| Error::Internal(format!("AI API error: {}", e)))?;
 
     // 4) Extract the brief chat text
     let text = raw
@@ -309,9 +322,39 @@ pub async fn handle_askai_redeem(
             user.user_id
         ).await {
             error!("Failed to send AI response to chat: {:?}", e);
+            
+            // Cancel the redemption since we couldn't send the response
+            let helix_client_opt = ctx.redeem_service.platform_manager.get_twitch_client().await;
+            if let Some(client) = ctx.helix_client.as_ref().or(helix_client_opt.as_ref()) {
+                let _ = client
+                    .update_redemption_status(
+                        &redemption.broadcaster_id,
+                        &redemption.reward.id,
+                        &[&redemption.id],
+                        "CANCELED",
+                    )
+                    .await;
+            }
+            
+            return Err(Error::Internal(format!("Failed to send message: {}", e)));
         }
     } else {
         error!("No broadcaster login found in redemption - can't send response");
+        
+        // Cancel the redemption
+        let helix_client_opt = ctx.redeem_service.platform_manager.get_twitch_client().await;
+        if let Some(client) = ctx.helix_client.as_ref().or(helix_client_opt.as_ref()) {
+            let _ = client
+                .update_redemption_status(
+                    &redemption.broadcaster_id,
+                    &redemption.reward.id,
+                    &[&redemption.id],
+                    "CANCELED",
+                )
+                .await;
+        }
+        
+        return Err(Error::Internal("No broadcaster login found in redemption".to_string()));
     }
     
     // Try to mark the redemption as complete
@@ -478,9 +521,37 @@ pub async fn handle_askmao_redeem(
             user.user_id
         ).await {
             error!("Failed to send askmaow response to chat: {:?}", e);
+            
+            // Cancel the redemption since we couldn't send the response
+            if let Some(client) = &ctx.helix_client {
+                let _ = client
+                    .update_redemption_status(
+                        &redemption.broadcaster_id,
+                        &redemption.reward.id,
+                        &[&redemption.id],
+                        "CANCELED",
+                    )
+                    .await;
+            }
+            
+            return Err(Error::Internal(format!("Failed to send message: {}", e)));
         }
     } else {
         error!("No broadcaster login found in redemption");
+        
+        // Cancel the redemption
+        if let Some(client) = &ctx.helix_client {
+            let _ = client
+                .update_redemption_status(
+                    &redemption.broadcaster_id,
+                    &redemption.reward.id,
+                    &[&redemption.id],
+                    "CANCELED",
+                )
+                .await;
+        }
+        
+        return Err(Error::Internal("No broadcaster login found in redemption".to_string()));
     }
     
     // Mark the redemption as complete
@@ -631,9 +702,37 @@ audience.";
             .await
         {
             error!("Failed to send AI search response to chat: {:?}", e);
+            
+            // Cancel the redemption since we couldn't send the response
+            if let Some(client) = &ctx.helix_client {
+                let _ = client
+                    .update_redemption_status(
+                        &redemption.broadcaster_id,
+                        &redemption.reward.id,
+                        &[&redemption.id],
+                        "CANCELED",
+                    )
+                    .await;
+            }
+            
+            return Err(Error::Internal(format!("Failed to send message: {}", e)));
         }
     } else {
         error!("No broadcaster login found in redemption");
+        
+        // Cancel the redemption
+        if let Some(client) = &ctx.helix_client {
+            let _ = client
+                .update_redemption_status(
+                    &redemption.broadcaster_id,
+                    &redemption.reward.id,
+                    &[&redemption.id],
+                    "CANCELED",
+                )
+                .await;
+        }
+        
+        return Err(Error::Internal("No broadcaster login found in redemption".to_string()));
     }
 
     // 6) Finally, mark the redemption as fulfilled
