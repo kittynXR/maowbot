@@ -360,7 +360,7 @@ impl TwitchEventSubPlatform {
                 "broadcaster_user_id": broadcaster_id,
                 "moderator_user_id": broadcaster_id
             })),
-            ("channel.channel_points_automatic_reward_redemption.add", "beta",
+            ("channel.channel_points_automatic_reward_redemption.add", "2",
              json!({ "broadcaster_user_id": broadcaster_id })),
             ("channel.channel_points_custom_reward.add", "1",
              json!({ "broadcaster_user_id": broadcaster_id })),
