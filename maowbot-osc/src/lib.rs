@@ -45,6 +45,8 @@ pub struct MaowOscManager {
     pub osc_receiver: Arc<Mutex<Option<OscReceiver>>>,
     pub oscquery_client: Arc<OscQueryClient>,
     pub vrchat_info: Arc<Mutex<Option<VRChatConnectionInfo>>>,
+    pub vrchat_dest: Arc<Mutex<Option<String>>>,
+    pub robot_dest: Arc<Mutex<Option<String>>>,
 }
 pub struct OscManagerInner {
     /// The UDP port on which we are currently listening for OSC
@@ -189,6 +191,8 @@ impl MaowOscManager {
             osc_receiver: Arc::new(Mutex::new(None)),
             oscquery_client: Arc::new(oscquery_client),
             vrchat_info: Arc::new(Mutex::new(None)),
+            vrchat_dest: Arc::new(Mutex::new(None)),
+            robot_dest: Arc::new(Mutex::new(None)),
         }
     }
     /// Return a status snapshot.
@@ -343,23 +347,50 @@ impl MaowOscManager {
         }
         Ok(())
     }
+    
+    /// Set the VRChat OSC destination
+    pub async fn set_vrchat_dest(&self, dest: Option<String>) {
+        let mut guard = self.vrchat_dest.lock().await;
+        *guard = dest;
+    }
+    
+    /// Set the Robot OSC destination
+    pub async fn set_robot_dest(&self, dest: Option<String>) {
+        let mut guard = self.robot_dest.lock().await;
+        *guard = dest;
+    }
     /// Send an OSC packet to VRChat’s `osc_send_port`.
+    /// Send an OSC packet to VRChat's `osc_send_port`.
     fn send_osc_packet(&self, packet: OscPacket) -> Result<()> {
-        // We must send to VRChat’s listen port
-        let (dest_port, address) = match self.vrchat_info.try_lock() {
-            Ok(guard) => {
-                if let Some(v) = guard.as_ref() {
-                    (v.osc_send_port, v.oscquery_host.clone())
-                } else {
-                    (9000, "127.0.0.1".to_string())
-                }
-            },
-            Err(_) => (9000, "127.0.0.1".to_string()),
+        // Check if we have a custom destination configured
+        let dest_str = if let Ok(guard) = self.vrchat_dest.try_lock() {
+            if let Some(custom_dest) = guard.as_ref() {
+                custom_dest.clone()
+            } else {
+                // Fall back to discovered or default
+                let (dest_port, address) = match self.vrchat_info.try_lock() {
+                    Ok(guard) => {
+                        if let Some(v) = guard.as_ref() {
+                            // Always use localhost for OSC messages to VRChat
+                            (v.osc_send_port, "127.0.0.1".to_string())
+                        } else {
+                            (9000, "127.0.0.1".to_string())
+                        }
+                    },
+                    Err(_) => (9000, "127.0.0.1".to_string()),
+                };
+                format!("{address}:{dest_port}")
+            }
+        } else {
+            // Fallback to default
+            "127.0.0.1:9000".to_string()
         };
-        let dest_str = format!("{address}:{dest_port}");
+        
         let buf = rosc::encoder::encode(&packet)
             .map_err(|e| OscError::IoError(format!("Encode error: {e:?}")))?;
-        let sock = UdpSocket::bind(("127.0.0.1", 0))
+        // Bind to any interface (0.0.0.0) instead of just localhost
+        // This allows sending to external IPs
+        let sock = UdpSocket::bind(("0.0.0.0", 0))
             .map_err(|e| OscError::IoError(format!("Bind error: {e}")))?;
         match &packet {
             OscPacket::Message(msg) => {
@@ -417,6 +448,39 @@ impl MaowOscManager {
     pub async fn take_osc_receiver(&self) -> Option<mpsc::UnboundedReceiver<OscPacket>> {
         let mut r = self.osc_receiver.lock().await;
         r.as_mut()?.take_receiver()
+    }
+    
+    /// Send an OSC packet to the Robot destination
+    pub fn send_robot_osc_packet(&self, packet: OscPacket) -> Result<()> {
+        // Check if we have a robot destination configured
+        let dest_str = if let Ok(guard) = self.robot_dest.try_lock() {
+            if let Some(robot_dest) = guard.as_ref() {
+                robot_dest.clone()
+            } else {
+                // No robot destination configured
+                return Err(OscError::Generic("No robot destination configured".into()));
+            }
+        } else {
+            return Err(OscError::Generic("Failed to acquire robot destination lock".into()));
+        };
+        
+        let buf = rosc::encoder::encode(&packet)
+            .map_err(|e| OscError::IoError(format!("Encode error: {e:?}")))?;
+        // Bind to any interface (0.0.0.0) instead of just localhost
+        // This allows sending to external IPs
+        let sock = UdpSocket::bind(("0.0.0.0", 0))
+            .map_err(|e| OscError::IoError(format!("Bind error: {e}")))?;
+        match &packet {
+            OscPacket::Message(msg) => {
+                tracing::debug!("Sending Robot OSC message: {} to {}", msg.addr, dest_str);
+            },
+            OscPacket::Bundle(_) => {
+                tracing::debug!("Sending Robot OSC bundle to {}", dest_str);
+            }
+        }
+        sock.send_to(&buf, dest_str)
+            .map_err(|e| OscError::IoError(format!("Send error: {e}")))?;
+        Ok(())
     }
 }
 fn is_common_osc_message(addr: &str) -> bool {

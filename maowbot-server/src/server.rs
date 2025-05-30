@@ -723,6 +723,46 @@ impl maowbot_common::traits::api::OscApi for BotApiWrapper {
     async fn osc_take_raw_receiver(&self) -> Result<Option<tokio::sync::mpsc::UnboundedReceiver<rosc::OscPacket>>, maowbot_common::error::Error> {
         self.plugin_manager.osc_take_raw_receiver().await
     }
+    
+    async fn osc_send_avatar_parameter_bool(&self, name: &str, value: bool) -> Result<(), maowbot_common::error::Error> {
+        self.plugin_manager.osc_send_avatar_parameter_bool(name, value).await
+    }
+    
+    async fn osc_send_avatar_parameter_int(&self, name: &str, value: i32) -> Result<(), maowbot_common::error::Error> {
+        self.plugin_manager.osc_send_avatar_parameter_int(name, value).await
+    }
+    
+    async fn osc_send_avatar_parameter_float(&self, name: &str, value: f32) -> Result<(), maowbot_common::error::Error> {
+        self.plugin_manager.osc_send_avatar_parameter_float(name, value).await
+    }
+    
+    async fn osc_list_triggers(&self) -> Result<Vec<maowbot_common::models::osc_toggle::OscTrigger>, maowbot_common::error::Error> {
+        self.plugin_manager.osc_list_triggers().await
+    }
+    
+    async fn osc_list_triggers_with_redeems(&self) -> Result<Vec<(maowbot_common::models::osc_toggle::OscTrigger, String)>, maowbot_common::error::Error> {
+        self.plugin_manager.osc_list_triggers_with_redeems().await
+    }
+    
+    async fn osc_get_trigger(&self, trigger_id: i32) -> Result<Option<maowbot_common::models::osc_toggle::OscTrigger>, maowbot_common::error::Error> {
+        self.plugin_manager.osc_get_trigger(trigger_id).await
+    }
+    
+    async fn osc_create_trigger(&self, trigger: maowbot_common::models::osc_toggle::OscTrigger) -> Result<maowbot_common::models::osc_toggle::OscTrigger, maowbot_common::error::Error> {
+        self.plugin_manager.osc_create_trigger(trigger).await
+    }
+    
+    async fn osc_update_trigger(&self, trigger: maowbot_common::models::osc_toggle::OscTrigger) -> Result<maowbot_common::models::osc_toggle::OscTrigger, maowbot_common::error::Error> {
+        self.plugin_manager.osc_update_trigger(trigger).await
+    }
+    
+    async fn osc_delete_trigger(&self, trigger_id: i32) -> Result<(), maowbot_common::error::Error> {
+        self.plugin_manager.osc_delete_trigger(trigger_id).await
+    }
+    
+    async fn osc_list_active_toggles(&self, user_id: Option<uuid::Uuid>) -> Result<Vec<maowbot_common::models::osc_toggle::OscToggleState>, maowbot_common::error::Error> {
+        self.plugin_manager.osc_list_active_toggles(user_id).await
+    }
 }
 
 // DripApi

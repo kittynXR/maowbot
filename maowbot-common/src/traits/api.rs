@@ -136,6 +136,20 @@ pub trait OscApi: Send + Sync {
     // Need to add to OscApi trait:
     // Add to the OscApi trait
     async fn osc_take_raw_receiver(&self) -> Result<Option<mpsc::UnboundedReceiver<rosc::OscPacket>>, Error>;
+    
+    // OSC parameter sending methods
+    async fn osc_send_avatar_parameter_bool(&self, name: &str, value: bool) -> Result<(), Error>;
+    async fn osc_send_avatar_parameter_int(&self, name: &str, value: i32) -> Result<(), Error>;
+    async fn osc_send_avatar_parameter_float(&self, name: &str, value: f32) -> Result<(), Error>;
+    
+    // OSC trigger management methods
+    async fn osc_list_triggers(&self) -> Result<Vec<crate::models::osc_toggle::OscTrigger>, Error>;
+    async fn osc_list_triggers_with_redeems(&self) -> Result<Vec<(crate::models::osc_toggle::OscTrigger, String)>, Error>;
+    async fn osc_get_trigger(&self, trigger_id: i32) -> Result<Option<crate::models::osc_toggle::OscTrigger>, Error>;
+    async fn osc_create_trigger(&self, trigger: crate::models::osc_toggle::OscTrigger) -> Result<crate::models::osc_toggle::OscTrigger, Error>;
+    async fn osc_update_trigger(&self, trigger: crate::models::osc_toggle::OscTrigger) -> Result<crate::models::osc_toggle::OscTrigger, Error>;
+    async fn osc_delete_trigger(&self, trigger_id: i32) -> Result<(), Error>;
+    async fn osc_list_active_toggles(&self, user_id: Option<uuid::Uuid>) -> Result<Vec<crate::models::osc_toggle::OscToggleState>, Error>;
 }
 
 #[async_trait]

@@ -2,9 +2,12 @@ use std::sync::Arc;
 use chrono::{Utc};
 use uuid::Uuid;
 use tracing::{info, warn, debug};
+use sqlx::PgPool;
+use tokio::sync::RwLock;
 use maowbot_common::models::platform::{Platform, PlatformCredential};
 use maowbot_common::models::{Redeem, RedeemUsage};
-use maowbot_common::traits::repository_traits::{RedeemRepository, RedeemUsageRepository, CredentialsRepository};
+use maowbot_common::traits::repository_traits::{RedeemRepository, RedeemUsageRepository, CredentialsRepository, UserRepo};
+use maowbot_osc::MaowOscManager;
 use crate::Error;
 use crate::services::user_service::UserService;
 use crate::platforms::manager::PlatformManager;
@@ -22,6 +25,18 @@ pub struct RedeemHandlerContext<'a> {
     /// **NEW**: The credential that “actually processes” the redeem, if relevant
     /// (based on `active_credential_id` fallback).
     pub active_credential: Option<PlatformCredential>,
+    
+    /// Database pool for creating repositories
+    pub pool: PgPool,
+    
+    /// OSC manager for toggle controls
+    pub osc_manager: Arc<RwLock<Option<MaowOscManager>>>,
+    
+    /// User repository for user lookups
+    pub user_repo: Arc<dyn UserRepo + Send + Sync>,
+    
+    /// Redeem repository for redeem lookups
+    pub redeem_repo: Arc<dyn RedeemRepository + Send + Sync>,
 }
 
 pub struct RedeemService {
@@ -33,6 +48,15 @@ pub struct RedeemService {
 
     /// For picking fallback credentials, we also need direct access to credentials_repo
     pub credentials_repo: Arc<dyn CredentialsRepository + Send + Sync>,
+    
+    /// Database pool for creating repositories
+    pub pool: PgPool,
+    
+    /// OSC manager for toggle controls
+    pub osc_manager: Arc<RwLock<Option<MaowOscManager>>>,
+    
+    /// User repository for user lookups
+    pub user_repo: Arc<dyn UserRepo + Send + Sync>,
 }
 
 impl RedeemService {
@@ -42,6 +66,9 @@ impl RedeemService {
         user_service: Arc<UserService>,
         platform_manager: Arc<PlatformManager>,
         credentials_repo: Arc<dyn CredentialsRepository + Send + Sync>,
+        pool: PgPool,
+        osc_manager: Arc<RwLock<Option<MaowOscManager>>>,
+        user_repo: Arc<dyn UserRepo + Send + Sync>,
     ) -> Self {
         Self {
             redeem_repo,
@@ -49,6 +76,9 @@ impl RedeemService {
             user_service,
             platform_manager,
             credentials_repo,
+            pool,
+            osc_manager,
+            user_repo,
         }
     }
     
@@ -132,6 +162,10 @@ impl RedeemService {
             helix_client: self.get_helix_client_for_credential(&chosen_credential).await,
             redeem_service: self,
             active_credential: chosen_credential,
+            pool: self.pool.clone(),
+            osc_manager: self.osc_manager.clone(),
+            user_repo: self.user_repo.clone(),
+            redeem_repo: self.redeem_repo.clone(),
         };
 
         // If plugin_name is “builtin”, handle:

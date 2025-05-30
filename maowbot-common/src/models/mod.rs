@@ -9,6 +9,7 @@ pub mod credential;
 pub mod platform;
 pub mod cache;
 pub mod osc;
+pub mod osc_toggle;
 pub mod plugin;
 pub mod vrchat;
 pub mod analytics;

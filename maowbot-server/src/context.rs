@@ -3,7 +3,7 @@
 //! Defines the main "global" context (ServerContext) for the bot server.
 
 use std::sync::Arc;
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, RwLock};
 use maowbot_core::db::Database;
 use maowbot_core::eventbus::EventBus;
 use maowbot_core::crypto::Encryptor;
@@ -15,6 +15,7 @@ use maowbot_core::services::twitch::{
 use maowbot_core::platforms::manager::PlatformManager;
 use maowbot_core::plugins::manager::PluginManager;
 use maowbot_core::Error;
+use base64::Engine;
 
 use crate::Args;
 use crate::portable_postgres::*;
@@ -204,6 +205,9 @@ impl ServerContext {
         // Let the platform manager hold a reference to message_service
         platform_manager.set_message_service(message_service.clone());
 
+        // Create a shared OSC manager holder that will be populated later
+        let osc_manager_holder: Arc<RwLock<Option<MaowOscManager>>> = Arc::new(tokio::sync::RwLock::new(None));
+
         // Redeem service
         let redeem_service = Arc::new(RedeemService::new(
             redeem_repo.clone(),
@@ -211,6 +215,9 @@ impl ServerContext {
             user_service.clone(),
             platform_manager.clone(),
             creds_repo_arc.clone(),
+            db.pool().clone(),
+            osc_manager_holder.clone(),
+            user_repo_arc.clone(),
         ));
 
         let eventsub_service = Arc::new(EventSubService::new(
@@ -320,6 +327,10 @@ impl ServerContext {
         // Let plugin manager see the event bus
         plugin_manager.set_event_bus(event_bus.clone());
         plugin_manager.set_auth_manager(auth_manager_arc.clone());
+        
+        // Create and set OSC toggle repository
+        let osc_toggle_repo = Arc::new(maowbot_core::repositories::postgres::osc_toggle::PostgresOscToggleRepository::new(db.pool().clone()));
+        plugin_manager.set_osc_toggle_repo(osc_toggle_repo);
 
         // subscribe / load etc. (all the same mut calls)
         plugin_manager.subscribe_to_event_bus(event_bus.clone()).await;
@@ -488,7 +499,7 @@ fn get_master_key() -> Result<[u8; 32], Error> {
             // Generate a new key
             let mut new_key = [0u8; 32];
             thread_rng().fill(&mut new_key);
-            let base64_key = base64::encode(new_key);
+            let base64_key = base64::engine::general_purpose::STANDARD.encode(&new_key);
             
             // Try to save it to the keyring
             match entry.set_password(&base64_key) {
@@ -517,7 +528,7 @@ fn get_master_key() -> Result<[u8; 32], Error> {
     // If we got here, we need to generate a new key and store it in the fallback
     let mut new_key = [0u8; 32];
     thread_rng().fill(&mut new_key);
-    let base64_key = base64::encode(new_key);
+    let base64_key = base64::engine::general_purpose::STANDARD.encode(&new_key);
     
     // Store in secure file
     if let Err(e) = store_key_in_secure_file(&base64_key) {
@@ -535,7 +546,7 @@ fn get_master_key() -> Result<[u8; 32], Error> {
 fn decode_key(base64_key: &str) -> Result<[u8; 32], Error> {
     tracing::debug!("Decoding base64 key of length: {}", base64_key.len());
     
-    let key_bytes = base64::decode(base64_key)
+    let key_bytes = base64::engine::general_purpose::STANDARD.decode(base64_key)
         .map_err(|e| Error::Parse(format!("Failed to decode key: {:?}", e)))?;
     
     let key_len = key_bytes.len();

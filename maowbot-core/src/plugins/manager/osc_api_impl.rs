@@ -10,6 +10,22 @@ impl OscApi for PluginManager {
         let mgr = self.osc_manager
             .as_ref()
             .ok_or_else(|| Error::Platform("No OSC manager attached".to_string()))?;
+        
+        // Load configured destinations from bot_config
+        if let Some(auth_mgr) = &self.auth_manager {
+            let auth_guard = auth_mgr.lock().await;
+            
+            // Load VRChat destination
+            if let Ok(Some(vrchat_dest)) = auth_guard.bot_config_repo.get_value("osc_vrchat_dest").await {
+                mgr.set_vrchat_dest(Some(vrchat_dest)).await;
+            }
+            
+            // Load Robot destination
+            if let Ok(Some(robot_dest)) = auth_guard.bot_config_repo.get_value("osc_robot_dest").await {
+                mgr.set_robot_dest(Some(robot_dest)).await;
+            }
+        }
+        
         mgr.start_all()
             .await
             .map_err(|e| Error::Platform(format!("OSC start error: {e:?}")))?;
@@ -90,5 +106,124 @@ impl OscApi for PluginManager {
         // Now this method returns Future<Output = Option<...>>
         let receiver = mgr.take_osc_receiver().await;
         Ok(receiver)
+    }
+    
+    async fn osc_send_avatar_parameter_bool(&self, name: &str, value: bool) -> Result<(), Error> {
+        let mgr = self.osc_manager
+            .as_ref()
+            .ok_or_else(|| Error::Platform("No OSC manager attached".to_string()))?;
+        
+        // Load the latest VRChat destination from config
+        if let Some(auth_mgr) = &self.auth_manager {
+            let auth_guard = auth_mgr.lock().await;
+            if let Ok(Some(vrchat_dest)) = auth_guard.bot_config_repo.get_value("osc_vrchat_dest").await {
+                mgr.set_vrchat_dest(Some(vrchat_dest)).await;
+            }
+        }
+        
+        mgr.send_avatar_parameter_bool(name, value)
+            .map_err(|e| Error::Platform(format!("OSC send bool error: {e:?}")))?;
+        Ok(())
+    }
+    
+    async fn osc_send_avatar_parameter_int(&self, name: &str, value: i32) -> Result<(), Error> {
+        let mgr = self.osc_manager
+            .as_ref()
+            .ok_or_else(|| Error::Platform("No OSC manager attached".to_string()))?;
+        
+        // Load the latest VRChat destination from config
+        if let Some(auth_mgr) = &self.auth_manager {
+            let auth_guard = auth_mgr.lock().await;
+            if let Ok(Some(vrchat_dest)) = auth_guard.bot_config_repo.get_value("osc_vrchat_dest").await {
+                mgr.set_vrchat_dest(Some(vrchat_dest)).await;
+            }
+        }
+        
+        mgr.send_avatar_parameter_int(name, value)
+            .map_err(|e| Error::Platform(format!("OSC send int error: {e:?}")))?;
+        Ok(())
+    }
+    
+    async fn osc_send_avatar_parameter_float(&self, name: &str, value: f32) -> Result<(), Error> {
+        let mgr = self.osc_manager
+            .as_ref()
+            .ok_or_else(|| Error::Platform("No OSC manager attached".to_string()))?;
+        
+        // Load the latest VRChat destination from config
+        if let Some(auth_mgr) = &self.auth_manager {
+            let auth_guard = auth_mgr.lock().await;
+            if let Ok(Some(vrchat_dest)) = auth_guard.bot_config_repo.get_value("osc_vrchat_dest").await {
+                mgr.set_vrchat_dest(Some(vrchat_dest)).await;
+            }
+        }
+        
+        mgr.send_avatar_parameter_float(name, value)
+            .map_err(|e| Error::Platform(format!("OSC send float error: {e:?}")))?;
+        Ok(())
+    }
+    
+    async fn osc_list_triggers(&self) -> Result<Vec<maowbot_common::models::osc_toggle::OscTrigger>, Error> {
+        let repo = self.osc_toggle_repo
+            .as_ref()
+            .ok_or_else(|| Error::Platform("No OSC toggle repository attached".to_string()))?;
+        repo.get_all_triggers().await
+    }
+    
+    async fn osc_list_triggers_with_redeems(&self) -> Result<Vec<(maowbot_common::models::osc_toggle::OscTrigger, String)>, Error> {
+        let repo = self.osc_toggle_repo
+            .as_ref()
+            .ok_or_else(|| Error::Platform("No OSC toggle repository attached".to_string()))?;
+        let triggers = repo.get_all_triggers().await?;
+        
+        // For each trigger, get the redeem name
+        let mut results = Vec::new();
+        for trigger in triggers {
+            if let Ok(Some(redeem)) = self.redeem_service.redeem_repo.get_redeem_by_id(trigger.redeem_id).await {
+                results.push((trigger, redeem.reward_name));
+            } else {
+                results.push((trigger, "Unknown Redeem".to_string()));
+            }
+        }
+        Ok(results)
+    }
+    
+    async fn osc_get_trigger(&self, trigger_id: i32) -> Result<Option<maowbot_common::models::osc_toggle::OscTrigger>, Error> {
+        let repo = self.osc_toggle_repo
+            .as_ref()
+            .ok_or_else(|| Error::Platform("No OSC toggle repository attached".to_string()))?;
+        repo.get_trigger_by_id(trigger_id).await
+    }
+    
+    async fn osc_create_trigger(&self, trigger: maowbot_common::models::osc_toggle::OscTrigger) -> Result<maowbot_common::models::osc_toggle::OscTrigger, Error> {
+        let repo = self.osc_toggle_repo
+            .as_ref()
+            .ok_or_else(|| Error::Platform("No OSC toggle repository attached".to_string()))?;
+        repo.create_trigger(trigger).await
+    }
+    
+    async fn osc_update_trigger(&self, trigger: maowbot_common::models::osc_toggle::OscTrigger) -> Result<maowbot_common::models::osc_toggle::OscTrigger, Error> {
+        let repo = self.osc_toggle_repo
+            .as_ref()
+            .ok_or_else(|| Error::Platform("No OSC toggle repository attached".to_string()))?;
+        repo.update_trigger(trigger).await
+    }
+    
+    async fn osc_delete_trigger(&self, trigger_id: i32) -> Result<(), Error> {
+        let repo = self.osc_toggle_repo
+            .as_ref()
+            .ok_or_else(|| Error::Platform("No OSC toggle repository attached".to_string()))?;
+        repo.delete_trigger(trigger_id).await
+    }
+    
+    async fn osc_list_active_toggles(&self, user_id: Option<uuid::Uuid>) -> Result<Vec<maowbot_common::models::osc_toggle::OscToggleState>, Error> {
+        let repo = self.osc_toggle_repo
+            .as_ref()
+            .ok_or_else(|| Error::Platform("No OSC toggle repository attached".to_string()))?;
+        if let Some(uid) = user_id {
+            repo.get_active_toggles(uid).await
+        } else {
+            // Get all active toggles - we'd need to add this method or return empty
+            Ok(Vec::new())
+        }
     }
 }

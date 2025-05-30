@@ -90,6 +90,14 @@ pub enum Error {
     // Added for User errors
     #[error("User error: {0}")]
     User(String),
+    
+    // Added for validation errors
+    #[error("Validation error: {0}")]
+    ValidationError(String),
+    
+    // Added for service errors
+    #[error("Service error: {0}")]
+    ServiceError(String),
 }
 
 impl From<String> for Error {

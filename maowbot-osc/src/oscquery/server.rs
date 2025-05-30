@@ -241,13 +241,12 @@ impl OscQueryServer {
                 &instance_name,
                 "_osc._udp.local.",
                 self.osc_port,
-                Ipv4Addr::new(10, 11, 11, 123),
+                Ipv4Addr::new(127, 0, 0, 1),  // Use localhost instead of hardcoded IP
             );
             ms.advertise(
                 &instance_name,
                 "_oscjson._tcp.local.",
                 self.http_port,
-                // Ipv4Addr::new(10, 11, 11, 123),
                 Ipv4Addr::new(127, 0, 0, 1),
             );
         }

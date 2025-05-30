@@ -7,6 +7,7 @@ pub mod message_sender;
 // Moved all Twitch-specific things into services/twitch.
 pub mod twitch;
 pub mod discord;
+pub mod osc_toggle_service;
 
 // Re-export anything you want from twitch here, if desired, e.g.:
 // pub use twitch::command_service::CommandService;
