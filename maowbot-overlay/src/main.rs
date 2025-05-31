@@ -1,4 +1,4 @@
-#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+#![cfg_attr(all(not(debug_assertions), windows), windows_subsystem = "windows")]
 
 mod ffi;
 mod keyboard;
@@ -9,9 +9,6 @@ use crossbeam_channel::{bounded, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tracing_subscriber::EnvFilter;
-use windows::Win32::Graphics::Direct3D11::*;
-use windows::core::Interface;
-use windows::Win32::Foundation::HMODULE;
 
 use keyboard::VirtualKeyboard;
 use maowbot_ui::{AppEvent, AppState, ChatEvent, SharedGrpcClient};
@@ -30,9 +27,16 @@ struct OverlayApp {
     renderer: ImGuiOverlayRenderer,
 }
 
+#[cfg(windows)]
 struct GpuContext {
-    device: ID3D11Device,
-    context: ID3D11DeviceContext,
+    device: windows::Win32::Graphics::Direct3D11::ID3D11Device,
+    context: windows::Win32::Graphics::Direct3D11::ID3D11DeviceContext,
+    width: u32,
+    height: u32,
+}
+
+#[cfg(not(windows))]
+struct GpuContext {
     width: u32,
     height: u32,
 }
@@ -56,14 +60,23 @@ impl OverlayApp {
             ffi::show_dashboard(key);
         }
 
-        // Create D3D11 device
-        let gpu_context = Self::create_d3d11_device()?;
+        // Create GPU context
+        let gpu_context = Self::create_gpu_context()?;
 
         // Initialize ImGui
+        #[cfg(windows)]
         unsafe {
             ffi::imgui_init(
                 gpu_context.device.as_raw() as *mut _,
                 gpu_context.context.as_raw() as *mut _,
+            );
+        }
+        
+        #[cfg(not(windows))]
+        unsafe {
+            ffi::imgui_init(
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
             );
         }
 
@@ -85,10 +98,19 @@ impl OverlayApp {
         let keyboard = if !is_dashboard {
             match VirtualKeyboard::new() {
                 Ok(mut kb) => {
-                    if let Err(e) = kb.init_rendering(
+                    #[cfg(windows)]
+                    let init_result = kb.init_rendering(
                         gpu_context.device.as_raw() as *mut _,
                         gpu_context.context.as_raw() as *mut _,
-                    ) {
+                    );
+                    
+                    #[cfg(not(windows))]
+                    let init_result = kb.init_rendering(
+                        std::ptr::null_mut(),
+                        std::ptr::null_mut(),
+                    );
+                    
+                    if let Err(e) = init_result {
                         tracing::warn!("Failed to init keyboard rendering: {}", e);
                         None
                     } else {
@@ -120,8 +142,12 @@ impl OverlayApp {
         ))
     }
 
-    fn create_d3d11_device() -> Result<GpuContext> {
+    #[cfg(windows)]
+    fn create_gpu_context() -> Result<GpuContext> {
         use windows::Win32::Graphics::Direct3D::*;
+        use windows::Win32::Graphics::Direct3D11::*;
+        use windows::core::Interface;
+        use windows::Win32::Foundation::HMODULE;
 
         let mut device: Option<ID3D11Device> = None;
         let mut context: Option<ID3D11DeviceContext> = None;
@@ -144,6 +170,15 @@ impl OverlayApp {
         Ok(GpuContext {
             device: device.unwrap(),
             context: context.unwrap(),
+            width: 1024,
+            height: 768,
+        })
+    }
+    
+    #[cfg(not(windows))]
+    fn create_gpu_context() -> Result<GpuContext> {
+        // On Linux, OpenGL context is managed by OpenVR/ImGui
+        Ok(GpuContext {
             width: 1024,
             height: 768,
         })

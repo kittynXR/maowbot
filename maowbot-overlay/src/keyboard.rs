@@ -321,9 +321,21 @@ impl VirtualKeyboard {
         }
     }
 
+    #[cfg(windows)]
     pub fn init_rendering(&mut self, device: *mut c_void, context: *mut c_void) -> Result<()> {
         unsafe {
             if vr_keyboard_init_rendering(device, context) {
+                Ok(())
+            } else {
+                Err(anyhow::anyhow!("Failed to initialize keyboard rendering"))
+            }
+        }
+    }
+    
+    #[cfg(not(windows))]
+    pub fn init_rendering(&mut self, _device: *mut c_void, _context: *mut c_void) -> Result<()> {
+        unsafe {
+            if vr_keyboard_init_rendering(std::ptr::null_mut(), std::ptr::null_mut()) {
                 Ok(())
             } else {
                 Err(anyhow::anyhow!("Failed to initialize keyboard rendering"))
