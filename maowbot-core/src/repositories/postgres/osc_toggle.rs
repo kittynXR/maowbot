@@ -215,6 +215,30 @@ impl OscToggleRepository for PostgresOscToggleRepository {
         Ok(toggles)
     }
     
+    async fn get_all_active_toggles(&self) -> Result<Vec<OscToggleState>, Error> {
+        let toggles = sqlx::query_as!(
+            OscToggleState,
+            r#"
+            SELECT 
+                id,
+                trigger_id,
+                user_id,
+                avatar_id,
+                COALESCE(activated_at, CURRENT_TIMESTAMP)::timestamptz as "activated_at!",
+                expires_at::timestamptz as "expires_at",
+                COALESCE(is_active, true) as "is_active!"
+            FROM osc_toggle_states
+            WHERE is_active = true
+            ORDER BY activated_at DESC
+            "#
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| Error::Database(e))?;
+        
+        Ok(toggles)
+    }
+    
     async fn get_expired_toggles(&self) -> Result<Vec<OscToggleState>, Error> {
         let toggles = sqlx::query_as!(
             OscToggleState,
@@ -239,12 +263,27 @@ impl OscToggleRepository for PostgresOscToggleRepository {
     }
     
     async fn create_toggle_state(&self, state: OscToggleState) -> Result<OscToggleState, Error> {
+        // First, deactivate any existing active toggles for this trigger/user
+        sqlx::query!(
+            r#"
+            UPDATE osc_toggle_states
+            SET is_active = false
+            WHERE trigger_id = $1 AND user_id = $2 AND is_active = true
+            "#,
+            state.trigger_id,
+            state.user_id
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(|e| Error::Database(e))?;
+        
+        // Now create the new active toggle
         let result = sqlx::query_as!(
             OscToggleState,
             r#"
             INSERT INTO osc_toggle_states
-            (trigger_id, user_id, avatar_id, expires_at)
-            VALUES ($1, $2, $3, $4)
+            (trigger_id, user_id, avatar_id, expires_at, is_active)
+            VALUES ($1, $2, $3, $4, true)
             RETURNING 
                 id,
                 trigger_id,
@@ -252,7 +291,7 @@ impl OscToggleRepository for PostgresOscToggleRepository {
                 avatar_id,
                 COALESCE(activated_at, CURRENT_TIMESTAMP)::timestamptz as "activated_at!",
                 expires_at::timestamptz as "expires_at",
-                COALESCE(is_active, true) as "is_active!"
+                is_active as "is_active!"
             "#,
             state.trigger_id,
             state.user_id,
@@ -271,7 +310,7 @@ impl OscToggleRepository for PostgresOscToggleRepository {
             r#"
             UPDATE osc_toggle_states
             SET is_active = false
-            WHERE id = $1
+            WHERE id = $1 AND is_active = true
             "#,
             id
         )

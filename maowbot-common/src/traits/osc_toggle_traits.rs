@@ -16,6 +16,7 @@ pub trait OscToggleRepository: Send + Sync {
     
     // OscToggleState methods
     async fn get_active_toggles(&self, user_id: Uuid) -> Result<Vec<OscToggleState>, Error>;
+    async fn get_all_active_toggles(&self) -> Result<Vec<OscToggleState>, Error>;
     async fn get_expired_toggles(&self) -> Result<Vec<OscToggleState>, Error>;
     async fn create_toggle_state(&self, state: OscToggleState) -> Result<OscToggleState, Error>;
     async fn deactivate_toggle(&self, id: i32) -> Result<(), Error>;

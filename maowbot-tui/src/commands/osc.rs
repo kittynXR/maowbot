@@ -290,6 +290,180 @@ pub async fn handle_osc_command(
                         Err(e) => format!("Error listing active toggles: {:?}", e),
                     }
                 }
+                "create" => {
+                    if args.len() < 7 {
+                        return "Usage: osc toggle create <redeem_id> <parameter> <type> <on_value> <off_value> [duration]\n  Example: osc toggle create 550e8400-e29b-41d4-a716-446655440000 /avatar/parameters/Wings bool true false 30".to_string();
+                    }
+                    
+                    let redeem_id = match uuid::Uuid::parse_str(args[2]) {
+                        Ok(id) => id,
+                        Err(_) => {
+                            // Try to list redeems to help the user
+                            return match bot_api.list_redeems("twitch").await {
+                                Ok(redeems) => {
+                                    let mut output = format!("Invalid UUID format. Available redeems:\n");
+                                    for redeem in redeems {
+                                        output.push_str(&format!("  {} - {}\n", redeem.redeem_id, redeem.reward_name));
+                                    }
+                                    output.push_str("\nUsage: osc toggle create <redeem_id> <parameter> <type> <on_value> <off_value> [duration]");
+                                    output
+                                }
+                                Err(_) => "Invalid UUID format for redeem_id.".to_string(),
+                            };
+                        }
+                    };
+                    
+                    let parameter_name = args[3].to_string();
+                    let parameter_type = args[4].to_string();
+                    let on_value = args[5].to_string();
+                    let off_value = args[6].to_string();
+                    let duration = args.get(7).and_then(|s| s.parse::<i32>().ok());
+                    
+                    // Validate parameter type
+                    if !["bool", "int", "float"].contains(&parameter_type.as_str()) {
+                        return "Invalid parameter type. Use 'bool', 'int', or 'float'.".to_string();
+                    }
+                    
+                    // Validate values based on type
+                    let validation_result = match parameter_type.as_str() {
+                        "bool" => {
+                            if on_value.parse::<bool>().is_err() || off_value.parse::<bool>().is_err() {
+                                Err("Invalid boolean values. Use 'true' or 'false'.".to_string())
+                            } else {
+                                Ok(())
+                            }
+                        }
+                        "int" => {
+                            if on_value.parse::<i32>().is_err() || off_value.parse::<i32>().is_err() {
+                                Err("Invalid integer values.".to_string())
+                            } else {
+                                Ok(())
+                            }
+                        }
+                        "float" => {
+                            if on_value.parse::<f32>().is_err() || off_value.parse::<f32>().is_err() {
+                                Err("Invalid float values.".to_string())
+                            } else {
+                                Ok(())
+                            }
+                        }
+                        _ => unreachable!(),
+                    };
+                    
+                    if let Err(e) = validation_result {
+                        return e;
+                    }
+                    
+                    let trigger = maowbot_common::models::osc_toggle::OscTrigger {
+                        id: 0, // Will be assigned by database
+                        redeem_id,
+                        parameter_name: parameter_name.clone(),
+                        parameter_type: parameter_type.clone(),
+                        on_value: on_value.clone(),
+                        off_value: off_value.clone(),
+                        duration_seconds: duration,
+                        cooldown_seconds: 0, // Default cooldown
+                        enabled: true,
+                        created_at: chrono::Utc::now(),
+                        updated_at: chrono::Utc::now(),
+                    };
+                    
+                    match bot_api.osc_create_trigger(trigger).await {
+                        Ok(created) => {
+                            format!("Created OSC trigger #{} for parameter {} ({})", 
+                                created.id, parameter_name,
+                                if let Some(d) = duration {
+                                    format!("{}s duration", d)
+                                } else {
+                                    "permanent".to_string()
+                                }
+                            )
+                        }
+                        Err(e) => format!("Error creating trigger: {:?}", e),
+                    }
+                }
+                "update" => {
+                    if args.len() < 5 {
+                        return "Usage: osc toggle update <trigger_id> <field> <value>\n  Fields: parameter_name, parameter_type, on_value, off_value, duration_seconds, cooldown_seconds, enabled\n  Example: osc toggle update 3 duration_seconds 60".to_string();
+                    }
+                    
+                    let trigger_id = match args[2].parse::<i32>() {
+                        Ok(id) => id,
+                        Err(_) => return "Invalid trigger ID. Must be a number.".to_string(),
+                    };
+                    
+                    let field = args[3];
+                    let value = args[4];
+                    
+                    // First, fetch the existing trigger
+                    let triggers = match bot_api.osc_list_triggers_with_redeems().await {
+                        Ok(triggers) => triggers,
+                        Err(e) => return format!("Error fetching trigger: {:?}", e),
+                    };
+                    
+                    let (mut trigger, _) = match triggers.into_iter().find(|(t, _)| t.id == trigger_id) {
+                        Some(t) => t,
+                        None => return format!("Trigger #{} not found.", trigger_id),
+                    };
+                    
+                    // Update the specified field
+                    match field {
+                        "parameter_name" => trigger.parameter_name = value.to_string(),
+                        "parameter_type" => {
+                            if !["bool", "int", "float"].contains(&value) {
+                                return "Invalid parameter type. Use 'bool', 'int', or 'float'.".to_string();
+                            }
+                            trigger.parameter_type = value.to_string();
+                        }
+                        "on_value" => trigger.on_value = value.to_string(),
+                        "off_value" => trigger.off_value = value.to_string(),
+                        "duration_seconds" => {
+                            trigger.duration_seconds = if value == "null" || value == "0" {
+                                None
+                            } else {
+                                match value.parse::<i32>() {
+                                    Ok(d) => Some(d),
+                                    Err(_) => return "Invalid duration. Must be a number or 'null'.".to_string(),
+                                }
+                            };
+                        }
+                        "cooldown_seconds" => {
+                            match value.parse::<i32>() {
+                                Ok(c) => trigger.cooldown_seconds = c,
+                                Err(_) => return "Invalid cooldown. Must be a number.".to_string(),
+                            }
+                        }
+                        "enabled" => {
+                            match value.parse::<bool>() {
+                                Ok(e) => trigger.enabled = e,
+                                Err(_) => return "Invalid enabled value. Use 'true' or 'false'.".to_string(),
+                            }
+                        }
+                        _ => return format!("Unknown field '{}'. Valid fields: parameter_name, parameter_type, on_value, off_value, duration_seconds, cooldown_seconds, enabled", field),
+                    }
+                    
+                    trigger.updated_at = chrono::Utc::now();
+                    
+                    match bot_api.osc_update_trigger(trigger).await {
+                        Ok(_) => format!("Updated trigger #{} - {} set to '{}'", trigger_id, field, value),
+                        Err(e) => format!("Error updating trigger: {:?}", e),
+                    }
+                }
+                "delete" => {
+                    if args.len() < 3 {
+                        return "Usage: osc toggle delete <trigger_id>".to_string();
+                    }
+                    
+                    let trigger_id = match args[2].parse::<i32>() {
+                        Ok(id) => id,
+                        Err(_) => return "Invalid trigger ID. Must be a number.".to_string(),
+                    };
+                    
+                    match bot_api.osc_delete_trigger(trigger_id).await {
+                        Ok(_) => format!("Deleted OSC trigger #{}", trigger_id),
+                        Err(e) => format!("Error deleting trigger: {:?}", e),
+                    }
+                }
                 _ => "Unknown toggle subcommand. Use 'osc toggle' for help.".to_string(),
             }
         },

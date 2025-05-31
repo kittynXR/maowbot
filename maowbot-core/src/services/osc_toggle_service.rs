@@ -42,7 +42,7 @@ impl OscToggleService {
             return Err(Error::ValidationError("OSC trigger is disabled".to_string()));
         }
         
-        // Check for active toggles if there's a cooldown
+        // Check for cooldown
         if trigger.cooldown_seconds > 0 {
             let active_toggles = self.toggle_repo.get_active_toggles(user_id).await?;
             if active_toggles.iter().any(|t| t.trigger_id == trigger.id) {

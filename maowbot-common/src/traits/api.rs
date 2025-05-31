@@ -150,6 +150,7 @@ pub trait OscApi: Send + Sync {
     async fn osc_update_trigger(&self, trigger: crate::models::osc_toggle::OscTrigger) -> Result<crate::models::osc_toggle::OscTrigger, Error>;
     async fn osc_delete_trigger(&self, trigger_id: i32) -> Result<(), Error>;
     async fn osc_list_active_toggles(&self, user_id: Option<uuid::Uuid>) -> Result<Vec<crate::models::osc_toggle::OscToggleState>, Error>;
+    async fn osc_activate_toggle(&self, redeem_id: uuid::Uuid, user_id: uuid::Uuid) -> Result<(), Error>;
 }
 
 #[async_trait]

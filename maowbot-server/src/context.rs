@@ -330,7 +330,7 @@ impl ServerContext {
         
         // Create and set OSC toggle repository
         let osc_toggle_repo = Arc::new(maowbot_core::repositories::postgres::osc_toggle::PostgresOscToggleRepository::new(db.pool().clone()));
-        plugin_manager.set_osc_toggle_repo(osc_toggle_repo);
+        plugin_manager.set_osc_toggle_repo(osc_toggle_repo.clone());
 
         // subscribe / load etc. (all the same mut calls)
         plugin_manager.subscribe_to_event_bus(event_bus.clone()).await;
@@ -354,6 +354,11 @@ impl ServerContext {
 
         // Create the new manager for OSC:
         let mut osc_manager = MaowOscManager::new();
+        
+        // Load VRChat destination from database if available for the main manager
+        if let Ok(Some(vrchat_dest)) = bot_config_repo.get_value("osc_vrchat_dest").await {
+            osc_manager.set_vrchat_dest(Some(vrchat_dest)).await;
+        }
 
         // Set up the VRChat avatar watcher if VRChat directories are found
         if let Some(avatar_dir) = maowbot_osc::vrchat::get_vrchat_avatar_dir() {
@@ -364,8 +369,40 @@ impl ServerContext {
             tracing::warn!("VRChat avatar directory not found - avatar watcher disabled");
         }
 
-        // After we're done with mutations, create the Arc
+        // Create an Arc first for parts that need it
         let osc_manager_arc = Arc::new(osc_manager);
+        
+        // Clone the Arc's inner value to store in the holder
+        // Since MaowOscManager doesn't implement Clone, we'll need to use the Arc everywhere
+        // Actually, let's not use the holder approach - just share the Arc
+        
+        // Update the holder to contain the manager from the Arc
+        // We'll create a separate manager for the holder since we can't clone
+        let mut holder_manager = MaowOscManager::new();
+        
+        // Load VRChat destination from database if available
+        if let Ok(Some(vrchat_dest)) = bot_config_repo.get_value("osc_vrchat_dest").await {
+            holder_manager.set_vrchat_dest(Some(vrchat_dest)).await;
+        }
+        
+        if let Some(avatar_dir) = maowbot_osc::vrchat::get_vrchat_avatar_dir() {
+            let avatar_watcher = Arc::new(Mutex::new(maowbot_osc::vrchat::avatar_watcher::AvatarWatcher::new(avatar_dir)));
+            holder_manager.set_vrchat_watcher(avatar_watcher.clone());
+            {
+                let mut holder = osc_manager_holder.write().await;
+                *holder = Some(holder_manager);
+            }
+        } else {
+            let mut holder = osc_manager_holder.write().await;
+            *holder = Some(holder_manager);
+        }
+        
+        // Create OSC toggle service using the shared holder
+        let osc_toggle_service = Arc::new(maowbot_core::services::osc_toggle_service::OscToggleService::new(
+            osc_manager_holder.clone(),
+            osc_toggle_repo.clone()
+        ));
+        plugin_manager.set_osc_toggle_service(osc_toggle_service);
 
         plugin_manager.set_osc_manager(osc_manager_arc.clone());
 

@@ -222,8 +222,15 @@ impl OscApi for PluginManager {
         if let Some(uid) = user_id {
             repo.get_active_toggles(uid).await
         } else {
-            // Get all active toggles - we'd need to add this method or return empty
-            Ok(Vec::new())
+            repo.get_all_active_toggles().await
         }
+    }
+    
+    async fn osc_activate_toggle(&self, redeem_id: uuid::Uuid, user_id: uuid::Uuid) -> Result<(), Error> {
+        let osc_toggle_service = self.osc_toggle_service
+            .as_ref()
+            .ok_or_else(|| Error::Platform("No OSC toggle service attached".to_string()))?;
+        
+        osc_toggle_service.activate_toggle(redeem_id, user_id, None).await
     }
 }

@@ -102,6 +102,7 @@ pub struct PluginManager {
     // NEW: OSC toggle repository
     // ---------------------------------------
     pub osc_toggle_repo: Option<Arc<dyn maowbot_common::traits::osc_toggle_traits::OscToggleRepository + Send + Sync>>,
+    pub osc_toggle_service: Option<Arc<crate::services::osc_toggle_service::OscToggleService>>,
 }
 
 impl PluginManager {
@@ -151,6 +152,7 @@ impl PluginManager {
             osc_manager: None, // newly added
             ai_api_impl, // AI service implementation
             osc_toggle_repo: None, // OSC toggle repository
+            osc_toggle_service: None, // OSC toggle service
         };
         manager.load_plugin_states();
         manager
@@ -182,6 +184,10 @@ impl PluginManager {
     /// Sets the OSC toggle repository
     pub fn set_osc_toggle_repo(&mut self, repo: Arc<dyn maowbot_common::traits::osc_toggle_traits::OscToggleRepository + Send + Sync>) {
         self.osc_toggle_repo = Some(repo);
+    }
+    
+    pub fn set_osc_toggle_service(&mut self, service: Arc<crate::services::osc_toggle_service::OscToggleService>) {
+        self.osc_toggle_service = Some(service);
     }
     /// Subscribes the manager to events from the bus, so we can broadcast them to plugins if needed.
     pub async fn subscribe_to_event_bus(&self, bus: Arc<EventBus>) {

@@ -763,6 +763,10 @@ impl maowbot_common::traits::api::OscApi for BotApiWrapper {
     async fn osc_list_active_toggles(&self, user_id: Option<uuid::Uuid>) -> Result<Vec<maowbot_common::models::osc_toggle::OscToggleState>, maowbot_common::error::Error> {
         self.plugin_manager.osc_list_active_toggles(user_id).await
     }
+    
+    async fn osc_activate_toggle(&self, redeem_id: uuid::Uuid, user_id: uuid::Uuid) -> Result<(), maowbot_common::error::Error> {
+        self.plugin_manager.osc_activate_toggle(redeem_id, user_id).await
+    }
 }
 
 // DripApi
