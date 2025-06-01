@@ -3470,6 +3470,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "maowbot-common-ui"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "crossbeam-channel",
+ "maowbot-proto",
+ "tokio",
+ "tokio-stream",
+ "tonic",
+ "tracing",
+]
+
+[[package]]
 name = "maowbot-core"
 version = "0.1.1"
 dependencies = [
@@ -3541,8 +3554,8 @@ dependencies = [
  "crossbeam-channel",
  "eframe",
  "egui",
+ "maowbot-common-ui",
  "maowbot-proto",
- "maowbot-ui",
  "tokio",
  "tracing",
  "tracing-subscriber",
@@ -3558,8 +3571,8 @@ dependencies = [
  "cc",
  "crossbeam-channel",
  "libc",
+ "maowbot-common-ui",
  "maowbot-proto",
- "maowbot-ui",
  "pkg-config",
  "tokio",
  "tokio-stream",
@@ -3633,19 +3646,6 @@ dependencies = [
  "tokio",
  "tracing",
  "uuid",
-]
-
-[[package]]
-name = "maowbot-ui"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "crossbeam-channel",
- "maowbot-proto",
- "tokio",
- "tokio-stream",
- "tonic",
- "tracing",
 ]
 
 [[package]]
