@@ -83,17 +83,21 @@ impl EguiRenderer {
                 let ideal_chat_width = 340.0;
                 let max_chat_width = 400.0;
                 
-                // Calculate chat width based on available space
-                let chat_width = if total_width > ideal_chat_width + 400.0 {
+                // Calculate tabs minimum width requirement
+                let min_tabs_width = 400.0; // Minimum for tabs to be useful
+                
+                // Determine chat width based on available space
+                let final_chat_width = if total_width - separator_width >= ideal_chat_width + min_tabs_width {
+                    // Plenty of space, use ideal width
                     ideal_chat_width
-                } else if total_width > min_chat_width + 300.0 {
+                } else if total_width - separator_width >= min_chat_width + min_tabs_width {
+                    // Limited space, use minimum
                     min_chat_width
                 } else {
-                    total_width * 0.4 // Fallback to percentage if very small
-                };
+                    // Very limited space, use percentage
+                    (total_width * 0.3).max(200.0)
+                }.min(max_chat_width); // Never exceed max
                 
-                // Constrain to max
-                let final_chat_width = chat_width.min(max_chat_width);
                 let tabs_width = total_width - final_chat_width - separator_width;
 
                 // Secondary chat

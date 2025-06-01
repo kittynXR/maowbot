@@ -28,6 +28,7 @@ struct DesktopApp {
     window_mode: WindowMode,
     secondary_window_id: Option<egui::ViewportId>,
     should_open_secondary: bool,
+    secondary_renderer: Option<egui_renderer::EguiRenderer>,
 }
 
 impl DesktopApp {
@@ -71,6 +72,7 @@ impl DesktopApp {
             window_mode,
             secondary_window_id: None,
             should_open_secondary: false,
+            secondary_renderer: None,
         })
     }
 
@@ -140,26 +142,36 @@ impl eframe::App for DesktopApp {
         // Handle deferred secondary window opening
         if self.should_open_secondary {
             self.should_open_secondary = false;
-            let state_clone = self.state.clone();
+            self.secondary_renderer = Some(egui_renderer::EguiRenderer::new(WindowMode::Secondary));
+        }
+        
+        // Show secondary window if undocked
+        if !*self.state.is_docked.lock().unwrap() {
             let viewport_id = egui::ViewportId::from_hash_of("secondary_window");
             self.secondary_window_id = Some(viewport_id);
             
-            ctx.show_viewport_deferred(
-                viewport_id,
-                egui::ViewportBuilder::default()
-                    .with_title("maowbot - Secondary View")
-                    .with_inner_size([800.0, 600.0])
-                    .with_min_inner_size([600.0, 400.0])
-                    .with_active(true),
-                move |ctx, _class| {
-                    // Create renderer each frame (it's lightweight)
-                    let mut renderer = egui_renderer::EguiRenderer::new(WindowMode::Secondary);
-                    renderer.render_secondary_window(ctx, &state_clone);
-                    
-                    // Keep repainting while undocked
-                    ctx.request_repaint();
-                },
-            );
+            if let Some(renderer) = &mut self.secondary_renderer {
+                let state_clone = self.state.clone();
+                ctx.show_viewport_deferred(
+                    viewport_id,
+                    egui::ViewportBuilder::default()
+                        .with_title("maowbot - Secondary View")
+                        .with_inner_size([800.0, 600.0])
+                        .with_min_inner_size([600.0, 400.0]),
+                    move |ctx, _class| {
+                        // Create a temporary renderer for this closure
+                        let mut temp_renderer = egui_renderer::EguiRenderer::new(WindowMode::Secondary);
+                        temp_renderer.render_secondary_window(ctx, &state_clone);
+                        ctx.request_repaint();
+                    },
+                );
+            }
+        } else {
+            // Clean up when docked
+            self.secondary_renderer = None;
+            if let Some(id) = self.secondary_window_id.take() {
+                ctx.send_viewport_cmd_to(id, egui::ViewportCommand::Close);
+            }
         }
         
 
@@ -183,11 +195,7 @@ impl eframe::App for DesktopApp {
                 }
                 maowbot_ui::UIEvent::Dock => {
                     *self.state.is_docked.lock().unwrap() = true;
-                    
-                    // Close secondary window if it exists
-                    if let Some(id) = self.secondary_window_id.take() {
-                        ctx.send_viewport_cmd_to(id, egui::ViewportCommand::Close);
-                    }
+                    // Window will be closed in the next frame
                 }
                 _ => {}
             }
