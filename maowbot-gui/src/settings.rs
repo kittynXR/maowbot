@@ -1,5 +1,5 @@
 use egui::{Context, Ui};
-pub(crate) use maowbot_ui::{
+pub(crate) use maowbot_common_ui::{
     SettingsTab, ChatSide, StreamerListEntry,
     UISettings, AudioSettings, StreamOverlaySettings
 };

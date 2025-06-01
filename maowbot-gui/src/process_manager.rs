@@ -1,6 +1,6 @@
 use anyhow::Result;
 use crossbeam_channel::Sender;
-use maowbot_ui::AppEvent;
+use maowbot_common_ui::AppEvent;
 use std::process::Stdio;
 use tokio::process::{Child, Command};
 use std::sync::Arc;

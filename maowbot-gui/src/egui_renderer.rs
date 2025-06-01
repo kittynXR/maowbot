@@ -1,7 +1,7 @@
 use crossbeam_channel::Sender;
 use egui::{Color32, RichText, ScrollArea, TextEdit, Vec2, Rect};
-use maowbot_ui::{AppState, UIEvent, LayoutSection};
-use maowbot_ui::events::ChatCommand;
+use maowbot_common_ui::{AppState, UIEvent, LayoutSection};
+use maowbot_common_ui::events::ChatCommand;
 use std::sync::{Arc, Mutex};
 
 use crate::layout_constants::*;

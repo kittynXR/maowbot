@@ -12,7 +12,7 @@ members = [
     "maowbot-server",
     "maowbot-tui",
     "plugins/plugin_hello",
-    "maowbot-ui",
+    "maowbot-common-ui",
 ]
 
 [workspace.package]

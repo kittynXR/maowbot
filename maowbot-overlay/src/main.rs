@@ -12,10 +12,10 @@ use tracing_subscriber::EnvFilter;
 #[cfg(windows)]
 use windows::core::Interface;
 use keyboard::VirtualKeyboard;
-use maowbot_ui::{AppEvent, AppState, ChatEvent, SharedGrpcClient};
+use maowbot_common_ui::{AppEvent, AppState, ChatEvent, SharedGrpcClient};
 use imgui_renderer::ImGuiOverlayRenderer;
-use maowbot_ui::events::ChatCommand;
-use maowbot_ui::settings::{StreamOverlaySettings, UISettings, AudioSettings};
+use maowbot_common_ui::events::ChatCommand;
+use maowbot_common_ui::settings::{StreamOverlaySettings, UISettings, AudioSettings};
 
 struct OverlayApp {
     state: AppState,

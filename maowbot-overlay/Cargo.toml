@@ -6,7 +6,7 @@ build       = "build.rs"
 
 [dependencies]
 # ── UI Core ─────────────────────────────────────────────────────────────
-maowbot-ui    = { path = "../maowbot-ui" }
+maowbot-common-ui = { path = "../maowbot-common-ui" }
 maowbot-proto = { path = "../maowbot-proto" }
 
 # ── async runtime ───────────────────────────────────────────────────────

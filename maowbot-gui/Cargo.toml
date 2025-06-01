@@ -8,7 +8,7 @@ name = "maowbot-gui"
 path = "src/main.rs"
 
 [dependencies]
-maowbot-ui = { path = "../maowbot-ui" }
+maowbot-common-ui = { path = "../maowbot-common-ui" }
 maowbot-proto = { path = "../maowbot-proto" }
 
 egui = "0.31"

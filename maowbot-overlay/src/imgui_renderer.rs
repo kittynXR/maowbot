@@ -1,5 +1,5 @@
-use maowbot_ui::{AppState, ChatState, ChatMessage};
-use maowbot_ui::settings::{StreamOverlaySettings, UISettings, AudioSettings};
+use maowbot_common_ui::{AppState, ChatState, ChatMessage};
+use maowbot_common_ui::settings::{StreamOverlaySettings, UISettings, AudioSettings};
 use std::ffi::CString;
 use crate::ffi::{DashboardState, OverlaySettingsFFI};
 
