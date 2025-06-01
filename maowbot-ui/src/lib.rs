@@ -5,7 +5,7 @@ pub mod events;
 
 pub use chat::{ChatState, ChatMessage, ChatEvent};
 pub use grpc::SharedGrpcClient;
-pub use state::AppState;
+pub use state::{AppState, LayoutSection};
 pub use events::{UIEvent, AppEvent, ChatCommand};
 
 use anyhow::Result;

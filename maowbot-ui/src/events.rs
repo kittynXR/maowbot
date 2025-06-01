@@ -9,6 +9,8 @@ pub enum UIEvent {
     StartOverlay,
     OpenWebView(String),
     Quit,
+    Undock,
+    Dock,
 }
 
 pub enum AppEvent {
