@@ -127,6 +127,9 @@ impl EguiRenderer {
 
         if should_dock {
             *state.is_docked.lock().unwrap() = true;
+            // Request repaint to ensure main window updates
+            ctx.request_repaint();
+            // Send close command
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         }
     }

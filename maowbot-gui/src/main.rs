@@ -152,6 +152,7 @@ impl eframe::App for DesktopApp {
             
             if let Some(renderer) = &mut self.secondary_renderer {
                 let state_clone = self.state.clone();
+                let main_ctx = ctx.clone();
                 ctx.show_viewport_deferred(
                     viewport_id,
                     egui::ViewportBuilder::default()
@@ -162,6 +163,12 @@ impl eframe::App for DesktopApp {
                         // Create a temporary renderer for this closure
                         let mut temp_renderer = egui_renderer::EguiRenderer::new(WindowMode::Secondary);
                         temp_renderer.render_secondary_window(ctx, &state_clone);
+                        
+                        // Check if we just docked and need to notify main window
+                        if *state_clone.is_docked.lock().unwrap() {
+                            main_ctx.request_repaint();
+                        }
+                        
                         ctx.request_repaint();
                     },
                 );
@@ -201,8 +208,11 @@ impl eframe::App for DesktopApp {
             }
         }
 
-        // Request repaint for animations
+        // Request repaint for animations and state changes
         ctx.request_repaint();
+        
+        // Also request repaint after a short delay to catch state changes
+        ctx.request_repaint_after(std::time::Duration::from_millis(100));
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
