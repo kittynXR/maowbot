@@ -53,12 +53,6 @@ impl EguiRenderer {
     }
 
     pub fn render_secondary_window(&mut self, ctx: &egui::Context, state: &AppState) {
-        // Check if we should close this window
-        if *state.is_docked.lock().unwrap() {
-            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-            return;
-        }
-
         let mut should_dock = false;
 
         // Top panel with dock button
@@ -81,16 +75,33 @@ impl EguiRenderer {
             ui.horizontal_top(|ui| {
                 ui.set_height(ui.available_height());
                 
-                let width = ui.available_width();
-                let chat_width = width * 0.4;
-                let tabs_width = width * 0.6 - 5.0;
+                let total_width = ui.available_width();
+                let separator_width = 5.0;
+                
+                // Apply same constraints as main chat
+                let min_chat_width = 280.0;
+                let ideal_chat_width = 340.0;
+                let max_chat_width = 400.0;
+                
+                // Calculate chat width based on available space
+                let chat_width = if total_width > ideal_chat_width + 400.0 {
+                    ideal_chat_width
+                } else if total_width > min_chat_width + 300.0 {
+                    min_chat_width
+                } else {
+                    total_width * 0.4 // Fallback to percentage if very small
+                };
+                
+                // Constrain to max
+                let final_chat_width = chat_width.min(max_chat_width);
+                let tabs_width = total_width - final_chat_width - separator_width;
 
                 // Secondary chat
                 ui.allocate_ui_with_layout(
-                    egui::vec2(chat_width, ui.available_height()),
+                    egui::vec2(final_chat_width, ui.available_height()),
                     egui::Layout::top_down(egui::Align::LEFT),
                     |ui| {
-                        ui.set_width(chat_width);
+                        ui.set_width(final_chat_width);
                         let (dummy_tx, _) = crossbeam_channel::unbounded();
                         self.render_left_chat(ui, state, &dummy_tx);
                     },
@@ -112,6 +123,7 @@ impl EguiRenderer {
 
         if should_dock {
             *state.is_docked.lock().unwrap() = true;
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         }
     }
 

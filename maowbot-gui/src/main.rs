@@ -149,7 +149,8 @@ impl eframe::App for DesktopApp {
                 egui::ViewportBuilder::default()
                     .with_title("maowbot - Secondary View")
                     .with_inner_size([800.0, 600.0])
-                    .with_min_inner_size([600.0, 400.0]),
+                    .with_min_inner_size([600.0, 400.0])
+                    .with_active(true),
                 move |ctx, _class| {
                     // Create renderer each frame (it's lightweight)
                     let mut renderer = egui_renderer::EguiRenderer::new(WindowMode::Secondary);
@@ -160,6 +161,7 @@ impl eframe::App for DesktopApp {
                 },
             );
         }
+        
 
         // Process UI events
         if let Some(event) = self.renderer.handle_ui_event(
