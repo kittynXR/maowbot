@@ -1,0 +1,401 @@
+syntax = "proto3";
+
+package maowbot.services;
+
+import "common.proto";
+import "google/protobuf/empty.proto";
+import "google/protobuf/timestamp.proto";
+
+service OSCService {
+  // Server Control
+  rpc StartOSC(StartOSCRequest) returns (StartOSCResponse);
+  rpc StopOSC(StopOSCRequest) returns (google.protobuf.Empty);
+  rpc RestartOSC(RestartOSCRequest) returns (RestartOSCResponse);
+  rpc GetOSCStatus(GetOSCStatusRequest) returns (GetOSCStatusResponse);
+  
+  // OSCQuery
+  rpc DiscoverPeers(DiscoverPeersRequest) returns (DiscoverPeersResponse);
+  rpc GetPeerInfo(GetPeerInfoRequest) returns (GetPeerInfoResponse);
+  
+  // Chatbox
+  rpc SendChatbox(SendChatboxRequest) returns (google.protobuf.Empty);
+  rpc SetTypingIndicator(SetTypingIndicatorRequest) returns (google.protobuf.Empty);
+  
+  // Avatar Parameters
+  rpc SendAvatarParameter(SendAvatarParameterRequest) returns (google.protobuf.Empty);
+  rpc BatchSendAvatarParameters(BatchSendAvatarParametersRequest) returns (BatchSendAvatarParametersResponse);
+  rpc GetAvatarParameters(GetOSCAvatarParametersRequest) returns (GetOSCAvatarParametersResponse);
+  
+  // Input Control
+  rpc SendInput(SendInputRequest) returns (google.protobuf.Empty);
+  rpc SendAxisInput(SendAxisInputRequest) returns (google.protobuf.Empty);
+  
+  // Trigger Management
+  rpc ListTriggers(ListTriggersRequest) returns (ListTriggersResponse);
+  rpc CreateTrigger(CreateTriggerRequest) returns (CreateTriggerResponse);
+  rpc UpdateTrigger(UpdateTriggerRequest) returns (UpdateTriggerResponse);
+  rpc DeleteTrigger(DeleteTriggerRequest) returns (google.protobuf.Empty);
+  rpc ListTriggersWithRedeems(ListTriggersWithRedeemsRequest) returns (ListTriggersWithRedeemsResponse);
+  
+  // Toggle Management
+  rpc ListActiveToggles(ListActiveTogglesRequest) returns (ListActiveTogglesResponse);
+  rpc SetToggleState(SetToggleStateRequest) returns (google.protobuf.Empty);
+  
+  // Raw OSC
+  rpc SendRawOSC(SendRawOSCRequest) returns (google.protobuf.Empty);
+  rpc StreamOSCPackets(StreamOSCPacketsRequest) returns (stream maowbot.common.OscPacket);
+  
+  // Streaming
+  rpc StreamOSCEvents(StreamOSCEventsRequest) returns (stream OSCEvent);
+}
+
+// Server Control
+message StartOSCRequest {
+  OSCConfig config = 1;
+}
+
+message OSCConfig {
+  int32 receive_port = 1; // Default 9001
+  int32 send_port = 2; // Default 9000
+  string bind_address = 3; // Default "127.0.0.1"
+  bool enable_oscquery = 4;
+  int32 oscquery_port = 5; // Default 9002
+  bool auto_discover = 6;
+}
+
+message StartOSCResponse {
+  bool success = 1;
+  string error_message = 2;
+  OSCStatus status = 3;
+}
+
+message StopOSCRequest {
+  bool force = 1;
+}
+
+message RestartOSCRequest {
+  OSCConfig new_config = 1; // Optional
+}
+
+message RestartOSCResponse {
+  bool success = 1;
+  string error_message = 2;
+  OSCStatus status = 3;
+}
+
+message GetOSCStatusRequest {
+}
+
+message GetOSCStatusResponse {
+  OSCStatus status = 1;
+}
+
+message OSCStatus {
+  bool is_running = 1;
+  OSCConfig config = 2;
+  int64 packets_sent = 3;
+  int64 packets_received = 4;
+  google.protobuf.Timestamp started_at = 5;
+  repeated OSCPeer connected_peers = 6;
+  map<string, string> avatar_parameters = 7; // Current parameter values
+}
+
+// OSCQuery
+message DiscoverPeersRequest {
+  int32 timeout_seconds = 1; // Default 5
+}
+
+message DiscoverPeersResponse {
+  repeated OSCPeer peers = 1;
+}
+
+message OSCPeer {
+  string name = 1;
+  string address = 2;
+  int32 port = 3;
+  string service_type = 4;
+  map<string, string> properties = 5;
+  google.protobuf.Timestamp discovered_at = 6;
+}
+
+message GetPeerInfoRequest {
+  string peer_address = 1;
+  int32 peer_port = 2;
+}
+
+message GetPeerInfoResponse {
+  OSCPeer peer = 1;
+  repeated OSCNode nodes = 2; // OSCQuery namespace
+}
+
+message OSCNode {
+  string path = 1;
+  string type = 2; // OSC type tag
+  string description = 3;
+  repeated OSCNode children = 4;
+  OSCValue current_value = 5;
+  OSCValue default_value = 6;
+  OSCRange range = 7;
+}
+
+message OSCValue {
+  oneof value {
+    bool bool_value = 1;
+    int32 int_value = 2;
+    float float_value = 3;
+    string string_value = 4;
+    bytes blob_value = 5;
+  }
+}
+
+message OSCRange {
+  OSCValue min = 1;
+  OSCValue max = 2;
+}
+
+// Chatbox
+message SendChatboxRequest {
+  string message = 1;
+  bool notify_sound = 2; // Play notification sound
+  bool use_typing_indicator = 3;
+}
+
+message SetTypingIndicatorRequest {
+  bool is_typing = 1;
+}
+
+// Avatar Parameters
+message SendAvatarParameterRequest {
+  string parameter_name = 1;
+  oneof value {
+    bool bool_value = 2;
+    int32 int_value = 3;
+    float float_value = 4;
+  }
+}
+
+message BatchSendAvatarParametersRequest {
+  repeated AvatarParameterUpdate parameters = 1;
+}
+
+message AvatarParameterUpdate {
+  string parameter_name = 1;
+  oneof value {
+    bool bool_value = 2;
+    int32 int_value = 3;
+    float float_value = 4;
+  }
+}
+
+message BatchSendAvatarParametersResponse {
+  int32 success_count = 1;
+  repeated string failed_parameters = 2;
+}
+
+message GetOSCAvatarParametersRequest {
+  bool include_values = 1;
+}
+
+message GetOSCAvatarParametersResponse {
+  repeated OSCAvatarParameter parameters = 1;
+}
+
+message OSCAvatarParameter {
+  string name = 1;
+  OSCParameterType type = 2;
+  OSCValue current_value = 3;
+  OSCValue default_value = 4;
+  bool is_synced = 5; // Synced to network
+}
+
+enum OSCParameterType {
+  OSC_PARAMETER_TYPE_UNKNOWN = 0;
+  OSC_PARAMETER_TYPE_BOOL = 1;
+  OSC_PARAMETER_TYPE_INT = 2;
+  OSC_PARAMETER_TYPE_FLOAT = 3;
+}
+
+// Input Control
+message SendInputRequest {
+  OSCInput input = 1;
+  bool value = 2;
+}
+
+enum OSCInput {
+  OSC_INPUT_UNKNOWN = 0;
+  OSC_INPUT_VERTICAL = 1;
+  OSC_INPUT_HORIZONTAL = 2;
+  OSC_INPUT_MOVE_FORWARD = 3;
+  OSC_INPUT_MOVE_BACKWARD = 4;
+  OSC_INPUT_MOVE_LEFT = 5;
+  OSC_INPUT_MOVE_RIGHT = 6;
+  OSC_INPUT_LOOK_LEFT = 7;
+  OSC_INPUT_LOOK_RIGHT = 8;
+  OSC_INPUT_JUMP = 9;
+  OSC_INPUT_RUN = 10;
+  OSC_INPUT_VOICE = 11;
+}
+
+message SendAxisInputRequest {
+  OSCAxis axis = 1;
+  float value = 2; // -1.0 to 1.0
+}
+
+enum OSCAxis {
+  OSC_AXIS_UNKNOWN = 0;
+  OSC_AXIS_VERTICAL = 1;
+  OSC_AXIS_HORIZONTAL = 2;
+  OSC_AXIS_LOOK_HORIZONTAL = 3;
+  OSC_AXIS_LOOK_VERTICAL = 4;
+}
+
+// Trigger Management
+message ListTriggersRequest {
+  bool active_only = 1;
+}
+
+message ListTriggersResponse {
+  repeated maowbot.common.OscTrigger triggers = 1;
+}
+
+message CreateTriggerRequest {
+  maowbot.common.OscTrigger trigger = 1;
+}
+
+message CreateTriggerResponse {
+  maowbot.common.OscTrigger trigger = 1;
+}
+
+message UpdateTriggerRequest {
+  maowbot.common.OscTrigger trigger = 1;
+}
+
+message UpdateTriggerResponse {
+  maowbot.common.OscTrigger trigger = 1;
+}
+
+message DeleteTriggerRequest {
+  int32 trigger_id = 1;
+}
+
+message ListTriggersWithRedeemsRequest {
+}
+
+message ListTriggersWithRedeemsResponse {
+  repeated TriggerWithRedeems triggers = 1;
+}
+
+message TriggerWithRedeems {
+  maowbot.common.OscTrigger trigger = 1;
+  repeated maowbot.common.Redeem linked_redeems = 2;
+}
+
+// Toggle Management
+message ListActiveTogglesRequest {
+  string user_id = 1; // Optional filter
+}
+
+message ListActiveTogglesResponse {
+  repeated ActiveToggle toggles = 1;
+}
+
+message ActiveToggle {
+  string toggle_id = 1;
+  string user_id = 2;
+  string parameter_name = 3;
+  bool current_state = 4;
+  google.protobuf.Timestamp activated_at = 5;
+  google.protobuf.Timestamp expires_at = 6; // Optional
+}
+
+message SetToggleStateRequest {
+  string toggle_id = 1;
+  bool state = 2;
+}
+
+// Raw OSC
+message SendRawOSCRequest {
+  string address = 1;
+  repeated maowbot.common.OscValue arguments = 2;
+  string target_address = 3; // Optional specific target
+  int32 target_port = 4; // Optional specific port
+}
+
+message StreamOSCPacketsRequest {
+  repeated string address_patterns = 1; // Empty for all
+  bool include_outgoing = 2;
+  bool include_incoming = 3;
+}
+
+// Streaming Events
+message StreamOSCEventsRequest {
+  repeated OSCEventType event_types = 1; // Empty for all
+}
+
+enum OSCEventType {
+  OSC_EVENT_TYPE_UNKNOWN = 0;
+  OSC_EVENT_TYPE_PARAMETER_CHANGED = 1;
+  OSC_EVENT_TYPE_TRIGGER_ACTIVATED = 2;
+  OSC_EVENT_TYPE_TOGGLE_CHANGED = 3;
+  OSC_EVENT_TYPE_PEER_CONNECTED = 4;
+  OSC_EVENT_TYPE_PEER_DISCONNECTED = 5;
+  OSC_EVENT_TYPE_CHATBOX_SENT = 6;
+  OSC_EVENT_TYPE_INPUT_SENT = 7;
+  OSC_EVENT_TYPE_SERVER_STATUS = 8;
+}
+
+message OSCEvent {
+  OSCEventType event_type = 1;
+  google.protobuf.Timestamp timestamp = 2;
+  
+  oneof event_data {
+    ParameterChangedEvent parameter = 3;
+    TriggerActivatedEvent trigger = 4;
+    ToggleChangedEvent toggle = 5;
+    PeerEvent peer = 6;
+    ChatboxEvent chatbox = 7;
+    InputEvent input = 8;
+    ServerStatusEvent server = 9;
+  }
+}
+
+message ParameterChangedEvent {
+  string parameter_name = 1;
+  OSCValue old_value = 2;
+  OSCValue new_value = 3;
+  string source = 4; // "user", "redeem", "trigger", etc.
+}
+
+message TriggerActivatedEvent {
+  maowbot.common.OscTrigger trigger = 1;
+  string activated_by = 2; // User ID or source
+  float trigger_value = 3;
+}
+
+message ToggleChangedEvent {
+  ActiveToggle toggle = 1;
+  bool previous_state = 2;
+}
+
+message PeerEvent {
+  OSCPeer peer = 1;
+  bool connected = 2;
+}
+
+message ChatboxEvent {
+  string message = 1;
+  bool with_sound = 2;
+}
+
+message InputEvent {
+  oneof input {
+    OSCInput button = 1;
+    OSCAxis axis = 2;
+  }
+  float value = 3;
+}
+
+message ServerStatusEvent {
+  OSCStatus status = 1;
+  string message = 2;
+}

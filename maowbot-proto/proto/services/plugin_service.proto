@@ -1,0 +1,250 @@
+syntax = "proto3";
+
+package maowbot.services;
+
+import "common.proto";
+import "google/protobuf/empty.proto";
+import "google/protobuf/timestamp.proto";
+
+service PluginService {
+  // Plugin management
+  rpc ListPlugins(ListPluginsRequest) returns (ListPluginsResponse);
+  rpc GetPlugin(GetPluginRequest) returns (GetPluginResponse);
+  rpc EnablePlugin(EnablePluginRequest) returns (EnablePluginResponse);
+  rpc DisablePlugin(DisablePluginRequest) returns (google.protobuf.Empty);
+  rpc RemovePlugin(RemovePluginRequest) returns (google.protobuf.Empty);
+  rpc ReloadPlugin(ReloadPluginRequest) returns (ReloadPluginResponse);
+  
+  // Plugin installation
+  rpc InstallPlugin(InstallPluginRequest) returns (InstallPluginResponse);
+  rpc UpdatePlugin(UpdatePluginRequest) returns (UpdatePluginResponse);
+  
+  // Plugin configuration
+  rpc GetPluginConfig(GetPluginConfigRequest) returns (GetPluginConfigResponse);
+  rpc SetPluginConfig(SetPluginConfigRequest) returns (google.protobuf.Empty);
+  
+  // Plugin capabilities
+  rpc GetPluginCapabilities(GetPluginCapabilitiesRequest) returns (GetPluginCapabilitiesResponse);
+  rpc GrantPluginCapability(GrantPluginCapabilityRequest) returns (google.protobuf.Empty);
+  rpc RevokePluginCapability(RevokePluginCapabilityRequest) returns (google.protobuf.Empty);
+  
+  // Plugin communication
+  rpc SendPluginMessage(SendPluginMessageRequest) returns (SendPluginMessageResponse);
+  rpc StreamPluginMessages(StreamPluginMessagesRequest) returns (stream PluginMessage);
+  
+  // System status
+  rpc GetSystemStatus(GetSystemStatusRequest) returns (GetSystemStatusResponse);
+}
+
+// List Plugins
+message ListPluginsRequest {
+  bool active_only = 1;
+  bool include_system_plugins = 2;
+}
+
+message ListPluginsResponse {
+  repeated PluginInfo plugins = 1;
+}
+
+message PluginInfo {
+  maowbot.common.Plugin plugin = 1;
+  PluginStatus status = 2;
+  repeated string granted_capabilities = 3;
+  PluginMetrics metrics = 4;
+}
+
+message PluginStatus {
+  enum State {
+    STATE_UNKNOWN = 0;
+    STATE_LOADED = 1;
+    STATE_RUNNING = 2;
+    STATE_STOPPED = 3;
+    STATE_ERROR = 4;
+    STATE_UPDATING = 5;
+  }
+  
+  State state = 1;
+  string message = 2;
+  google.protobuf.Timestamp since = 3;
+}
+
+message PluginMetrics {
+  int64 messages_sent = 1;
+  int64 messages_received = 2;
+  int64 errors_count = 3;
+  float cpu_usage_percent = 4;
+  int64 memory_bytes = 5;
+  google.protobuf.Timestamp last_activity = 6;
+}
+
+// Get Plugin
+message GetPluginRequest {
+  string plugin_name = 1;
+  bool include_config = 2;
+  bool include_metrics = 3;
+}
+
+message GetPluginResponse {
+  PluginInfo plugin = 1;
+  map<string, string> config = 2;
+}
+
+// Enable/Disable Plugin
+message EnablePluginRequest {
+  string plugin_name = 1;
+  map<string, string> startup_config = 2;
+}
+
+message EnablePluginResponse {
+  PluginInfo plugin = 1;
+}
+
+message DisablePluginRequest {
+  string plugin_name = 1;
+  bool force = 2; // Force disable even if plugin is busy
+}
+
+// Remove Plugin
+message RemovePluginRequest {
+  string plugin_name = 1;
+  bool remove_config = 2;
+  bool remove_data = 3;
+}
+
+// Reload Plugin
+message ReloadPluginRequest {
+  string plugin_name = 1;
+  bool keep_state = 2;
+}
+
+message ReloadPluginResponse {
+  PluginInfo plugin = 1;
+}
+
+// Install Plugin
+message InstallPluginRequest {
+  oneof source {
+    string registry_name = 1; // From plugin registry
+    string file_path = 2; // Local file path
+    bytes plugin_data = 3; // Direct upload
+    string git_url = 4; // Git repository
+  }
+  string plugin_name = 5; // Optional, will extract from manifest
+  bool auto_enable = 6;
+}
+
+message InstallPluginResponse {
+  PluginInfo plugin = 1;
+  repeated string warnings = 2;
+}
+
+// Update Plugin
+message UpdatePluginRequest {
+  string plugin_name = 1;
+  string target_version = 2; // Optional, latest if not specified
+  bool backup_current = 3;
+}
+
+message UpdatePluginResponse {
+  PluginInfo plugin = 1;
+  string previous_version = 2;
+  repeated string changes = 3;
+}
+
+// Plugin Configuration
+message GetPluginConfigRequest {
+  string plugin_name = 1;
+  repeated string keys = 2; // Empty for all
+}
+
+message GetPluginConfigResponse {
+  map<string, string> config = 1;
+  repeated ConfigDefinition definitions = 2;
+}
+
+message ConfigDefinition {
+  string key = 1;
+  string description = 2;
+  string type = 3; // "string", "int", "bool", "json"
+  string default_value = 4;
+  bool required = 5;
+  repeated string allowed_values = 6;
+}
+
+message SetPluginConfigRequest {
+  string plugin_name = 1;
+  map<string, string> config = 2;
+  bool validate_only = 3;
+}
+
+// Plugin Capabilities
+message GetPluginCapabilitiesRequest {
+  string plugin_name = 1;
+}
+
+message GetPluginCapabilitiesResponse {
+  repeated string requested_capabilities = 1;
+  repeated string granted_capabilities = 2;
+  repeated string denied_capabilities = 3;
+  map<string, string> denial_reasons = 4;
+}
+
+message GrantPluginCapabilityRequest {
+  string plugin_name = 1;
+  string capability = 2;
+}
+
+message RevokePluginCapabilityRequest {
+  string plugin_name = 1;
+  string capability = 2;
+}
+
+// Plugin Communication
+message SendPluginMessageRequest {
+  string plugin_name = 1;
+  string message_type = 2;
+  bytes payload = 3;
+  bool wait_for_response = 4;
+  int32 timeout_seconds = 5;
+}
+
+message SendPluginMessageResponse {
+  bool delivered = 1;
+  bytes response = 2;
+  string error_message = 3;
+}
+
+message StreamPluginMessagesRequest {
+  repeated string plugin_names = 1; // Empty for all
+  repeated string message_types = 2; // Empty for all
+}
+
+message PluginMessage {
+  string plugin_name = 1;
+  string message_type = 2;
+  bytes payload = 3;
+  google.protobuf.Timestamp timestamp = 4;
+  string correlation_id = 5;
+}
+
+// System Status
+message GetSystemStatusRequest {
+  bool include_metrics = 1;
+}
+
+message GetSystemStatusResponse {
+  int32 total_plugins = 1;
+  int32 active_plugins = 2;
+  int64 uptime_seconds = 3;
+  SystemMetrics metrics = 4;
+  repeated string warnings = 5;
+}
+
+message SystemMetrics {
+  float cpu_usage_percent = 1;
+  int64 memory_used_bytes = 2;
+  int64 memory_total_bytes = 3;
+  int64 total_messages_processed = 4;
+  float messages_per_second = 5;
+  map<string, int64> event_counts = 6; // Event type -> count
+}

@@ -1,0 +1,209 @@
+syntax = "proto3";
+
+package maowbot.services;
+
+import "common.proto";
+import "google/protobuf/empty.proto";
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/field_mask.proto";
+
+service PlatformService {
+  // Platform configuration
+  rpc CreatePlatformConfig(CreatePlatformConfigRequest) returns (CreatePlatformConfigResponse);
+  rpc GetPlatformConfig(GetPlatformConfigRequest) returns (GetPlatformConfigResponse);
+  rpc UpdatePlatformConfig(UpdatePlatformConfigRequest) returns (UpdatePlatformConfigResponse);
+  rpc DeletePlatformConfig(DeletePlatformConfigRequest) returns (google.protobuf.Empty);
+  rpc ListPlatformConfigs(ListPlatformConfigsRequest) returns (ListPlatformConfigsResponse);
+  
+  // Runtime management
+  rpc StartPlatformRuntime(StartPlatformRuntimeRequest) returns (StartPlatformRuntimeResponse);
+  rpc StopPlatformRuntime(StopPlatformRuntimeRequest) returns (google.protobuf.Empty);
+  rpc RestartPlatformRuntime(RestartPlatformRuntimeRequest) returns (RestartPlatformRuntimeResponse);
+  rpc GetPlatformRuntimeStatus(GetPlatformRuntimeStatusRequest) returns (GetPlatformRuntimeStatusResponse);
+  rpc ListActiveRuntimes(ListActiveRuntimesRequest) returns (ListActiveRuntimesResponse);
+  
+  // Platform capabilities
+  rpc GetPlatformCapabilities(GetPlatformCapabilitiesRequest) returns (GetPlatformCapabilitiesResponse);
+  
+  // Streaming
+  rpc StreamPlatformEvents(StreamPlatformEventsRequest) returns (stream PlatformEvent);
+}
+
+// Platform Configuration
+message CreatePlatformConfigRequest {
+  maowbot.common.Platform platform = 1;
+  string client_id = 2;
+  string client_secret = 3; // Optional for some platforms
+  repeated string scopes = 4;
+  map<string, string> additional_config = 5;
+}
+
+message CreatePlatformConfigResponse {
+  maowbot.common.PlatformConfig config = 1;
+}
+
+message GetPlatformConfigRequest {
+  string platform_config_id = 1;
+}
+
+message GetPlatformConfigResponse {
+  maowbot.common.PlatformConfig config = 1;
+}
+
+message UpdatePlatformConfigRequest {
+  string platform_config_id = 1;
+  maowbot.common.PlatformConfig config = 2;
+  google.protobuf.FieldMask update_mask = 3;
+}
+
+message UpdatePlatformConfigResponse {
+  maowbot.common.PlatformConfig config = 1;
+}
+
+message DeletePlatformConfigRequest {
+  string platform_config_id = 1;
+}
+
+message ListPlatformConfigsRequest {
+  repeated maowbot.common.Platform platforms = 1; // Empty for all
+  maowbot.common.PageRequest page = 2;
+}
+
+message ListPlatformConfigsResponse {
+  repeated maowbot.common.PlatformConfig configs = 1;
+  maowbot.common.PageResponse page = 2;
+}
+
+// Runtime Management
+message StartPlatformRuntimeRequest {
+  string platform = 1;
+  string account_name = 2;
+  RuntimeConfig config = 3;
+}
+
+message RuntimeConfig {
+  bool auto_reconnect = 1;
+  int32 reconnect_delay_seconds = 2;
+  map<string, string> platform_specific = 3;
+}
+
+message StartPlatformRuntimeResponse {
+  string runtime_id = 1;
+  RuntimeStatus status = 2;
+  string error_message = 3; // If failed to start
+}
+
+message StopPlatformRuntimeRequest {
+  string platform = 1;
+  string account_name = 2;
+  bool force = 3; // Force stop even if busy
+}
+
+message RestartPlatformRuntimeRequest {
+  string platform = 1;
+  string account_name = 2;
+  RuntimeConfig new_config = 3; // Optional new config
+}
+
+message RestartPlatformRuntimeResponse {
+  string runtime_id = 1;
+  RuntimeStatus status = 2;
+}
+
+message GetPlatformRuntimeStatusRequest {
+  string platform = 1;
+  string account_name = 2;
+}
+
+message GetPlatformRuntimeStatusResponse {
+  RuntimeStatus status = 1;
+  RuntimeInfo info = 2;
+}
+
+message RuntimeStatus {
+  enum State {
+    STATE_UNKNOWN = 0;
+    STATE_STARTING = 1;
+    STATE_RUNNING = 2;
+    STATE_STOPPING = 3;
+    STATE_STOPPED = 4;
+    STATE_ERROR = 5;
+    STATE_RECONNECTING = 6;
+  }
+  
+  State state = 1;
+  string message = 2;
+  google.protobuf.Timestamp since = 3;
+}
+
+message RuntimeInfo {
+  string runtime_id = 1;
+  string platform = 2;
+  string account_name = 3;
+  google.protobuf.Timestamp started_at = 4;
+  int64 uptime_seconds = 5;
+  RuntimeStatistics stats = 6;
+  map<string, string> platform_specific = 7;
+}
+
+message RuntimeStatistics {
+  int64 messages_sent = 1;
+  int64 messages_received = 2;
+  int64 events_processed = 3;
+  int64 errors_count = 4;
+  google.protobuf.Timestamp last_activity = 5;
+}
+
+message ListActiveRuntimesRequest {
+  repeated maowbot.common.Platform platforms = 1; // Empty for all
+}
+
+message ListActiveRuntimesResponse {
+  repeated RuntimeInfo runtimes = 1;
+  map<string, int32> runtime_counts = 2; // Platform -> count
+}
+
+// Platform Capabilities
+message GetPlatformCapabilitiesRequest {
+  maowbot.common.Platform platform = 1;
+}
+
+message GetPlatformCapabilitiesResponse {
+  repeated Capability capabilities = 1;
+  repeated string required_scopes = 2;
+  map<string, string> limitations = 3;
+}
+
+message Capability {
+  string name = 1;
+  string description = 2;
+  bool requires_auth = 3;
+  repeated string required_roles = 4;
+}
+
+// Streaming Events
+message StreamPlatformEventsRequest {
+  repeated maowbot.common.Platform platforms = 1; // Empty for all
+  repeated PlatformEventType event_types = 2; // Empty for all
+}
+
+enum PlatformEventType {
+  PLATFORM_EVENT_TYPE_UNKNOWN = 0;
+  PLATFORM_EVENT_TYPE_RUNTIME_STARTED = 1;
+  PLATFORM_EVENT_TYPE_RUNTIME_STOPPED = 2;
+  PLATFORM_EVENT_TYPE_RUNTIME_ERROR = 3;
+  PLATFORM_EVENT_TYPE_CONNECTION_ESTABLISHED = 4;
+  PLATFORM_EVENT_TYPE_CONNECTION_LOST = 5;
+  PLATFORM_EVENT_TYPE_RECONNECTING = 6;
+  PLATFORM_EVENT_TYPE_CONFIG_UPDATED = 7;
+  PLATFORM_EVENT_TYPE_RATE_LIMITED = 8;
+}
+
+message PlatformEvent {
+  PlatformEventType event_type = 1;
+  maowbot.common.Platform platform = 2;
+  string account_name = 3;
+  string message = 4;
+  google.protobuf.Timestamp timestamp = 5;
+  map<string, string> metadata = 6;
+}

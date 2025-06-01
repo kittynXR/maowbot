@@ -1,0 +1,435 @@
+syntax = "proto3";
+
+package maowbot.services;
+
+import "common.proto";
+import "google/protobuf/empty.proto";
+import "google/protobuf/timestamp.proto";
+
+service TwitchService {
+  // IRC Operations
+  rpc JoinChannel(JoinChannelRequest) returns (google.protobuf.Empty);
+  rpc PartChannel(PartChannelRequest) returns (google.protobuf.Empty);
+  rpc SendMessage(SendMessageRequest) returns (SendMessageResponse);
+  rpc GetJoinedChannels(GetJoinedChannelsRequest) returns (GetJoinedChannelsResponse);
+  
+  // Moderation
+  rpc BanUser(BanUserRequest) returns (google.protobuf.Empty);
+  rpc UnbanUser(UnbanUserRequest) returns (google.protobuf.Empty);
+  rpc TimeoutUser(TimeoutUserRequest) returns (google.protobuf.Empty);
+  rpc DeleteMessage(DeleteMessageRequest) returns (google.protobuf.Empty);
+  
+  // Channel Information
+  rpc GetChannelInfo(GetChannelInfoRequest) returns (GetChannelInfoResponse);
+  rpc UpdateChannelInfo(UpdateChannelInfoRequest) returns (google.protobuf.Empty);
+  rpc GetStreamInfo(GetStreamInfoRequest) returns (GetStreamInfoResponse);
+  
+  // Followers
+  rpc GetFollowers(GetFollowersRequest) returns (GetFollowersResponse);
+  rpc GetFollowAge(GetFollowAgeRequest) returns (GetFollowAgeResponse);
+  
+  // Subscriptions
+  rpc GetSubscribers(GetSubscribersRequest) returns (GetSubscribersResponse);
+  rpc CheckSubscription(CheckSubscriptionRequest) returns (CheckSubscriptionResponse);
+  
+  // Channel Points & Rewards
+  rpc GetChannelPointRewards(GetChannelPointRewardsRequest) returns (GetChannelPointRewardsResponse);
+  rpc CreateChannelPointReward(CreateChannelPointRewardRequest) returns (CreateChannelPointRewardResponse);
+  rpc UpdateChannelPointReward(UpdateChannelPointRewardRequest) returns (google.protobuf.Empty);
+  rpc DeleteChannelPointReward(DeleteChannelPointRewardRequest) returns (google.protobuf.Empty);
+  rpc FulfillRedemption(FulfillRedemptionRequest) returns (google.protobuf.Empty);
+  
+  // Streaming
+  rpc StreamTwitchEvents(StreamTwitchEventsRequest) returns (stream TwitchEvent);
+  
+  // Batch Operations
+  rpc BatchSendMessages(BatchSendMessagesRequest) returns (BatchSendMessagesResponse);
+}
+
+// IRC Operations
+message JoinChannelRequest {
+  string account_name = 1;
+  string channel = 2; // Channel name (with or without #)
+}
+
+message PartChannelRequest {
+  string account_name = 1;
+  string channel = 2;
+}
+
+message SendMessageRequest {
+  string account_name = 1;
+  string channel = 2;
+  string text = 3;
+  bool is_action = 4; // /me command
+  string reply_to_message_id = 5; // For reply threads
+}
+
+message SendMessageResponse {
+  string message_id = 1;
+  google.protobuf.Timestamp sent_at = 2;
+}
+
+message GetJoinedChannelsRequest {
+  string account_name = 1;
+}
+
+message GetJoinedChannelsResponse {
+  repeated ChannelMembership channels = 1;
+}
+
+message ChannelMembership {
+  string channel = 1;
+  google.protobuf.Timestamp joined_at = 2;
+  bool is_moderator = 3;
+  bool is_vip = 4;
+}
+
+// Moderation
+message BanUserRequest {
+  string account_name = 1;
+  string channel = 2;
+  string user_id = 3;
+  string reason = 4;
+}
+
+message UnbanUserRequest {
+  string account_name = 1;
+  string channel = 2;
+  string user_id = 3;
+}
+
+message TimeoutUserRequest {
+  string account_name = 1;
+  string channel = 2;
+  string user_id = 3;
+  int32 duration_seconds = 4;
+  string reason = 5;
+}
+
+message DeleteMessageRequest {
+  string account_name = 1;
+  string channel = 2;
+  string message_id = 3;
+}
+
+// Channel Information
+message GetChannelInfoRequest {
+  string channel = 1; // Channel name or ID
+}
+
+message GetChannelInfoResponse {
+  ChannelInfo channel = 1;
+}
+
+message ChannelInfo {
+  string channel_id = 1;
+  string channel_name = 2;
+  string display_name = 3;
+  string game_name = 4;
+  string game_id = 5;
+  string title = 6;
+  string language = 7;
+  repeated string tags = 8;
+  bool is_mature = 9;
+}
+
+message UpdateChannelInfoRequest {
+  string account_name = 1;
+  string channel = 2;
+  ChannelUpdate update = 3;
+}
+
+message ChannelUpdate {
+  string title = 1;
+  string game_id = 2;
+  string language = 3;
+  repeated string tags = 4;
+}
+
+message GetStreamInfoRequest {
+  string channel = 1;
+}
+
+message GetStreamInfoResponse {
+  StreamInfo stream = 1;
+}
+
+message StreamInfo {
+  string stream_id = 1;
+  bool is_live = 2;
+  google.protobuf.Timestamp started_at = 3;
+  int32 viewer_count = 4;
+  string title = 5;
+  string game_name = 6;
+  string thumbnail_url = 7;
+}
+
+// Followers
+message GetFollowersRequest {
+  string channel = 1;
+  maowbot.common.PageRequest page = 2;
+}
+
+message GetFollowersResponse {
+  repeated Follower followers = 1;
+  int32 total_count = 2;
+  maowbot.common.PageResponse page = 3;
+}
+
+message Follower {
+  string user_id = 1;
+  string username = 2;
+  string display_name = 3;
+  google.protobuf.Timestamp followed_at = 4;
+}
+
+message GetFollowAgeRequest {
+  string channel = 1;
+  string user = 2; // Username or ID
+}
+
+message GetFollowAgeResponse {
+  bool is_following = 1;
+  google.protobuf.Timestamp followed_at = 2;
+  string follow_duration = 3; // Human readable
+}
+
+// Subscriptions
+message GetSubscribersRequest {
+  string account_name = 1; // Must be broadcaster
+  string channel = 2;
+  maowbot.common.PageRequest page = 3;
+}
+
+message GetSubscribersResponse {
+  repeated Subscriber subscribers = 1;
+  int32 total_count = 2;
+  int32 point_count = 3; // Total sub points
+  maowbot.common.PageResponse page = 4;
+}
+
+message Subscriber {
+  string user_id = 1;
+  string username = 2;
+  string display_name = 3;
+  SubscriptionTier tier = 4;
+  bool is_gift = 5;
+  string gifter_id = 6;
+  string gifter_name = 7;
+}
+
+enum SubscriptionTier {
+  SUBSCRIPTION_TIER_UNKNOWN = 0;
+  SUBSCRIPTION_TIER_PRIME = 1;
+  SUBSCRIPTION_TIER_1 = 2;
+  SUBSCRIPTION_TIER_2 = 3;
+  SUBSCRIPTION_TIER_3 = 4;
+}
+
+message CheckSubscriptionRequest {
+  string channel = 1;
+  string user = 2;
+}
+
+message CheckSubscriptionResponse {
+  bool is_subscribed = 1;
+  Subscriber subscription = 2;
+}
+
+// Channel Points
+message GetChannelPointRewardsRequest {
+  string account_name = 1;
+  string channel = 2;
+  bool only_manageable = 3;
+}
+
+message GetChannelPointRewardsResponse {
+  repeated ChannelPointReward rewards = 1;
+}
+
+message ChannelPointReward {
+  string reward_id = 1;
+  string title = 2;
+  string prompt = 3;
+  int32 cost = 4;
+  bool is_enabled = 5;
+  bool is_paused = 6;
+  bool is_in_stock = 7;
+  int32 max_per_stream = 8;
+  int32 max_per_user_per_stream = 9;
+  string background_color = 10;
+  string image_url = 11;
+  bool user_input_required = 12;
+  int32 cooldown_seconds = 13;
+}
+
+message CreateChannelPointRewardRequest {
+  string account_name = 1;
+  string channel = 2;
+  ChannelPointReward reward = 3;
+}
+
+message CreateChannelPointRewardResponse {
+  ChannelPointReward reward = 1;
+}
+
+message UpdateChannelPointRewardRequest {
+  string account_name = 1;
+  string channel = 2;
+  string reward_id = 3;
+  ChannelPointReward reward = 4;
+}
+
+message DeleteChannelPointRewardRequest {
+  string account_name = 1;
+  string channel = 2;
+  string reward_id = 3;
+}
+
+message FulfillRedemptionRequest {
+  string account_name = 1;
+  string channel = 2;
+  string redemption_id = 3;
+  string reward_id = 4;
+  RedemptionStatus status = 5;
+}
+
+enum RedemptionStatus {
+  REDEMPTION_STATUS_UNKNOWN = 0;
+  REDEMPTION_STATUS_FULFILLED = 1;
+  REDEMPTION_STATUS_CANCELED = 2;
+}
+
+// Streaming Events
+message StreamTwitchEventsRequest {
+  repeated string channels = 1; // Empty for all
+  repeated TwitchEventType event_types = 2; // Empty for all
+}
+
+enum TwitchEventType {
+  TWITCH_EVENT_TYPE_UNKNOWN = 0;
+  TWITCH_EVENT_TYPE_MESSAGE = 1;
+  TWITCH_EVENT_TYPE_SUBSCRIPTION = 2;
+  TWITCH_EVENT_TYPE_GIFT_SUB = 3;
+  TWITCH_EVENT_TYPE_BITS = 4;
+  TWITCH_EVENT_TYPE_RAID = 5;
+  TWITCH_EVENT_TYPE_FOLLOW = 6;
+  TWITCH_EVENT_TYPE_CHANNEL_POINT_REDEMPTION = 7;
+  TWITCH_EVENT_TYPE_STREAM_START = 8;
+  TWITCH_EVENT_TYPE_STREAM_END = 9;
+  TWITCH_EVENT_TYPE_BAN = 10;
+  TWITCH_EVENT_TYPE_TIMEOUT = 11;
+  TWITCH_EVENT_TYPE_MOD_ACTION = 12;
+}
+
+message TwitchEvent {
+  TwitchEventType event_type = 1;
+  string channel = 2;
+  google.protobuf.Timestamp timestamp = 3;
+  
+  oneof event_data {
+    maowbot.common.ChatMessage message = 4;
+    SubscriptionEvent subscription = 5;
+    BitsEvent bits = 6;
+    RaidEvent raid = 7;
+    FollowEvent follow = 8;
+    ChannelPointRedemptionEvent redemption = 9;
+    StreamStatusEvent stream_status = 10;
+    ModerationEvent moderation = 11;
+  }
+}
+
+message SubscriptionEvent {
+  string user_id = 1;
+  string username = 2;
+  SubscriptionTier tier = 3;
+  int32 months = 4;
+  string message = 5;
+  bool is_gift = 6;
+  int32 gift_count = 7;
+}
+
+message BitsEvent {
+  string user_id = 1;
+  string username = 2;
+  int32 bits = 3;
+  string message = 4;
+}
+
+message RaidEvent {
+  string from_channel_id = 1;
+  string from_channel_name = 2;
+  int32 viewer_count = 3;
+}
+
+message FollowEvent {
+  string user_id = 1;
+  string username = 2;
+}
+
+message ChannelPointRedemptionEvent {
+  string redemption_id = 1;
+  string user_id = 2;
+  string username = 3;
+  string reward_id = 4;
+  string reward_title = 5;
+  string user_input = 6;
+  int32 cost = 7;
+  RedemptionStatus status = 8;
+}
+
+message StreamStatusEvent {
+  bool is_live = 1;
+  string title = 2;
+  string game_name = 3;
+  int32 viewer_count = 4;
+}
+
+message ModerationEvent {
+  enum ModActionType {
+    MOD_ACTION_TYPE_UNKNOWN = 0;
+    MOD_ACTION_TYPE_BAN = 1;
+    MOD_ACTION_TYPE_UNBAN = 2;
+    MOD_ACTION_TYPE_TIMEOUT = 3;
+    MOD_ACTION_TYPE_UNTIMEOUT = 4;
+    MOD_ACTION_TYPE_DELETE = 5;
+    MOD_ACTION_TYPE_MOD = 6;
+    MOD_ACTION_TYPE_UNMOD = 7;
+    MOD_ACTION_TYPE_VIP = 8;
+    MOD_ACTION_TYPE_UNVIP = 9;
+  }
+  
+  ModActionType action = 1;
+  string moderator_id = 2;
+  string moderator_name = 3;
+  string target_user_id = 4;
+  string target_user_name = 5;
+  string reason = 6;
+  int32 duration_seconds = 7; // For timeouts
+}
+
+// Batch Operations
+message BatchSendMessagesRequest {
+  string account_name = 1;
+  repeated MessageToSend messages = 2;
+}
+
+message MessageToSend {
+  string channel = 1;
+  string text = 2;
+  int32 delay_ms = 3; // Delay before sending this message
+}
+
+message BatchSendMessagesResponse {
+  repeated SendResult results = 1;
+  int32 success_count = 2;
+  int32 failure_count = 3;
+}
+
+message SendResult {
+  string channel = 1;
+  bool success = 2;
+  string message_id = 3;
+  string error_message = 4;
+}

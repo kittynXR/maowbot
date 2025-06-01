@@ -1,0 +1,424 @@
+syntax = "proto3";
+
+package maowbot.services;
+
+import "common.proto";
+import "google/protobuf/empty.proto";
+import "google/protobuf/timestamp.proto";
+
+service VRChatService {
+  // User Status
+  rpc GetCurrentUser(GetCurrentUserRequest) returns (GetCurrentUserResponse);
+  rpc UpdateUserStatus(UpdateUserStatusRequest) returns (google.protobuf.Empty);
+  
+  // World Operations
+  rpc GetCurrentWorld(GetCurrentWorldRequest) returns (GetCurrentWorldResponse);
+  rpc GetWorld(GetWorldRequest) returns (GetWorldResponse);
+  rpc GetCurrentInstance(GetCurrentInstanceRequest) returns (GetCurrentInstanceResponse);
+  rpc JoinWorld(JoinWorldRequest) returns (JoinWorldResponse);
+  rpc InviteToWorld(InviteToWorldRequest) returns (google.protobuf.Empty);
+  
+  // Avatar Operations
+  rpc GetCurrentAvatar(GetCurrentAvatarRequest) returns (GetCurrentAvatarResponse);
+  rpc GetAvatar(GetAvatarRequest) returns (GetAvatarResponse);
+  rpc ChangeAvatar(ChangeAvatarRequest) returns (ChangeAvatarResponse);
+  rpc ListAvatars(ListAvatarsRequest) returns (ListAvatarsResponse);
+  rpc GetAvatarParameters(GetAvatarParametersRequest) returns (GetAvatarParametersResponse);
+  
+  // Friend Operations
+  rpc ListFriends(ListFriendsRequest) returns (ListFriendsResponse);
+  rpc GetFriend(GetFriendRequest) returns (GetFriendResponse);
+  rpc SendFriendRequest(SendFriendRequestRequest) returns (google.protobuf.Empty);
+  rpc AcceptFriendRequest(AcceptFriendRequestRequest) returns (google.protobuf.Empty);
+  
+  // Notification Operations
+  rpc ListNotifications(ListNotificationsRequest) returns (ListNotificationsResponse);
+  rpc SendNotification(SendNotificationRequest) returns (google.protobuf.Empty);
+  rpc ClearNotification(ClearNotificationRequest) returns (google.protobuf.Empty);
+  
+  // Pipeline Events
+  rpc StreamVRChatEvents(StreamVRChatEventsRequest) returns (stream VRChatEvent);
+}
+
+// User Status
+message GetCurrentUserRequest {
+  string account_name = 1;
+}
+
+message GetCurrentUserResponse {
+  VRChatUser user = 1;
+}
+
+message VRChatUser {
+  string user_id = 1;
+  string display_name = 2;
+  string username = 3;
+  string status = 4;
+  string status_description = 5;
+  string bio = 6;
+  string current_avatar_id = 7;
+  string current_avatar_thumbnail = 8;
+  string home_location = 9;
+  string world_id = 10;
+  string instance_id = 11;
+  repeated string tags = 12;
+  OnlineStatus online_status = 13;
+  google.protobuf.Timestamp last_login = 14;
+}
+
+enum OnlineStatus {
+  ONLINE_STATUS_UNKNOWN = 0;
+  ONLINE_STATUS_OFFLINE = 1;
+  ONLINE_STATUS_ACTIVE = 2;
+  ONLINE_STATUS_JOIN_ME = 3;
+  ONLINE_STATUS_ASK_ME = 4;
+  ONLINE_STATUS_BUSY = 5;
+}
+
+message UpdateUserStatusRequest {
+  string account_name = 1;
+  string status = 2; // "active", "join me", "ask me", "busy"
+  string status_description = 3;
+}
+
+// World Operations
+message GetCurrentWorldRequest {
+  string account_name = 1;
+}
+
+message GetCurrentWorldResponse {
+  VRChatWorld world = 1;
+  VRChatInstance instance = 2;
+}
+
+message VRChatWorld {
+  string world_id = 1;
+  string name = 2;
+  string description = 3;
+  string author_id = 4;
+  string author_name = 5;
+  int32 capacity = 6;
+  repeated string tags = 7;
+  string image_url = 8;
+  string thumbnail_url = 9;
+  ReleaseStatus release_status = 10;
+  int32 occupants = 11;
+  int32 favorites = 12;
+  google.protobuf.Timestamp created_at = 13;
+  google.protobuf.Timestamp updated_at = 14;
+}
+
+enum ReleaseStatus {
+  RELEASE_STATUS_UNKNOWN = 0;
+  RELEASE_STATUS_PUBLIC = 1;
+  RELEASE_STATUS_PRIVATE = 2;
+  RELEASE_STATUS_HIDDEN = 3;
+}
+
+message VRChatInstance {
+  string instance_id = 1;
+  string world_id = 2;
+  InstanceType type = 3;
+  string owner_id = 4;
+  int32 user_count = 5;
+  int32 capacity = 6;
+  repeated string user_ids = 7; // May be limited
+}
+
+enum InstanceType {
+  INSTANCE_TYPE_UNKNOWN = 0;
+  INSTANCE_TYPE_PUBLIC = 1;
+  INSTANCE_TYPE_HIDDEN = 2;
+  INSTANCE_TYPE_FRIENDS = 3;
+  INSTANCE_TYPE_FRIENDS_PLUS = 4;
+  INSTANCE_TYPE_INVITE = 5;
+  INSTANCE_TYPE_INVITE_PLUS = 6;
+  INSTANCE_TYPE_GROUP = 7;
+  INSTANCE_TYPE_GROUP_PLUS = 8;
+}
+
+message GetWorldRequest {
+  string world_id = 1;
+}
+
+message GetWorldResponse {
+  VRChatWorld world = 1;
+}
+
+message GetCurrentInstanceRequest {
+  string account_name = 1;
+}
+
+message GetCurrentInstanceResponse {
+  VRChatInstance instance = 1;
+  repeated VRChatUser users = 2; // Users in instance
+}
+
+message JoinWorldRequest {
+  string account_name = 1;
+  string world_id = 2;
+  string instance_id = 3; // Optional, will create/join best instance
+}
+
+message JoinWorldResponse {
+  string instance_id = 1;
+  bool success = 2;
+  string error_message = 3;
+}
+
+message InviteToWorldRequest {
+  string account_name = 1;
+  string user_id = 2;
+  string world_id = 3;
+  string instance_id = 4;
+  string message = 5;
+}
+
+// Avatar Operations
+message GetCurrentAvatarRequest {
+  string account_name = 1;
+}
+
+message GetCurrentAvatarResponse {
+  VRChatAvatar avatar = 1;
+}
+
+message VRChatAvatar {
+  string avatar_id = 1;
+  string name = 2;
+  string description = 3;
+  string author_id = 4;
+  string author_name = 5;
+  repeated string tags = 6;
+  string image_url = 7;
+  string thumbnail_url = 8;
+  ReleaseStatus release_status = 9;
+  int32 version = 10;
+  repeated AvatarParameter parameters = 11;
+  google.protobuf.Timestamp created_at = 12;
+  google.protobuf.Timestamp updated_at = 13;
+}
+
+message AvatarParameter {
+  string name = 1;
+  ParameterType type = 2;
+  oneof default_value {
+    bool bool_default = 3;
+    int32 int_default = 4;
+    float float_default = 5;
+  }
+  oneof current_value {
+    bool bool_value = 6;
+    int32 int_value = 7;
+    float float_value = 8;
+  }
+}
+
+enum ParameterType {
+  PARAMETER_TYPE_UNKNOWN = 0;
+  PARAMETER_TYPE_BOOL = 1;
+  PARAMETER_TYPE_INT = 2;
+  PARAMETER_TYPE_FLOAT = 3;
+}
+
+message GetAvatarRequest {
+  string avatar_id = 1;
+}
+
+message GetAvatarResponse {
+  VRChatAvatar avatar = 1;
+}
+
+message ChangeAvatarRequest {
+  string account_name = 1;
+  string avatar_id = 2;
+}
+
+message ChangeAvatarResponse {
+  VRChatAvatar avatar = 1;
+  bool success = 2;
+  string error_message = 3;
+}
+
+message ListAvatarsRequest {
+  string account_name = 1;
+  AvatarListType list_type = 2;
+  maowbot.common.PageRequest page = 3;
+}
+
+enum AvatarListType {
+  AVATAR_LIST_TYPE_UNKNOWN = 0;
+  AVATAR_LIST_TYPE_MINE = 1;
+  AVATAR_LIST_TYPE_FAVORITES = 2;
+  AVATAR_LIST_TYPE_PUBLIC = 3;
+}
+
+message ListAvatarsResponse {
+  repeated VRChatAvatar avatars = 1;
+  maowbot.common.PageResponse page = 2;
+}
+
+message GetAvatarParametersRequest {
+  string account_name = 1;
+  string avatar_id = 2; // Optional, current if not specified
+}
+
+message GetAvatarParametersResponse {
+  repeated AvatarParameter parameters = 1;
+}
+
+// Friend Operations
+message ListFriendsRequest {
+  string account_name = 1;
+  bool online_only = 2;
+  maowbot.common.PageRequest page = 3;
+}
+
+message ListFriendsResponse {
+  repeated VRChatFriend friends = 1;
+  maowbot.common.PageResponse page = 2;
+}
+
+message VRChatFriend {
+  string user_id = 1;
+  string display_name = 2;
+  string status = 3;
+  string status_description = 4;
+  string location = 5; // World ID or "offline"
+  string current_avatar_thumbnail = 6;
+  OnlineStatus online_status = 7;
+  google.protobuf.Timestamp last_login = 8;
+}
+
+message GetFriendRequest {
+  string account_name = 1;
+  string user_id = 2;
+}
+
+message GetFriendResponse {
+  VRChatFriend friend = 1;
+}
+
+message SendFriendRequestRequest {
+  string account_name = 1;
+  string user_id = 2;
+}
+
+message AcceptFriendRequestRequest {
+  string account_name = 1;
+  string notification_id = 2;
+}
+
+// Notification Operations
+message ListNotificationsRequest {
+  string account_name = 1;
+  NotificationType type = 2; // Optional filter
+  bool unread_only = 3;
+  maowbot.common.PageRequest page = 4;
+}
+
+enum NotificationType {
+  NOTIFICATION_TYPE_UNKNOWN = 0;
+  NOTIFICATION_TYPE_FRIEND_REQUEST = 1;
+  NOTIFICATION_TYPE_INVITE = 2;
+  NOTIFICATION_TYPE_REQUEST_INVITE = 3;
+  NOTIFICATION_TYPE_MESSAGE = 4;
+  NOTIFICATION_TYPE_VOTE_KICK = 5;
+}
+
+message ListNotificationsResponse {
+  repeated VRChatNotification notifications = 1;
+  maowbot.common.PageResponse page = 2;
+}
+
+message VRChatNotification {
+  string notification_id = 1;
+  NotificationType type = 2;
+  string sender_id = 3;
+  string sender_name = 4;
+  string message = 5;
+  map<string, string> details = 6;
+  bool seen = 7;
+  google.protobuf.Timestamp created_at = 8;
+}
+
+message SendNotificationRequest {
+  string account_name = 1;
+  string user_id = 2;
+  NotificationType type = 3;
+  string message = 4;
+  map<string, string> details = 5;
+}
+
+message ClearNotificationRequest {
+  string account_name = 1;
+  string notification_id = 2;
+}
+
+// Streaming Events
+message StreamVRChatEventsRequest {
+  repeated string account_names = 1; // Empty for all
+  repeated VRChatEventType event_types = 2; // Empty for all
+}
+
+enum VRChatEventType {
+  VRCHAT_EVENT_TYPE_UNKNOWN = 0;
+  VRCHAT_EVENT_TYPE_FRIEND_ONLINE = 1;
+  VRCHAT_EVENT_TYPE_FRIEND_OFFLINE = 2;
+  VRCHAT_EVENT_TYPE_FRIEND_LOCATION = 3;
+  VRCHAT_EVENT_TYPE_FRIEND_UPDATE = 4;
+  VRCHAT_EVENT_TYPE_WORLD_JOIN = 5;
+  VRCHAT_EVENT_TYPE_WORLD_LEAVE = 6;
+  VRCHAT_EVENT_TYPE_AVATAR_CHANGE = 7;
+  VRCHAT_EVENT_TYPE_NOTIFICATION = 8;
+  VRCHAT_EVENT_TYPE_USER_UPDATE = 9;
+  VRCHAT_EVENT_TYPE_INSTANCE_UPDATE = 10;
+}
+
+message VRChatEvent {
+  VRChatEventType event_type = 1;
+  string account_name = 2;
+  google.protobuf.Timestamp timestamp = 3;
+  
+  oneof event_data {
+    FriendEvent friend = 4;
+    WorldEvent world = 5;
+    AvatarEvent avatar = 6;
+    NotificationEvent notification = 7;
+    UserEvent user = 8;
+    InstanceEvent instance = 9;
+  }
+}
+
+message FriendEvent {
+  VRChatFriend friend = 1;
+  string previous_location = 2;
+  OnlineStatus previous_status = 3;
+}
+
+message WorldEvent {
+  VRChatWorld world = 1;
+  VRChatInstance instance = 2;
+  repeated string joined_users = 3;
+  repeated string left_users = 4;
+}
+
+message AvatarEvent {
+  VRChatAvatar previous_avatar = 1;
+  VRChatAvatar current_avatar = 2;
+}
+
+message NotificationEvent {
+  VRChatNotification notification = 1;
+}
+
+message UserEvent {
+  VRChatUser user = 1;
+  repeated string changed_fields = 2;
+}
+
+message InstanceEvent {
+  VRChatInstance instance = 1;
+  repeated string joined_users = 2;
+  repeated string left_users = 3;
+}

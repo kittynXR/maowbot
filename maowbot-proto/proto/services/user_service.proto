@@ -1,0 +1,276 @@
+syntax = "proto3";
+
+package maowbot.services;
+
+import "common.proto";
+import "google/protobuf/empty.proto";
+import "google/protobuf/field_mask.proto";
+import "google/protobuf/timestamp.proto";
+
+service UserService {
+  // User CRUD operations
+  rpc CreateUser(CreateUserRequest) returns (CreateUserResponse);
+  rpc GetUser(GetUserRequest) returns (GetUserResponse);
+  rpc UpdateUser(UpdateUserRequest) returns (UpdateUserResponse);
+  rpc DeleteUser(DeleteUserRequest) returns (google.protobuf.Empty);
+  
+  // User search and listing
+  rpc ListUsers(ListUsersRequest) returns (ListUsersResponse);
+  rpc SearchUsers(SearchUsersRequest) returns (SearchUsersResponse);
+  rpc FindUserByName(FindUserByNameRequest) returns (FindUserByNameResponse);
+  
+  // Batch operations
+  rpc BatchGetUsers(BatchGetUsersRequest) returns (BatchGetUsersResponse);
+  
+  // User merge operations
+  rpc MergeUsers(MergeUsersRequest) returns (MergeUsersResponse);
+  
+  // Platform identity management
+  rpc GetPlatformIdentities(GetPlatformIdentitiesRequest) returns (GetPlatformIdentitiesResponse);
+  rpc AddPlatformIdentity(AddPlatformIdentityRequest) returns (AddPlatformIdentityResponse);
+  rpc UpdatePlatformIdentity(UpdatePlatformIdentityRequest) returns (UpdatePlatformIdentityResponse);
+  rpc RemovePlatformIdentity(RemovePlatformIdentityRequest) returns (google.protobuf.Empty);
+  
+  // Role management
+  rpc AddRoleToIdentity(AddRoleToIdentityRequest) returns (google.protobuf.Empty);
+  rpc RemoveRoleFromIdentity(RemoveRoleFromIdentityRequest) returns (google.protobuf.Empty);
+  
+  // User analysis
+  rpc GetUserAnalysis(GetUserAnalysisRequest) returns (GetUserAnalysisResponse);
+  rpc UpdateUserAnalysis(UpdateUserAnalysisRequest) returns (UpdateUserAnalysisResponse);
+  rpc AppendModeratorNote(AppendModeratorNoteRequest) returns (google.protobuf.Empty);
+  
+  // Streaming
+  rpc StreamUserUpdates(StreamUserUpdatesRequest) returns (stream UserUpdateEvent);
+}
+
+// Create User
+message CreateUserRequest {
+  string user_id = 1; // Optional, will generate if not provided
+  string display_name = 2;
+  bool is_active = 3;
+}
+
+message CreateUserResponse {
+  maowbot.common.User user = 1;
+}
+
+// Get User
+message GetUserRequest {
+  string user_id = 1;
+  bool include_identities = 2;
+  bool include_analysis = 3;
+}
+
+message GetUserResponse {
+  maowbot.common.User user = 1;
+  repeated maowbot.common.PlatformIdentity identities = 2;
+  maowbot.common.UserAnalysis analysis = 3;
+}
+
+// Update User
+message UpdateUserRequest {
+  string user_id = 1;
+  maowbot.common.User user = 2;
+  google.protobuf.FieldMask update_mask = 3;
+}
+
+message UpdateUserResponse {
+  maowbot.common.User user = 1;
+}
+
+// Delete User
+message DeleteUserRequest {
+  string user_id = 1;
+  bool hard_delete = 2; // If false, just marks as inactive
+}
+
+// List Users
+message ListUsersRequest {
+  maowbot.common.PageRequest page = 1;
+  ListUsersFilter filter = 2;
+  string order_by = 3; // "created_at", "last_seen", "username"
+  bool descending = 4;
+}
+
+message ListUsersFilter {
+  bool active_only = 1;
+  repeated maowbot.common.Platform platforms = 2;
+  repeated string roles = 3;
+}
+
+message ListUsersResponse {
+  repeated maowbot.common.User users = 1;
+  maowbot.common.PageResponse page = 2;
+}
+
+// Search Users
+message SearchUsersRequest {
+  string query = 1;
+  repeated SearchField search_fields = 2;
+  maowbot.common.PageRequest page = 3;
+}
+
+enum SearchField {
+  SEARCH_FIELD_UNKNOWN = 0;
+  SEARCH_FIELD_USERNAME = 1;
+  SEARCH_FIELD_DISPLAY_NAME = 2;
+  SEARCH_FIELD_PLATFORM_USERNAME = 3;
+  SEARCH_FIELD_ALL = 4;
+}
+
+message SearchUsersResponse {
+  repeated UserSearchResult results = 1;
+  maowbot.common.PageResponse page = 2;
+}
+
+message UserSearchResult {
+  maowbot.common.User user = 1;
+  repeated maowbot.common.PlatformIdentity matched_identities = 2;
+  float relevance_score = 3;
+}
+
+// Find User by Name
+message FindUserByNameRequest {
+  string name = 1;
+  bool exact_match = 2;
+}
+
+message FindUserByNameResponse {
+  repeated maowbot.common.User users = 1;
+}
+
+// Batch Get Users
+message BatchGetUsersRequest {
+  repeated string user_ids = 1;
+  bool include_identities = 2;
+  bool include_analysis = 3;
+}
+
+message BatchGetUsersResponse {
+  repeated GetUserResponse users = 1;
+  repeated string not_found_ids = 2;
+}
+
+// Merge Users
+message MergeUsersRequest {
+  string source_user_id = 1;
+  string target_user_id = 2;
+  string new_global_name = 3; // Optional
+  MergeStrategy strategy = 4;
+}
+
+enum MergeStrategy {
+  MERGE_STRATEGY_UNKNOWN = 0;
+  MERGE_STRATEGY_KEEP_TARGET = 1; // Keep target user data, add source identities
+  MERGE_STRATEGY_KEEP_SOURCE = 2; // Keep source user data, add target identities
+  MERGE_STRATEGY_NEWEST = 3; // Keep newest data from both
+}
+
+message MergeUsersResponse {
+  maowbot.common.User merged_user = 1;
+  repeated string merged_identity_ids = 2;
+}
+
+// Platform Identities
+message GetPlatformIdentitiesRequest {
+  string user_id = 1;
+  repeated maowbot.common.Platform platforms = 2; // Optional filter
+}
+
+message GetPlatformIdentitiesResponse {
+  repeated maowbot.common.PlatformIdentity identities = 1;
+}
+
+message AddPlatformIdentityRequest {
+  string user_id = 1;
+  maowbot.common.PlatformIdentity identity = 2;
+}
+
+message AddPlatformIdentityResponse {
+  maowbot.common.PlatformIdentity identity = 1;
+}
+
+message UpdatePlatformIdentityRequest {
+  string identity_id = 1;
+  maowbot.common.PlatformIdentity identity = 2;
+  google.protobuf.FieldMask update_mask = 3;
+}
+
+message UpdatePlatformIdentityResponse {
+  maowbot.common.PlatformIdentity identity = 1;
+}
+
+message RemovePlatformIdentityRequest {
+  string identity_id = 1;
+}
+
+// Role Management
+message AddRoleToIdentityRequest {
+  string user_id = 1;
+  string platform = 2;
+  string role = 3;
+}
+
+message RemoveRoleFromIdentityRequest {
+  string user_id = 1;
+  string platform = 2;
+  string role = 3;
+}
+
+// User Analysis
+message GetUserAnalysisRequest {
+  string user_id = 1;
+}
+
+message GetUserAnalysisResponse {
+  maowbot.common.UserAnalysis analysis = 1;
+  repeated AnalysisHistory history = 2;
+}
+
+message AnalysisHistory {
+  maowbot.common.UserAnalysis analysis = 1;
+  string changed_by = 2;
+  string change_reason = 3;
+}
+
+message UpdateUserAnalysisRequest {
+  string user_id = 1;
+  maowbot.common.UserAnalysis analysis = 2;
+  google.protobuf.FieldMask update_mask = 3;
+  string update_reason = 4;
+}
+
+message UpdateUserAnalysisResponse {
+  maowbot.common.UserAnalysis analysis = 1;
+}
+
+message AppendModeratorNoteRequest {
+  string user_id = 1;
+  string note_text = 2;
+  string moderator_id = 3;
+}
+
+// Streaming
+message StreamUserUpdatesRequest {
+  repeated string user_ids = 1; // Empty for all users
+  repeated UserUpdateType update_types = 2; // Empty for all types
+}
+
+enum UserUpdateType {
+  USER_UPDATE_TYPE_UNKNOWN = 0;
+  USER_UPDATE_TYPE_CREATED = 1;
+  USER_UPDATE_TYPE_UPDATED = 2;
+  USER_UPDATE_TYPE_DELETED = 3;
+  USER_UPDATE_TYPE_IDENTITY_ADDED = 4;
+  USER_UPDATE_TYPE_IDENTITY_REMOVED = 5;
+  USER_UPDATE_TYPE_ANALYSIS_UPDATED = 6;
+}
+
+message UserUpdateEvent {
+  UserUpdateType update_type = 1;
+  maowbot.common.User user = 2;
+  maowbot.common.PlatformIdentity identity = 3; // For identity events
+  maowbot.common.UserAnalysis analysis = 4; // For analysis events
+  google.protobuf.Timestamp timestamp = 5;
+}

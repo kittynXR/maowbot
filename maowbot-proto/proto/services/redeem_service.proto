@@ -1,0 +1,328 @@
+syntax = "proto3";
+
+package maowbot.services;
+
+import "common.proto";
+import "google/protobuf/empty.proto";
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/field_mask.proto";
+
+service RedeemService {
+  // Redeem Management
+  rpc ListRedeems(ListRedeemsRequest) returns (ListRedeemsResponse);
+  rpc GetRedeem(GetRedeemRequest) returns (GetRedeemResponse);
+  rpc CreateRedeem(CreateRedeemRequest) returns (CreateRedeemResponse);
+  rpc UpdateRedeem(UpdateRedeemRequest) returns (UpdateRedeemResponse);
+  rpc DeleteRedeem(DeleteRedeemRequest) returns (google.protobuf.Empty);
+  
+  // Batch Operations
+  rpc BatchListRedeems(BatchListRedeemsRequest) returns (BatchListRedeemsResponse);
+  rpc BatchUpdateRedeems(BatchUpdateRedeemsRequest) returns (BatchUpdateRedeemsResponse);
+  
+  // Redeem Synchronization
+  rpc SyncRedeems(SyncRedeemsRequest) returns (SyncRedeemsResponse);
+  rpc GetSyncStatus(GetSyncStatusRequest) returns (GetSyncStatusResponse);
+  
+  // Redeem Execution
+  rpc ExecuteRedeem(ExecuteRedeemRequest) returns (ExecuteRedeemResponse);
+  rpc TestRedeem(TestRedeemRequest) returns (TestRedeemResponse);
+  
+  // Usage Analytics
+  rpc GetRedeemUsage(GetRedeemUsageRequest) returns (GetRedeemUsageResponse);
+  
+  // Streaming
+  rpc StreamRedeemEvents(StreamRedeemEventsRequest) returns (stream RedeemEvent);
+}
+
+// List Redeems
+message ListRedeemsRequest {
+  string platform = 1; // Optional filter
+  bool active_only = 2;
+  bool dynamic_only = 3;
+  maowbot.common.PageRequest page = 4;
+}
+
+message ListRedeemsResponse {
+  repeated RedeemInfo redeems = 1;
+  maowbot.common.PageResponse page = 2;
+}
+
+message RedeemInfo {
+  maowbot.common.Redeem redeem = 1;
+  RedeemStatistics stats = 2;
+  SyncStatus sync_status = 3;
+  repeated string linked_triggers = 4; // OSC trigger IDs
+}
+
+message RedeemStatistics {
+  int64 total_redemptions = 1;
+  int64 unique_users = 2;
+  google.protobuf.Timestamp last_redeemed = 3;
+  float average_time_between_redemptions = 4;
+  int64 total_points_spent = 5;
+}
+
+message SyncStatus {
+  bool is_synced = 1;
+  google.protobuf.Timestamp last_sync = 2;
+  string sync_error = 3;
+  bool platform_exists = 4;
+}
+
+// Get Redeem
+message GetRedeemRequest {
+  string redeem_id = 1;
+  bool include_usage = 2;
+}
+
+message GetRedeemResponse {
+  RedeemInfo redeem = 1;
+  repeated RedeemUsageEntry recent_usage = 2;
+}
+
+message RedeemUsageEntry {
+  string user_id = 1;
+  string platform_user_id = 2;
+  google.protobuf.Timestamp redeemed_at = 3;
+  string user_input = 4;
+  RedeemRedemptionStatus status = 5;
+  string handler_response = 6;
+}
+
+enum RedeemRedemptionStatus {
+  REDEEM_REDEMPTION_STATUS_UNKNOWN = 0;
+  REDEEM_REDEMPTION_STATUS_PENDING = 1;
+  REDEEM_REDEMPTION_STATUS_FULFILLED = 2;
+  REDEEM_REDEMPTION_STATUS_CANCELED = 3;
+  REDEEM_REDEMPTION_STATUS_FAILED = 4;
+}
+
+// Create Redeem
+message CreateRedeemRequest {
+  maowbot.common.Redeem redeem = 1;
+  bool sync_to_platform = 2;
+}
+
+message CreateRedeemResponse {
+  maowbot.common.Redeem redeem = 1;
+  bool synced = 2;
+}
+
+// Update Redeem
+message UpdateRedeemRequest {
+  string redeem_id = 1;
+  maowbot.common.Redeem redeem = 2;
+  google.protobuf.FieldMask update_mask = 3;
+  bool sync_to_platform = 4;
+}
+
+message UpdateRedeemResponse {
+  maowbot.common.Redeem redeem = 1;
+  bool synced = 2;
+}
+
+// Delete Redeem
+message DeleteRedeemRequest {
+  string redeem_id = 1;
+  bool remove_from_platform = 2;
+}
+
+// Batch Operations
+message BatchListRedeemsRequest {
+  repeated string platforms = 1;
+  bool group_by_platform = 2;
+  bool include_sync_status = 3;
+}
+
+message BatchListRedeemsResponse {
+  map<string, RedeemList> by_platform = 1; // Platform -> Redeems
+  repeated RedeemInfo all_redeems = 2;
+}
+
+message RedeemList {
+  repeated RedeemInfo redeems = 1;
+  int32 active_count = 2;
+  int32 total_count = 3;
+  int32 synced_count = 4;
+}
+
+message BatchUpdateRedeemsRequest {
+  repeated RedeemUpdate updates = 1;
+  bool sync_all = 2;
+  bool atomic = 3; // All or nothing
+}
+
+message RedeemUpdate {
+  string redeem_id = 1;
+  maowbot.common.Redeem redeem = 2;
+  google.protobuf.FieldMask update_mask = 3;
+}
+
+message BatchUpdateRedeemsResponse {
+  repeated UpdateRedeemResult results = 1;
+  int32 success_count = 2;
+  int32 failure_count = 3;
+}
+
+message UpdateRedeemResult {
+  string redeem_id = 1;
+  bool success = 2;
+  maowbot.common.Redeem redeem = 3;
+  bool synced = 4;
+  string error_message = 5;
+}
+
+// Sync Operations
+message SyncRedeemsRequest {
+  repeated string platforms = 1; // Empty for all
+  SyncDirection direction = 2;
+  bool dry_run = 3;
+}
+
+enum SyncDirection {
+  SYNC_DIRECTION_UNKNOWN = 0;
+  SYNC_DIRECTION_TO_PLATFORM = 1; // Push local to platform
+  SYNC_DIRECTION_FROM_PLATFORM = 2; // Pull from platform
+  SYNC_DIRECTION_BIDIRECTIONAL = 3; // Merge both ways
+}
+
+message SyncRedeemsResponse {
+  repeated SyncResult results = 1;
+  int32 created_count = 2;
+  int32 updated_count = 3;
+  int32 deleted_count = 4;
+  int32 error_count = 5;
+}
+
+message SyncResult {
+  string redeem_id = 1;
+  string platform = 2;
+  SyncAction action = 3;
+  bool success = 4;
+  string error_message = 5;
+}
+
+enum SyncAction {
+  SYNC_ACTION_UNKNOWN = 0;
+  SYNC_ACTION_CREATED = 1;
+  SYNC_ACTION_UPDATED = 2;
+  SYNC_ACTION_DELETED = 3;
+  SYNC_ACTION_SKIPPED = 4;
+}
+
+message GetSyncStatusRequest {
+  repeated string platforms = 1; // Empty for all
+}
+
+message GetSyncStatusResponse {
+  repeated PlatformSyncStatus platforms = 1;
+  google.protobuf.Timestamp last_full_sync = 2;
+}
+
+message PlatformSyncStatus {
+  string platform = 1;
+  int32 local_count = 2;
+  int32 platform_count = 3;
+  int32 synced_count = 4;
+  int32 out_of_sync_count = 5;
+  google.protobuf.Timestamp last_sync = 6;
+  bool sync_enabled = 7;
+}
+
+// Redeem Execution
+message ExecuteRedeemRequest {
+  string redeem_id = 1;
+  string user_id = 2;
+  string platform_user_id = 3;
+  string user_input = 4;
+  map<string, string> context = 5;
+}
+
+message ExecuteRedeemResponse {
+  bool executed = 1;
+  string response = 2;
+  string redemption_id = 3;
+  string error_message = 4;
+}
+
+message TestRedeemRequest {
+  string redeem_id = 1;
+  string test_input = 2;
+  map<string, string> test_context = 3;
+}
+
+message TestRedeemResponse {
+  bool would_execute = 1;
+  string expected_response = 2;
+  repeated string triggered_actions = 3;
+  string error_message = 4;
+}
+
+// Usage Analytics
+message GetRedeemUsageRequest {
+  string redeem_id = 1; // Optional, all if not specified
+  string platform = 2; // Optional filter
+  google.protobuf.Timestamp start_time = 3;
+  google.protobuf.Timestamp end_time = 4;
+  RedeemUsageGrouping grouping = 5;
+}
+
+enum RedeemUsageGrouping {
+  REDEEM_USAGE_GROUPING_NONE = 0;
+  REDEEM_USAGE_GROUPING_HOURLY = 1;
+  REDEEM_USAGE_GROUPING_DAILY = 2;
+  REDEEM_USAGE_GROUPING_WEEKLY = 3;
+  REDEEM_USAGE_GROUPING_MONTHLY = 4;
+}
+
+message GetRedeemUsageResponse {
+  repeated RedeemUsageData usage = 1;
+  RedeemUsageSummary summary = 2;
+}
+
+message RedeemUsageData {
+  string redeem_id = 1;
+  string redeem_name = 2;
+  google.protobuf.Timestamp timestamp = 3;
+  int64 redemption_count = 4;
+  int64 unique_users = 5;
+  int64 total_cost = 6;
+  map<string, int64> usage_by_status = 7; // Status -> count
+}
+
+message RedeemUsageSummary {
+  int64 total_redemptions = 1;
+  int64 total_unique_users = 2;
+  int64 total_points_spent = 3;
+  string most_redeemed = 4;
+  string highest_cost_redeemed = 5;
+  float average_redemptions_per_day = 6;
+  float fulfillment_rate = 7;
+}
+
+// Streaming
+message StreamRedeemEventsRequest {
+  repeated string platforms = 1; // Empty for all
+  repeated RedeemEventType event_types = 2; // Empty for all
+}
+
+enum RedeemEventType {
+  REDEEM_EVENT_TYPE_UNKNOWN = 0;
+  REDEEM_EVENT_TYPE_CREATED = 1;
+  REDEEM_EVENT_TYPE_UPDATED = 2;
+  REDEEM_EVENT_TYPE_DELETED = 3;
+  REDEEM_EVENT_TYPE_REDEEMED = 4;
+  REDEEM_EVENT_TYPE_FULFILLED = 5;
+  REDEEM_EVENT_TYPE_CANCELED = 6;
+  REDEEM_EVENT_TYPE_SYNCED = 7;
+  REDEEM_EVENT_TYPE_ERROR = 8;
+}
+
+message RedeemEvent {
+  RedeemEventType event_type = 1;
+  maowbot.common.Redeem redeem = 2;
+  string user_id = 3; // For redemption events
+  string redemption_id = 4; // For redemption events
+  string error_message = 5; // For error events
+  google.protobuf.Timestamp timestamp = 6;
+}

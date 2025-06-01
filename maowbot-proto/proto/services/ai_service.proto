@@ -1,0 +1,445 @@
+syntax = "proto3";
+
+package maowbot.services;
+
+import "common.proto";
+import "google/protobuf/empty.proto";
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/struct.proto";
+import "google/protobuf/field_mask.proto";
+
+service AIService {
+  // Chat Generation
+  rpc GenerateChat(GenerateChatRequest) returns (GenerateChatResponse);
+  rpc StreamGenerateChat(StreamGenerateChatRequest) returns (stream ChatToken);
+  
+  // Provider Management
+  rpc ConfigureProvider(ConfigureProviderRequest) returns (ConfigureProviderResponse);
+  rpc GetProviderConfig(GetProviderConfigRequest) returns (GetProviderConfigResponse);
+  rpc ListProviders(ListProvidersRequest) returns (ListProvidersResponse);
+  rpc TestProvider(TestProviderRequest) returns (TestProviderResponse);
+  
+  // Function Management
+  rpc RegisterFunction(RegisterFunctionRequest) returns (google.protobuf.Empty);
+  rpc UnregisterFunction(UnregisterFunctionRequest) returns (google.protobuf.Empty);
+  rpc ListFunctions(ListFunctionsRequest) returns (ListFunctionsResponse);
+  rpc CallFunction(CallFunctionRequest) returns (CallFunctionResponse);
+  
+  // System Prompts
+  rpc SetSystemPrompt(SetSystemPromptRequest) returns (google.protobuf.Empty);
+  rpc GetSystemPrompt(GetSystemPromptRequest) returns (GetSystemPromptResponse);
+  rpc ListSystemPrompts(ListSystemPromptsRequest) returns (ListSystemPromptsResponse);
+  
+  // Memory Management
+  rpc CreateMemory(CreateMemoryRequest) returns (CreateMemoryResponse);
+  rpc GetMemory(GetMemoryRequest) returns (GetMemoryResponse);
+  rpc UpdateMemory(UpdateMemoryRequest) returns (UpdateMemoryResponse);
+  rpc DeleteMemory(DeleteMemoryRequest) returns (google.protobuf.Empty);
+  rpc SearchMemories(SearchMemoriesRequest) returns (SearchMemoriesResponse);
+  
+  // Context Management
+  rpc CreateContext(CreateContextRequest) returns (CreateContextResponse);
+  rpc GetContext(GetContextRequest) returns (GetContextResponse);
+  rpc UpdateContext(UpdateContextRequest) returns (UpdateContextResponse);
+  rpc ClearContext(ClearContextRequest) returns (google.protobuf.Empty);
+  
+  // Analytics
+  rpc GetAIUsage(GetAIUsageRequest) returns (GetAIUsageResponse);
+  rpc GetModelPerformance(GetModelPerformanceRequest) returns (GetModelPerformanceResponse);
+}
+
+// Chat Generation
+message GenerateChatRequest {
+  repeated ChatMessage messages = 1;
+  GenerationOptions options = 2;
+  string context_id = 3; // Optional context
+  repeated string function_names = 4; // Available functions
+}
+
+message ChatMessage {
+  ChatRole role = 1;
+  string content = 2;
+  string name = 3; // Optional name for the message
+  repeated FunctionCall function_calls = 4;
+  map<string, google.protobuf.Value> metadata = 5;
+}
+
+enum ChatRole {
+  CHAT_ROLE_UNKNOWN = 0;
+  CHAT_ROLE_SYSTEM = 1;
+  CHAT_ROLE_USER = 2;
+  CHAT_ROLE_ASSISTANT = 3;
+  CHAT_ROLE_FUNCTION = 4;
+}
+
+message FunctionCall {
+  string name = 1;
+  google.protobuf.Struct arguments = 2;
+  string id = 3;
+}
+
+message GenerationOptions {
+  string model = 1;
+  float temperature = 2;
+  float top_p = 3;
+  int32 max_tokens = 4;
+  repeated string stop_sequences = 5;
+  float presence_penalty = 6;
+  float frequency_penalty = 7;
+  int32 n = 8; // Number of completions
+  bool stream = 9;
+  map<string, google.protobuf.Value> provider_specific = 10;
+}
+
+message GenerateChatResponse {
+  repeated ChatCompletion completions = 1;
+  UsageInfo usage = 2;
+  string model_used = 3;
+  string request_id = 4;
+}
+
+message ChatCompletion {
+  ChatMessage message = 1;
+  FinishReason finish_reason = 2;
+  int32 index = 3;
+}
+
+enum FinishReason {
+  FINISH_REASON_UNKNOWN = 0;
+  FINISH_REASON_STOP = 1;
+  FINISH_REASON_LENGTH = 2;
+  FINISH_REASON_FUNCTION_CALL = 3;
+  FINISH_REASON_CONTENT_FILTER = 4;
+}
+
+message UsageInfo {
+  int32 prompt_tokens = 1;
+  int32 completion_tokens = 2;
+  int32 total_tokens = 3;
+  float estimated_cost = 4;
+}
+
+// Streaming
+message StreamGenerateChatRequest {
+  repeated ChatMessage messages = 1;
+  GenerationOptions options = 2;
+  string context_id = 3;
+  repeated string function_names = 4;
+}
+
+message ChatToken {
+  string token = 1;
+  int32 index = 2;
+  FinishReason finish_reason = 3;
+  FunctionCall function_call = 4;
+  UsageInfo usage = 5; // Final token only
+}
+
+// Provider Management
+message ConfigureProviderRequest {
+  string provider_name = 1;
+  google.protobuf.Struct config = 2;
+  bool validate_only = 3;
+}
+
+message ConfigureProviderResponse {
+  bool success = 1;
+  string error_message = 2;
+  ProviderInfo provider = 3;
+}
+
+message ProviderInfo {
+  string name = 1;
+  ProviderType type = 2;
+  bool is_configured = 3;
+  bool is_active = 4;
+  repeated string supported_models = 5;
+  repeated string capabilities = 6;
+  google.protobuf.Timestamp configured_at = 7;
+}
+
+enum ProviderType {
+  PROVIDER_TYPE_UNKNOWN = 0;
+  PROVIDER_TYPE_OPENAI = 1;
+  PROVIDER_TYPE_ANTHROPIC = 2;
+  PROVIDER_TYPE_GOOGLE = 3;
+  PROVIDER_TYPE_LOCAL = 4;
+  PROVIDER_TYPE_CUSTOM = 5;
+}
+
+message GetProviderConfigRequest {
+  string provider_name = 1;
+  bool include_secrets = 2;
+}
+
+message GetProviderConfigResponse {
+  ProviderInfo provider = 1;
+  google.protobuf.Struct config = 2;
+}
+
+message ListProvidersRequest {
+  bool configured_only = 1;
+}
+
+message ListProvidersResponse {
+  repeated ProviderInfo providers = 1;
+  string active_provider = 2;
+}
+
+message TestProviderRequest {
+  string provider_name = 1;
+  string test_prompt = 2; // Optional
+}
+
+message TestProviderResponse {
+  bool success = 1;
+  string response = 2;
+  string error_message = 3;
+  int64 latency_ms = 4;
+}
+
+// Function Management
+message RegisterFunctionRequest {
+  FunctionDefinition function = 1;
+}
+
+message FunctionDefinition {
+  string name = 1;
+  string description = 2;
+  google.protobuf.Struct parameters = 3; // JSON Schema
+  repeated string required_parameters = 4;
+  map<string, string> examples = 5;
+}
+
+message UnregisterFunctionRequest {
+  string function_name = 1;
+}
+
+message ListFunctionsRequest {
+  repeated string categories = 1; // Empty for all
+}
+
+message ListFunctionsResponse {
+  repeated FunctionInfo functions = 1;
+}
+
+message FunctionInfo {
+  FunctionDefinition definition = 1;
+  bool is_enabled = 2;
+  int64 call_count = 3;
+  google.protobuf.Timestamp last_called = 4;
+}
+
+message CallFunctionRequest {
+  string function_name = 1;
+  google.protobuf.Struct arguments = 2;
+  string context_id = 3; // Optional
+}
+
+message CallFunctionResponse {
+  bool success = 1;
+  google.protobuf.Value result = 2;
+  string error_message = 3;
+  int64 execution_time_ms = 4;
+}
+
+// System Prompts
+message SetSystemPromptRequest {
+  string prompt_id = 1;
+  string prompt = 2;
+  map<string, string> variables = 3; // Template variables
+}
+
+message GetSystemPromptRequest {
+  string prompt_id = 1;
+}
+
+message GetSystemPromptResponse {
+  SystemPrompt prompt = 1;
+}
+
+message SystemPrompt {
+  string prompt_id = 1;
+  string prompt = 2;
+  map<string, string> variables = 3;
+  google.protobuf.Timestamp created_at = 4;
+  google.protobuf.Timestamp updated_at = 5;
+}
+
+message ListSystemPromptsRequest {
+}
+
+message ListSystemPromptsResponse {
+  repeated SystemPrompt prompts = 1;
+  string active_prompt_id = 2;
+}
+
+// Memory Management
+message CreateMemoryRequest {
+  Memory memory = 1;
+}
+
+message Memory {
+  string memory_id = 1;
+  string user_id = 2;
+  string content = 3;
+  MemoryType type = 4;
+  repeated string tags = 5;
+  map<string, google.protobuf.Value> metadata = 6;
+  google.protobuf.Timestamp created_at = 7;
+  google.protobuf.Timestamp accessed_at = 8;
+  int32 access_count = 9;
+  float importance_score = 10;
+}
+
+enum MemoryType {
+  MEMORY_TYPE_UNKNOWN = 0;
+  MEMORY_TYPE_FACT = 1;
+  MEMORY_TYPE_PREFERENCE = 2;
+  MEMORY_TYPE_INTERACTION = 3;
+  MEMORY_TYPE_CONTEXT = 4;
+}
+
+message CreateMemoryResponse {
+  Memory memory = 1;
+}
+
+message GetMemoryRequest {
+  string memory_id = 1;
+}
+
+message GetMemoryResponse {
+  Memory memory = 1;
+}
+
+message UpdateMemoryRequest {
+  string memory_id = 1;
+  Memory memory = 2;
+  google.protobuf.FieldMask update_mask = 3;
+}
+
+message UpdateMemoryResponse {
+  Memory memory = 1;
+}
+
+message DeleteMemoryRequest {
+  string memory_id = 1;
+}
+
+message SearchMemoriesRequest {
+  string query = 1;
+  string user_id = 2; // Optional filter
+  repeated MemoryType types = 3; // Empty for all
+  repeated string tags = 4; // Empty for all
+  int32 limit = 5;
+  float similarity_threshold = 6;
+}
+
+message SearchMemoriesResponse {
+  repeated MemorySearchResult results = 1;
+}
+
+message MemorySearchResult {
+  Memory memory = 1;
+  float relevance_score = 2;
+  repeated string matched_terms = 3;
+}
+
+// Context Management
+message CreateContextRequest {
+  Context context = 1;
+}
+
+message Context {
+  string context_id = 1;
+  string user_id = 2;
+  repeated ChatMessage messages = 3;
+  repeated string memory_ids = 4;
+  map<string, google.protobuf.Value> variables = 5;
+  google.protobuf.Timestamp created_at = 6;
+  google.protobuf.Timestamp updated_at = 7;
+  int32 message_count = 8;
+  int32 token_count = 9;
+}
+
+message CreateContextResponse {
+  Context context = 1;
+}
+
+message GetContextRequest {
+  string context_id = 1;
+  bool include_memories = 2;
+}
+
+message GetContextResponse {
+  Context context = 1;
+  repeated Memory memories = 2;
+}
+
+message UpdateContextRequest {
+  string context_id = 1;
+  repeated ChatMessage messages = 2; // Append messages
+  repeated string memory_ids = 3; // Add memories
+  map<string, google.protobuf.Value> variables = 4; // Update variables
+  int32 max_messages = 5; // Trim to this many messages
+}
+
+message UpdateContextResponse {
+  Context context = 1;
+  int32 trimmed_messages = 2;
+}
+
+message ClearContextRequest {
+  string context_id = 1;
+  bool delete_memories = 2;
+}
+
+// Analytics
+message GetAIUsageRequest {
+  google.protobuf.Timestamp start_time = 1;
+  google.protobuf.Timestamp end_time = 2;
+  string user_id = 3; // Optional filter
+  string provider = 4; // Optional filter
+}
+
+message GetAIUsageResponse {
+  repeated UsageEntry usage = 1;
+  UsageSummary summary = 2;
+}
+
+message UsageEntry {
+  string user_id = 1;
+  string provider = 2;
+  string model = 3;
+  int32 request_count = 4;
+  int64 total_tokens = 5;
+  float total_cost = 6;
+  google.protobuf.Timestamp timestamp = 7;
+}
+
+message UsageSummary {
+  int32 total_requests = 1;
+  int64 total_tokens = 2;
+  float total_cost = 3;
+  map<string, int64> tokens_by_model = 4;
+  map<string, float> cost_by_model = 5;
+}
+
+message GetModelPerformanceRequest {
+  string model = 1; // Optional filter
+  int32 sample_size = 2; // Default 100
+}
+
+message GetModelPerformanceResponse {
+  repeated ModelPerformance models = 1;
+}
+
+message ModelPerformance {
+  string model = 1;
+  float average_latency_ms = 2;
+  float p95_latency_ms = 3;
+  float p99_latency_ms = 4;
+  float success_rate = 5;
+  float average_tokens_per_second = 6;
+  int32 sample_count = 7;
+}

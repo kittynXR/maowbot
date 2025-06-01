@@ -1,0 +1,433 @@
+syntax = "proto3";
+
+package maowbot.services;
+
+import "common.proto";
+import "google/protobuf/empty.proto";
+import "google/protobuf/timestamp.proto";
+
+service DiscordService {
+  // Guild Management
+  rpc ListGuilds(ListGuildsRequest) returns (ListGuildsResponse);
+  rpc GetGuild(GetGuildRequest) returns (GetGuildResponse);
+  
+  // Channel Management
+  rpc ListChannels(ListChannelsRequest) returns (ListChannelsResponse);
+  rpc GetChannel(GetChannelRequest) returns (GetChannelResponse);
+  
+  // Messaging
+  rpc SendMessage(SendDiscordMessageRequest) returns (SendDiscordMessageResponse);
+  rpc EditMessage(EditMessageRequest) returns (google.protobuf.Empty);
+  rpc DeleteMessage(DeleteDiscordMessageRequest) returns (google.protobuf.Empty);
+  rpc SendEmbed(SendEmbedRequest) returns (SendEmbedResponse);
+  
+  // Role Management
+  rpc ListRoles(ListRolesRequest) returns (ListRolesResponse);
+  rpc AddRoleToUser(AddRoleToUserRequest) returns (google.protobuf.Empty);
+  rpc RemoveRoleFromUser(RemoveRoleFromUserRequest) returns (google.protobuf.Empty);
+  
+  // Member Management
+  rpc GetMember(GetMemberRequest) returns (GetMemberResponse);
+  rpc ListMembers(ListMembersRequest) returns (ListMembersResponse);
+  
+  // Event Configuration
+  rpc ListEventConfigs(ListEventConfigsRequest) returns (ListEventConfigsResponse);
+  rpc AddEventRole(AddEventRoleRequest) returns (google.protobuf.Empty);
+  rpc RemoveEventRole(RemoveEventRoleRequest) returns (google.protobuf.Empty);
+  
+  // Live Role Management
+  rpc SetLiveRole(SetLiveRoleRequest) returns (google.protobuf.Empty);
+  rpc DeleteLiveRole(DeleteLiveRoleRequest) returns (google.protobuf.Empty);
+  rpc ListLiveRoles(ListLiveRolesRequest) returns (ListLiveRolesResponse);
+  
+  // Account Management
+  rpc UpsertDiscordAccount(UpsertDiscordAccountRequest) returns (UpsertDiscordAccountResponse);
+  
+  // Streaming
+  rpc StreamDiscordEvents(StreamDiscordEventsRequest) returns (stream DiscordEvent);
+}
+
+// Guild Management
+message ListGuildsRequest {
+  string account_name = 1;
+}
+
+message ListGuildsResponse {
+  repeated Guild guilds = 1;
+}
+
+message Guild {
+  string guild_id = 1;
+  string name = 2;
+  string icon_url = 3;
+  bool is_owner = 4;
+  repeated string features = 5;
+  int32 member_count = 6;
+}
+
+message GetGuildRequest {
+  string account_name = 1;
+  string guild_id = 2;
+}
+
+message GetGuildResponse {
+  Guild guild = 1;
+  GuildSettings settings = 2;
+}
+
+message GuildSettings {
+  string prefix = 1;
+  repeated string enabled_features = 2;
+  map<string, string> custom_settings = 3;
+}
+
+// Channel Management
+message ListChannelsRequest {
+  string account_name = 1;
+  string guild_id = 2;
+  repeated ChannelType channel_types = 3; // Empty for all
+}
+
+enum ChannelType {
+  CHANNEL_TYPE_UNKNOWN = 0;
+  CHANNEL_TYPE_TEXT = 1;
+  CHANNEL_TYPE_VOICE = 2;
+  CHANNEL_TYPE_CATEGORY = 3;
+  CHANNEL_TYPE_NEWS = 4;
+  CHANNEL_TYPE_STAGE = 5;
+  CHANNEL_TYPE_FORUM = 6;
+}
+
+message ListChannelsResponse {
+  repeated Channel channels = 1;
+}
+
+message Channel {
+  string channel_id = 1;
+  string guild_id = 2;
+  string name = 3;
+  ChannelType type = 4;
+  int32 position = 5;
+  string parent_id = 6; // Category ID
+  string topic = 7;
+  bool is_nsfw = 8;
+  repeated PermissionOverwrite overwrites = 9;
+}
+
+message PermissionOverwrite {
+  string id = 1; // Role or User ID
+  enum Type {
+    TYPE_UNKNOWN = 0;
+    TYPE_ROLE = 1;
+    TYPE_MEMBER = 2;
+  }
+  Type type = 2;
+  int64 allow = 3; // Permission bits
+  int64 deny = 4; // Permission bits
+}
+
+message GetChannelRequest {
+  string account_name = 1;
+  string channel_id = 2;
+}
+
+message GetChannelResponse {
+  Channel channel = 1;
+}
+
+// Messaging
+message SendDiscordMessageRequest {
+  string account_name = 1;
+  string channel_id = 2;
+  string content = 3;
+  repeated Embed embeds = 4;
+  MessageReference reference = 5; // For replies
+  repeated string mentions = 6; // User IDs to mention
+  bool tts = 7;
+}
+
+message MessageReference {
+  string message_id = 1;
+  string channel_id = 2;
+  string guild_id = 3;
+}
+
+message SendDiscordMessageResponse {
+  string message_id = 1;
+  google.protobuf.Timestamp timestamp = 2;
+}
+
+message EditMessageRequest {
+  string account_name = 1;
+  string channel_id = 2;
+  string message_id = 3;
+  string content = 4;
+  repeated Embed embeds = 5;
+}
+
+message DeleteDiscordMessageRequest {
+  string account_name = 1;
+  string channel_id = 2;
+  string message_id = 3;
+}
+
+message SendEmbedRequest {
+  string account_name = 1;
+  string channel_id = 2;
+  Embed embed = 3;
+}
+
+message SendEmbedResponse {
+  string message_id = 1;
+}
+
+message Embed {
+  string title = 1;
+  string description = 2;
+  string url = 3;
+  int32 color = 4;
+  EmbedFooter footer = 5;
+  EmbedImage image = 6;
+  EmbedImage thumbnail = 7;
+  EmbedAuthor author = 8;
+  repeated EmbedField fields = 9;
+  google.protobuf.Timestamp timestamp = 10;
+}
+
+message EmbedFooter {
+  string text = 1;
+  string icon_url = 2;
+}
+
+message EmbedImage {
+  string url = 1;
+  int32 height = 2;
+  int32 width = 3;
+}
+
+message EmbedAuthor {
+  string name = 1;
+  string url = 2;
+  string icon_url = 3;
+}
+
+message EmbedField {
+  string name = 1;
+  string value = 2;
+  bool inline = 3;
+}
+
+// Role Management
+message ListRolesRequest {
+  string account_name = 1;
+  string guild_id = 2;
+}
+
+message ListRolesResponse {
+  repeated Role roles = 1;
+}
+
+message Role {
+  string role_id = 1;
+  string guild_id = 2;
+  string name = 3;
+  int32 color = 4;
+  bool hoist = 5; // Display separately
+  int32 position = 6;
+  int64 permissions = 7;
+  bool managed = 8; // Managed by integration
+  bool mentionable = 9;
+}
+
+message AddRoleToUserRequest {
+  string account_name = 1;
+  string guild_id = 2;
+  string user_id = 3;
+  string role_id = 4;
+}
+
+message RemoveRoleFromUserRequest {
+  string account_name = 1;
+  string guild_id = 2;
+  string user_id = 3;
+  string role_id = 4;
+}
+
+// Member Management
+message GetMemberRequest {
+  string account_name = 1;
+  string guild_id = 2;
+  string user_id = 3;
+}
+
+message GetMemberResponse {
+  Member member = 1;
+}
+
+message Member {
+  string user_id = 1;
+  string username = 2;
+  string discriminator = 3;
+  string display_name = 4; // Server nickname
+  string avatar_url = 5;
+  repeated string role_ids = 6;
+  google.protobuf.Timestamp joined_at = 7;
+  bool is_owner = 8;
+  bool is_admin = 9;
+}
+
+message ListMembersRequest {
+  string account_name = 1;
+  string guild_id = 2;
+  int32 limit = 3;
+  string after = 4; // User ID for pagination
+}
+
+message ListMembersResponse {
+  repeated Member members = 1;
+  bool has_more = 2;
+}
+
+// Event Configuration
+message ListEventConfigsRequest {
+  string guild_id = 1; // Optional filter
+}
+
+message ListEventConfigsResponse {
+  repeated EventConfig configs = 1;
+}
+
+message EventConfig {
+  string event_name = 1;
+  repeated string role_ids = 2;
+  string guild_id = 3;
+  bool is_enabled = 4;
+}
+
+message AddEventRoleRequest {
+  string event_name = 1;
+  string role_id = 2;
+  string guild_id = 3;
+}
+
+message RemoveEventRoleRequest {
+  string event_name = 1;
+  string role_id = 2;
+}
+
+// Live Role Management
+message SetLiveRoleRequest {
+  string guild_id = 1;
+  string role_id = 2;
+}
+
+message DeleteLiveRoleRequest {
+  string guild_id = 1;
+}
+
+message ListLiveRolesRequest {
+  string guild_id = 1; // Optional filter
+}
+
+message ListLiveRolesResponse {
+  repeated LiveRole roles = 1;
+}
+
+message LiveRole {
+  string guild_id = 1;
+  string role_id = 2;
+  string role_name = 3;
+  google.protobuf.Timestamp created_at = 4;
+}
+
+// Account Management
+message UpsertDiscordAccountRequest {
+  string account_name = 1;
+  string credential_id = 2; // Optional
+  string discord_id = 3; // Optional
+}
+
+message UpsertDiscordAccountResponse {
+  string account_id = 1;
+  bool was_created = 2;
+}
+
+// Streaming Events
+message StreamDiscordEventsRequest {
+  repeated string guild_ids = 1; // Empty for all
+  repeated DiscordEventType event_types = 2; // Empty for all
+}
+
+enum DiscordEventType {
+  DISCORD_EVENT_TYPE_UNKNOWN = 0;
+  DISCORD_EVENT_TYPE_MESSAGE_CREATE = 1;
+  DISCORD_EVENT_TYPE_MESSAGE_UPDATE = 2;
+  DISCORD_EVENT_TYPE_MESSAGE_DELETE = 3;
+  DISCORD_EVENT_TYPE_MEMBER_JOIN = 4;
+  DISCORD_EVENT_TYPE_MEMBER_LEAVE = 5;
+  DISCORD_EVENT_TYPE_MEMBER_UPDATE = 6;
+  DISCORD_EVENT_TYPE_ROLE_CREATE = 7;
+  DISCORD_EVENT_TYPE_ROLE_UPDATE = 8;
+  DISCORD_EVENT_TYPE_ROLE_DELETE = 9;
+  DISCORD_EVENT_TYPE_CHANNEL_CREATE = 10;
+  DISCORD_EVENT_TYPE_CHANNEL_UPDATE = 11;
+  DISCORD_EVENT_TYPE_CHANNEL_DELETE = 12;
+  DISCORD_EVENT_TYPE_REACTION_ADD = 13;
+  DISCORD_EVENT_TYPE_REACTION_REMOVE = 14;
+  DISCORD_EVENT_TYPE_VOICE_STATE_UPDATE = 15;
+}
+
+message DiscordEvent {
+  DiscordEventType event_type = 1;
+  string guild_id = 2;
+  google.protobuf.Timestamp timestamp = 3;
+  
+  oneof event_data {
+    MessageEvent message = 4;
+    MemberEvent member = 5;
+    RoleEvent role = 6;
+    ChannelEvent channel = 7;
+    ReactionEvent reaction = 8;
+    VoiceStateEvent voice_state = 9;
+  }
+}
+
+message MessageEvent {
+  string message_id = 1;
+  string channel_id = 2;
+  string author_id = 3;
+  string content = 4;
+  repeated Embed embeds = 5;
+  repeated string mentions = 6;
+}
+
+message MemberEvent {
+  Member member = 1;
+  repeated string added_roles = 2;
+  repeated string removed_roles = 3;
+}
+
+message RoleEvent {
+  Role role = 1;
+  string action = 2; // "created", "updated", "deleted"
+}
+
+message ChannelEvent {
+  Channel channel = 1;
+  string action = 2; // "created", "updated", "deleted"
+}
+
+message ReactionEvent {
+  string message_id = 1;
+  string channel_id = 2;
+  string user_id = 3;
+  string emoji = 4;
+}
+
+message VoiceStateEvent {
+  string user_id = 1;
+  string channel_id = 2; // Null if disconnected
+  bool is_muted = 3;
+  bool is_deafened = 4;
+  bool is_streaming = 5;
+}

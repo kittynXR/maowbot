@@ -1,0 +1,212 @@
+syntax = "proto3";
+
+package maowbot.common;
+
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/any.proto";
+
+// Common enums
+enum Platform {
+  PLATFORM_UNKNOWN = 0;
+  PLATFORM_TWITCH_IRC = 1;
+  PLATFORM_TWITCH_EVENTSUB = 2;
+  PLATFORM_DISCORD = 3;
+  PLATFORM_VRCHAT = 4;
+  PLATFORM_VRCHAT_PIPELINE = 5;
+  PLATFORM_TWITCH_HELIX = 6;
+}
+
+enum ErrorCode {
+  ERROR_UNKNOWN = 0;
+  ERROR_NOT_FOUND = 1;
+  ERROR_ALREADY_EXISTS = 2;
+  ERROR_INVALID_ARGUMENT = 3;
+  ERROR_PERMISSION_DENIED = 4;
+  ERROR_INTERNAL = 5;
+  ERROR_UNAVAILABLE = 6;
+  ERROR_UNAUTHENTICATED = 7;
+  ERROR_RESOURCE_EXHAUSTED = 8;
+  ERROR_FAILED_PRECONDITION = 9;
+}
+
+// Common messages
+message Error {
+  ErrorCode code = 1;
+  string message = 2;
+  map<string, string> details = 3;
+}
+
+message PageRequest {
+  int32 page_size = 1;
+  string page_token = 2;
+}
+
+message PageResponse {
+  string next_page_token = 1;
+  int32 total_count = 2;
+}
+
+message CacheControl {
+  int32 ttl_seconds = 1;
+  string etag = 2;
+  bool no_cache = 3;
+}
+
+message BatchRequest {
+  repeated string ids = 1;
+  map<string, string> filters = 2;
+}
+
+// User related
+message User {
+  string user_id = 1; // UUID as string
+  string global_username = 2;
+  google.protobuf.Timestamp created_at = 3;
+  google.protobuf.Timestamp last_seen = 4;
+  bool is_active = 5;
+}
+
+message PlatformIdentity {
+  string platform_identity_id = 1; // UUID
+  string user_id = 2; // UUID
+  Platform platform = 3;
+  string platform_user_id = 4;
+  string platform_username = 5;
+  string platform_display_name = 6;
+  repeated string platform_roles = 7;
+  google.protobuf.Any platform_data = 8; // Platform-specific data
+  google.protobuf.Timestamp created_at = 9;
+  google.protobuf.Timestamp last_updated = 10;
+}
+
+message UserAnalysis {
+  string user_analysis_id = 1; // UUID
+  string user_id = 2; // UUID
+  float spam_score = 3;
+  float intelligibility_score = 4;
+  float quality_score = 5;
+  float horni_score = 6;
+  string ai_notes = 7;
+  string moderator_notes = 8;
+  google.protobuf.Timestamp created_at = 9;
+  google.protobuf.Timestamp updated_at = 10;
+}
+
+// Credential related
+message PlatformCredential {
+  string credential_id = 1; // UUID
+  Platform platform = 2;
+  string user_id = 3;
+  string user_name = 4;
+  string display_name = 5;
+  string encrypted_access_token = 6;
+  string encrypted_refresh_token = 7;
+  google.protobuf.Timestamp token_expires_at = 8;
+  repeated string scopes = 9;
+  google.protobuf.Timestamp created_at = 10;
+  google.protobuf.Timestamp last_refreshed = 11;
+  bool is_active = 12;
+  bool is_bot = 13;
+}
+
+// Platform config
+message PlatformConfig {
+  string platform_config_id = 1; // UUID
+  string platform = 2;
+  string client_id = 3;
+  string encrypted_client_secret = 4;
+  repeated string scopes = 5;
+  map<string, string> additional_config = 6;
+  google.protobuf.Timestamp created_at = 7;
+  google.protobuf.Timestamp updated_at = 8;
+}
+
+// Command related
+message Command {
+  string command_id = 1; // UUID
+  string platform = 2;
+  string name = 3;
+  string description = 4;
+  bool is_active = 5;
+  int32 cooldown_seconds = 6;
+  repeated string required_roles = 7;
+  google.protobuf.Timestamp created_at = 8;
+  google.protobuf.Timestamp updated_at = 9;
+  map<string, string> metadata = 10;
+}
+
+// Redeem related
+message Redeem {
+  string redeem_id = 1; // UUID
+  string platform = 2;
+  string reward_id = 3;
+  string reward_name = 4;
+  int32 cost = 5;
+  bool is_active = 6;
+  bool is_dynamic = 7;
+  string handler = 8;
+  google.protobuf.Timestamp created_at = 9;
+  google.protobuf.Timestamp updated_at = 10;
+  map<string, string> metadata = 11;
+}
+
+// Plugin related
+message Plugin {
+  string plugin_name = 1;
+  string plugin_id = 2; // UUID
+  bool is_active = 3;
+  bool is_connected = 4;
+  string version = 5;
+  repeated string capabilities = 6;
+  google.protobuf.Timestamp connected_at = 7;
+  map<string, string> metadata = 8;
+}
+
+// Bot Event for streaming
+message BotEvent {
+  string event_id = 1;
+  string event_type = 2;
+  google.protobuf.Timestamp event_timestamp = 3;
+  google.protobuf.Any data = 4;
+  map<string, string> metadata = 5;
+}
+
+// Chat specific
+message ChatMessage {
+  string message_id = 1;
+  Platform platform = 2;
+  string channel = 3;
+  string user = 4;
+  string user_id = 5;
+  string text = 6;
+  google.protobuf.Timestamp timestamp = 7;
+  map<string, string> metadata = 8;
+}
+
+// OSC specific
+message OscPacket {
+  string address = 1;
+  repeated OscValue arguments = 2;
+  google.protobuf.Timestamp timestamp = 3;
+}
+
+message OscValue {
+  oneof value {
+    int32 int_value = 1;
+    float float_value = 2;
+    string string_value = 3;
+    bool bool_value = 4;
+    bytes blob_value = 5;
+  }
+}
+
+message OscTrigger {
+  int32 trigger_id = 1;
+  string name = 2;
+  string parameter_name = 3;
+  float min_value = 4;
+  float max_value = 5;
+  float hold_duration = 6;
+  bool is_active = 7;
+  repeated string linked_redeems = 8;
+}

@@ -1,0 +1,249 @@
+syntax = "proto3";
+
+package maowbot.services;
+
+import "common.proto";
+import "google/protobuf/empty.proto";
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/field_mask.proto";
+
+service ConfigService {
+  // Configuration Management
+  rpc GetConfig(GetConfigRequest) returns (GetConfigResponse);
+  rpc SetConfig(SetConfigRequest) returns (SetConfigResponse);
+  rpc DeleteConfig(DeleteConfigRequest) returns (google.protobuf.Empty);
+  rpc ListConfigs(ListConfigsRequest) returns (ListConfigsResponse);
+  rpc BatchGetConfigs(BatchGetConfigsRequest) returns (BatchGetConfigsResponse);
+  rpc BatchSetConfigs(BatchSetConfigsRequest) returns (BatchSetConfigsResponse);
+  
+  // Configuration Validation
+  rpc ValidateConfig(ValidateConfigRequest) returns (ValidateConfigResponse);
+  
+  // Configuration History
+  rpc GetConfigHistory(GetConfigHistoryRequest) returns (GetConfigHistoryResponse);
+  
+  // Import/Export
+  rpc ExportConfigs(ExportConfigsRequest) returns (ExportConfigsResponse);
+  rpc ImportConfigs(ImportConfigsRequest) returns (ImportConfigsResponse);
+  
+  // Streaming
+  rpc StreamConfigUpdates(StreamConfigUpdatesRequest) returns (stream ConfigUpdateEvent);
+}
+
+// Get Config
+message GetConfigRequest {
+  string key = 1;
+  bool include_metadata = 2;
+}
+
+message GetConfigResponse {
+  ConfigEntry config = 1;
+  maowbot.common.CacheControl cache = 2;
+}
+
+message ConfigEntry {
+  string key = 1;
+  string value = 2;
+  ConfigMetadata metadata = 3;
+}
+
+message ConfigMetadata {
+  string description = 1;
+  ConfigType type = 2;
+  string default_value = 3;
+  repeated string allowed_values = 4;
+  bool is_secret = 5;
+  bool is_required = 6;
+  string category = 7;
+  google.protobuf.Timestamp created_at = 8;
+  google.protobuf.Timestamp updated_at = 9;
+  string updated_by = 10;
+}
+
+enum ConfigType {
+  CONFIG_TYPE_UNKNOWN = 0;
+  CONFIG_TYPE_STRING = 1;
+  CONFIG_TYPE_INTEGER = 2;
+  CONFIG_TYPE_FLOAT = 3;
+  CONFIG_TYPE_BOOLEAN = 4;
+  CONFIG_TYPE_JSON = 5;
+  CONFIG_TYPE_LIST = 6;
+  CONFIG_TYPE_MAP = 7;
+}
+
+// Set Config
+message SetConfigRequest {
+  string key = 1;
+  string value = 2;
+  ConfigMetadata metadata = 3; // Optional
+  bool validate_only = 4;
+}
+
+message SetConfigResponse {
+  ConfigEntry config = 1;
+  bool was_created = 2;
+  string previous_value = 3;
+}
+
+// Delete Config
+message DeleteConfigRequest {
+  string key = 1;
+}
+
+// List Configs
+message ListConfigsRequest {
+  repeated string categories = 1; // Empty for all
+  bool include_secrets = 2;
+  bool include_metadata = 3;
+  string key_prefix = 4; // Filter by key prefix
+  maowbot.common.PageRequest page = 5;
+}
+
+message ListConfigsResponse {
+  repeated ConfigEntry configs = 1;
+  maowbot.common.PageResponse page = 2;
+}
+
+// Batch Operations
+message BatchGetConfigsRequest {
+  repeated string keys = 1;
+  bool include_metadata = 2;
+}
+
+message BatchGetConfigsResponse {
+  map<string, ConfigEntry> configs = 1; // Key -> ConfigEntry
+  repeated string not_found_keys = 2;
+}
+
+message BatchSetConfigsRequest {
+  map<string, string> configs = 1; // Key -> Value
+  bool validate_all = 2; // Validate all before applying any
+  bool atomic = 3; // All or nothing
+}
+
+message BatchSetConfigsResponse {
+  repeated SetResult results = 1;
+  int32 success_count = 2;
+  int32 failure_count = 3;
+}
+
+message SetResult {
+  string key = 1;
+  bool success = 2;
+  string error_message = 3;
+  ConfigEntry config = 4;
+}
+
+// Validation
+message ValidateConfigRequest {
+  string key = 1;
+  string value = 2;
+  ConfigType expected_type = 3; // Optional
+}
+
+message ValidateConfigResponse {
+  bool is_valid = 1;
+  repeated ValidationError errors = 2;
+  ConfigType detected_type = 3;
+}
+
+message ValidationError {
+  string field = 1;
+  string message = 2;
+  ErrorSeverity severity = 3;
+}
+
+enum ErrorSeverity {
+  ERROR_SEVERITY_UNKNOWN = 0;
+  ERROR_SEVERITY_WARNING = 1;
+  ERROR_SEVERITY_ERROR = 2;
+}
+
+// History
+message GetConfigHistoryRequest {
+  string key = 1;
+  int32 limit = 2; // Default 10
+  google.protobuf.Timestamp since = 3; // Optional
+}
+
+message GetConfigHistoryResponse {
+  repeated ConfigHistoryEntry history = 1;
+}
+
+message ConfigHistoryEntry {
+  string key = 1;
+  string old_value = 2;
+  string new_value = 3;
+  string changed_by = 4;
+  string change_reason = 5;
+  google.protobuf.Timestamp changed_at = 6;
+}
+
+// Import/Export
+message ExportConfigsRequest {
+  repeated string categories = 1; // Empty for all
+  bool include_secrets = 2;
+  ExportFormat format = 3;
+}
+
+enum ExportFormat {
+  EXPORT_FORMAT_UNKNOWN = 0;
+  EXPORT_FORMAT_JSON = 1;
+  EXPORT_FORMAT_YAML = 2;
+  EXPORT_FORMAT_TOML = 3;
+  EXPORT_FORMAT_ENV = 4;
+}
+
+message ExportConfigsResponse {
+  bytes data = 1;
+  string filename = 2;
+  int32 config_count = 3;
+}
+
+message ImportConfigsRequest {
+  bytes data = 1;
+  ExportFormat format = 2;
+  ImportMode mode = 3;
+  bool dry_run = 4;
+}
+
+enum ImportMode {
+  IMPORT_MODE_UNKNOWN = 0;
+  IMPORT_MODE_MERGE = 1; // Keep existing, add new
+  IMPORT_MODE_OVERWRITE = 2; // Overwrite existing
+  IMPORT_MODE_CLEAN = 3; // Delete all, then import
+}
+
+message ImportConfigsResponse {
+  int32 imported_count = 1;
+  int32 updated_count = 2;
+  int32 skipped_count = 3;
+  repeated ImportError errors = 4;
+}
+
+message ImportError {
+  string key = 1;
+  string message = 2;
+  int32 line_number = 3;
+}
+
+// Streaming
+message StreamConfigUpdatesRequest {
+  repeated string keys = 1; // Empty for all
+  repeated string categories = 2; // Empty for all
+}
+
+message ConfigUpdateEvent {
+  ConfigUpdateType update_type = 1;
+  ConfigEntry config = 2;
+  string previous_value = 3;
+  string changed_by = 4;
+  google.protobuf.Timestamp timestamp = 5;
+}
+
+enum ConfigUpdateType {
+  CONFIG_UPDATE_TYPE_UNKNOWN = 0;
+  CONFIG_UPDATE_TYPE_CREATED = 1;
+  CONFIG_UPDATE_TYPE_UPDATED = 2;
+  CONFIG_UPDATE_TYPE_DELETED = 3;
+}

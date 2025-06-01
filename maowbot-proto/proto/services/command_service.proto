@@ -1,0 +1,245 @@
+syntax = "proto3";
+
+package maowbot.services;
+
+import "common.proto";
+import "google/protobuf/empty.proto";
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/field_mask.proto";
+
+service CommandService {
+  // Command Management
+  rpc ListCommands(ListCommandsRequest) returns (ListCommandsResponse);
+  rpc GetCommand(GetCommandRequest) returns (GetCommandResponse);
+  rpc CreateCommand(CreateCommandRequest) returns (CreateCommandResponse);
+  rpc UpdateCommand(UpdateCommandRequest) returns (UpdateCommandResponse);
+  rpc DeleteCommand(DeleteCommandRequest) returns (google.protobuf.Empty);
+  
+  // Batch Operations
+  rpc BatchListCommands(BatchListCommandsRequest) returns (BatchListCommandsResponse);
+  rpc BatchUpdateCommands(BatchUpdateCommandsRequest) returns (BatchUpdateCommandsResponse);
+  
+  // Command Execution
+  rpc ExecuteCommand(ExecuteCommandRequest) returns (ExecuteCommandResponse);
+  rpc TestCommand(TestCommandRequest) returns (TestCommandResponse);
+  
+  // Usage Analytics
+  rpc GetCommandUsage(GetCommandUsageRequest) returns (GetCommandUsageResponse);
+  
+  // Streaming
+  rpc StreamCommandEvents(StreamCommandEventsRequest) returns (stream CommandEvent);
+}
+
+// List Commands
+message ListCommandsRequest {
+  string platform = 1; // Optional filter
+  bool active_only = 2;
+  string name_prefix = 3; // Filter by name prefix
+  maowbot.common.PageRequest page = 4;
+}
+
+message ListCommandsResponse {
+  repeated CommandInfo commands = 1;
+  maowbot.common.PageResponse page = 2;
+}
+
+message CommandInfo {
+  maowbot.common.Command command = 1;
+  CommandStatistics stats = 2;
+  bool is_builtin = 3;
+}
+
+message CommandStatistics {
+  int64 total_uses = 1;
+  int64 unique_users = 2;
+  google.protobuf.Timestamp last_used = 3;
+  float average_cooldown_wait = 4;
+}
+
+// Get Command
+message GetCommandRequest {
+  string command_id = 1;
+  bool include_usage = 2;
+}
+
+message GetCommandResponse {
+  CommandInfo command = 1;
+  repeated CommandUsageEntry recent_usage = 2;
+}
+
+message CommandUsageEntry {
+  string user_id = 1;
+  string platform_user_id = 2;
+  google.protobuf.Timestamp used_at = 3;
+  string channel = 4;
+  bool was_on_cooldown = 5;
+}
+
+// Create Command
+message CreateCommandRequest {
+  maowbot.common.Command command = 1;
+  bool validate_only = 2;
+}
+
+message CreateCommandResponse {
+  maowbot.common.Command command = 1;
+}
+
+// Update Command
+message UpdateCommandRequest {
+  string command_id = 1;
+  maowbot.common.Command command = 2;
+  google.protobuf.FieldMask update_mask = 3;
+}
+
+message UpdateCommandResponse {
+  maowbot.common.Command command = 1;
+}
+
+// Delete Command
+message DeleteCommandRequest {
+  string command_id = 1;
+  bool soft_delete = 2; // Just mark inactive
+}
+
+// Batch Operations
+message BatchListCommandsRequest {
+  repeated string platforms = 1;
+  bool group_by_platform = 2;
+}
+
+message BatchListCommandsResponse {
+  map<string, CommandList> by_platform = 1; // Platform -> Commands
+  repeated CommandInfo all_commands = 2;
+}
+
+message CommandList {
+  repeated CommandInfo commands = 1;
+  int32 active_count = 2;
+  int32 total_count = 3;
+}
+
+message BatchUpdateCommandsRequest {
+  repeated CommandUpdate updates = 1;
+  bool atomic = 2; // All or nothing
+}
+
+message CommandUpdate {
+  string command_id = 1;
+  maowbot.common.Command command = 2;
+  google.protobuf.FieldMask update_mask = 3;
+}
+
+message BatchUpdateCommandsResponse {
+  repeated UpdateResult results = 1;
+  int32 success_count = 2;
+  int32 failure_count = 3;
+}
+
+message UpdateResult {
+  string command_id = 1;
+  bool success = 2;
+  maowbot.common.Command command = 3;
+  string error_message = 4;
+}
+
+// Command Execution
+message ExecuteCommandRequest {
+  string platform = 1;
+  string command_name = 2;
+  string user_id = 3;
+  string channel = 4;
+  repeated string arguments = 5;
+  map<string, string> context = 6;
+}
+
+message ExecuteCommandResponse {
+  bool executed = 1;
+  string response = 2;
+  CooldownInfo cooldown = 3;
+  string error_message = 4;
+}
+
+message CooldownInfo {
+  bool on_cooldown = 1;
+  int32 remaining_seconds = 2;
+  google.protobuf.Timestamp available_at = 3;
+}
+
+message TestCommandRequest {
+  string command_id = 1;
+  string test_input = 2;
+  map<string, string> test_context = 3;
+}
+
+message TestCommandResponse {
+  bool would_execute = 1;
+  string expected_response = 2;
+  repeated string required_permissions = 3;
+  string error_message = 4;
+}
+
+// Usage Analytics
+message GetCommandUsageRequest {
+  string command_id = 1; // Optional, all if not specified
+  string platform = 2; // Optional filter
+  google.protobuf.Timestamp start_time = 3;
+  google.protobuf.Timestamp end_time = 4;
+  CommandUsageGrouping grouping = 5;
+}
+
+enum CommandUsageGrouping {
+  COMMAND_USAGE_GROUPING_NONE = 0;
+  COMMAND_USAGE_GROUPING_HOURLY = 1;
+  COMMAND_USAGE_GROUPING_DAILY = 2;
+  COMMAND_USAGE_GROUPING_WEEKLY = 3;
+  COMMAND_USAGE_GROUPING_MONTHLY = 4;
+}
+
+message GetCommandUsageResponse {
+  repeated CommandUsageData usage = 1;
+  CommandUsageSummary summary = 2;
+}
+
+message CommandUsageData {
+  string command_id = 1;
+  string command_name = 2;
+  google.protobuf.Timestamp timestamp = 3;
+  int64 use_count = 4;
+  int64 unique_users = 5;
+  int64 cooldown_hits = 6;
+  map<string, int64> usage_by_channel = 7;
+}
+
+message CommandUsageSummary {
+  int64 total_uses = 1;
+  int64 total_unique_users = 2;
+  string most_used_command = 3;
+  string most_active_channel = 4;
+  float average_uses_per_day = 5;
+}
+
+// Streaming
+message StreamCommandEventsRequest {
+  repeated string platforms = 1; // Empty for all
+  repeated CommandEventType event_types = 2; // Empty for all
+}
+
+enum CommandEventType {
+  COMMAND_EVENT_TYPE_UNKNOWN = 0;
+  COMMAND_EVENT_TYPE_CREATED = 1;
+  COMMAND_EVENT_TYPE_UPDATED = 2;
+  COMMAND_EVENT_TYPE_DELETED = 3;
+  COMMAND_EVENT_TYPE_EXECUTED = 4;
+  COMMAND_EVENT_TYPE_COOLDOWN = 5;
+  COMMAND_EVENT_TYPE_ERROR = 6;
+}
+
+message CommandEvent {
+  CommandEventType event_type = 1;
+  maowbot.common.Command command = 2;
+  string user_id = 3; // For execution events
+  string channel = 4; // For execution events
+  string error_message = 5; // For error events
+  google.protobuf.Timestamp timestamp = 6;
+}
