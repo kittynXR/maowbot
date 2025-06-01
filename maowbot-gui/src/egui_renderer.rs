@@ -72,12 +72,19 @@ impl EguiRenderer {
         });
 
         // Main content - secondary chat and tabs
-        egui::CentralPanel::default().show(ctx, |ui| {
+        egui::CentralPanel::default()
+            .frame(egui::Frame::default().inner_margin(egui::Margin {
+                left: CONTENT_MARGIN as i8,
+                right: (CONTENT_MARGIN + 5.0) as i8,  // Extra right margin
+                top: CONTENT_MARGIN as i8,
+                bottom: (CONTENT_MARGIN + 5.0) as i8, // Extra bottom margin
+            }))
+            .show(ctx, |ui| {
             ui.horizontal_top(|ui| {
                 ui.set_height(ui.available_height());
                 
                 let total_width = ui.available_width();
-                let separator_width = 5.0;
+                let separator_width = 2.0;
                 
                 // Apply same constraints as main chat
                 let min_chat_width = 280.0;
@@ -107,6 +114,7 @@ impl EguiRenderer {
                     egui::Layout::top_down(egui::Align::LEFT),
                     |ui| {
                         ui.set_width(final_chat_width);
+                        ui.set_height(ui.available_height());
                         let (dummy_tx, _) = crossbeam_channel::unbounded();
                         self.render_left_chat(ui, state, &dummy_tx);
                     },
@@ -259,65 +267,71 @@ impl EguiRenderer {
 
         // Main content area with 4 sections
         egui::CentralPanel::default()
-            .frame(egui::Frame::default().inner_margin(egui::Margin::same(0)))
+            .frame(egui::Frame::default().inner_margin(egui::Margin {
+                left: CONTENT_MARGIN as i8,
+                right: (CONTENT_MARGIN + 5.0) as i8,  // Extra right margin
+                top: CONTENT_MARGIN as i8,
+                bottom: (CONTENT_MARGIN + 5.0) as i8, // Extra bottom margin
+            }))
             .show(ctx, |ui| {
-            // Enable clipping to prevent overflow
-            ui.set_clip_rect(ui.max_rect());
-            // Calculate section widths with proper margins
-            let total_width = ui.available_width();
-            let margin = 5.0;
+            // Get actual separator width from egui
+            let separator_spacing = ui.spacing().item_spacing.x;
             let separator_count = 3;
-            let separator_total_width = separator_count as f32 * 2.0;
-            let usable_width = total_width - separator_total_width - (margin * 2.0);
+            let total_separator_width = separator_count as f32 * separator_spacing;
+            
+            let total_width = ui.available_width();
+            let available_height = ui.available_height();
+            let usable_width = total_width - total_separator_width;
+            
+            // Fixed widths for chats
+            let main_chat_width = 340.0;  // Standard Twitch chat width
+            let left_chat_width = 280.0;  // Slightly smaller secondary chat
             
             // Calculate right panel width based on video needs
-            let available_height = ui.available_height() - margin * 2.0;
-            let video_area_height = available_height * 0.6 - 10.0;
-            let aspect_ratio = 16.0 / 9.0;
-            let ideal_video_width = video_area_height * aspect_ratio + 20.0;
+            let video_height = available_height * 0.6;
+            let min_video_width = 200.0;
+            let ideal_video_width = video_height * (16.0 / 9.0);
+            let max_right_width = usable_width * 0.3;
+            let right_panel_width = ideal_video_width.clamp(min_video_width, max_right_width);
             
-            // Right panel constraints
-            let min_right_width = 150.0;
-            let max_right_width = usable_width * 0.25; // Max 25% of total
-            let right_panel_width = ideal_video_width.clamp(min_right_width, max_right_width);
+            // Tab area gets remaining space
+            let tab_area_width = usable_width - left_chat_width - main_chat_width - right_panel_width;
             
-            // Chat constraints
-            let max_main_chat_width = 400.0;
-            let ideal_main_chat_width = 340.0;
+            // Debug output
+            tracing::debug!(
+                "Layout: total={:.0}, usable={:.0}, left={:.0}, tab={:.0}, main={:.0}, right={:.0}, separators={:.0}",
+                total_width, usable_width, left_chat_width, tab_area_width, main_chat_width, right_panel_width, total_separator_width
+            );
             
-            // Distribute remaining width
-            let remaining_width = usable_width - right_panel_width;
-            
-            // Calculate main chat width with constraints
-            let proposed_main_chat = remaining_width * 0.40;
-            let main_chat_width = proposed_main_chat.min(max_main_chat_width);
-            
-            // Redistribute extra space to tabs if main chat is at max
-            let extra_space = if proposed_main_chat > max_main_chat_width {
-                proposed_main_chat - max_main_chat_width
+            // Ensure minimum widths
+            let min_tab_width = 300.0;
+            let section_widths = if tab_area_width < min_tab_width {
+                // Scale everything proportionally
+                let scale = usable_width / (left_chat_width + min_tab_width + main_chat_width + right_panel_width);
+                [
+                    left_chat_width * scale,
+                    min_tab_width * scale,
+                    main_chat_width * scale,
+                    right_panel_width * scale,
+                ]
             } else {
-                0.0
+                [
+                    left_chat_width,
+                    tab_area_width,
+                    main_chat_width,
+                    right_panel_width,
+                ]
             };
-            
-            let left_chat_width = remaining_width * 0.25;
-            let tab_area_width = remaining_width * 0.35 + extra_space;
-            
-            let section_widths = [
-                left_chat_width,         // Left chat
-                tab_area_width,          // Tab area (gets extra space)
-                main_chat_width,         // Main chat (capped)
-                right_panel_width,       // Right panel
-            ];
 
-            ui.add_space(margin);
             ui.horizontal_top(|ui| {
-                ui.set_height(ui.available_height() - margin * 2.0);
+                let container_height = ui.available_height();
+                ui.set_height(container_height);
                 
                 let layout_order = state.layout_order.lock().unwrap().clone();
                 
                 for (i, section) in layout_order.iter().enumerate() {
                     if i > 0 {
-                        ui.add(egui::Separator::default().vertical());
+                        ui.separator();
                     }
 
                     let width = match section {
@@ -328,16 +342,25 @@ impl EguiRenderer {
                     };
 
                     ui.allocate_ui_with_layout(
-                        egui::vec2(width, ui.available_height()),
+                        egui::vec2(width, container_height),
                         egui::Layout::top_down(egui::Align::LEFT),
                         |ui| {
-                            ui.set_width(width);
-                            match section {
-                                LayoutSection::LeftChat => self.render_left_chat(ui, state, command_tx),
-                                LayoutSection::TabArea => self.render_tab_area(ui, state),
-                                LayoutSection::MainChat => self.render_main_chat(ui, state, command_tx),
-                                LayoutSection::RightPanel => self.render_right_panel(ui),
-                            }
+                            // Create a child UI with margins to prevent overflow
+                            let margin = 2.0;
+                            let child_rect = ui.available_rect_before_wrap();
+                            let child_rect = Rect::from_min_size(
+                                child_rect.min + Vec2::new(margin, margin),
+                                child_rect.size() - Vec2::new(margin * 2.0, margin * 2.0)
+                            );
+                            
+                            ui.allocate_ui_at_rect(child_rect, |ui| {
+                                match section {
+                                    LayoutSection::LeftChat => self.render_left_chat(ui, state, command_tx),
+                                    LayoutSection::TabArea => self.render_tab_area(ui, state),
+                                    LayoutSection::MainChat => self.render_main_chat(ui, state, command_tx),
+                                    LayoutSection::RightPanel => self.render_right_panel(ui),
+                                }
+                            });
                         },
                     );
                 }
@@ -424,12 +447,19 @@ impl EguiRenderer {
         });
 
         // Main content - only main chat and right panel
-        egui::CentralPanel::default().show(ctx, |ui| {
+        egui::CentralPanel::default()
+            .frame(egui::Frame::default().inner_margin(egui::Margin {
+                left: CONTENT_MARGIN as i8,
+                right: (CONTENT_MARGIN + 5.0) as i8,  // Extra right margin
+                top: CONTENT_MARGIN as i8,
+                bottom: (CONTENT_MARGIN + 5.0) as i8, // Extra bottom margin
+            }))
+            .show(ctx, |ui| {
             ui.horizontal_top(|ui| {
                 ui.set_height(ui.available_height());
                 
                 let total_width = ui.available_width();
-                let separator_width = 5.0;
+                let separator_width = 2.0;
                 
                 // Chat constraints (like standard Twitch chat)
                 let min_chat_width = 280.0;  // Minimum readable width
@@ -497,11 +527,13 @@ impl EguiRenderer {
         // Secondary chat area
         ui.vertical(|ui| {
             ui.set_height(available_height);
+            ui.set_width(ui.available_width());
             
             ui.label(RichText::new("Secondary Chat").strong());
             ui.separator();
             
-            let chat_height = available_height - CHAT_CHROME_HEIGHT;
+            // Account for vertical container padding
+            let chat_height = available_height - CHAT_CHROME_HEIGHT - VERTICAL_CONTAINER_PADDING;
             ScrollArea::vertical()
                 .id_source("secondary_chat_scroll")
                 .max_height(chat_height)
@@ -550,13 +582,8 @@ impl EguiRenderer {
     }
 
     fn render_tab_area(&mut self, ui: &mut egui::Ui, state: &AppState) {
-        let available_height = ui.available_height();
-        
-        ui.vertical(|ui| {
-            ui.set_height(available_height);
-            
-            // Tab buttons
-            ui.horizontal(|ui| {
+        // Tab buttons
+        ui.horizontal(|ui| {
                 let mut active_tab = state.active_tab.lock().unwrap();
                 
                 if ui.selectable_label(*active_tab == "Multiview", "Multiview").clicked() {
@@ -582,46 +609,38 @@ impl EguiRenderer {
                 if ui.selectable_label(*active_tab == "Browser", "Browser").clicked() {
                     *active_tab = "Browser".to_string();
                 }
-            });
-            
-            ui.separator();
-            
-            // Tab content
-            let content_height = available_height - 40.0;
-            ui.allocate_ui_with_layout(
-                egui::vec2(ui.available_width(), content_height),
-                egui::Layout::top_down(egui::Align::LEFT),
-                |ui| {
-                    let active_tab = state.active_tab.lock().unwrap().clone();
-                    match active_tab.as_str() {
-                        "Multiview" => {
-                            self.render_video_grid(ui, 2, 2);
-                        }
-                        "Analytics" => {
-                            ui.centered_and_justified(|ui| {
-                                ui.label("Analytics Dashboard\n(Coming Soon)");
-                            });
-                        }
-                        "Moderation" => {
-                            ui.centered_and_justified(|ui| {
-                                ui.label("Moderation Tools\n(Coming Soon)");
-                            });
-                        }
-                        "Discord" => {
-                            ui.centered_and_justified(|ui| {
-                                ui.label("Discord Integration\n(CEF Embed Placeholder)");
-                            });
-                        }
-                        "Browser" => {
-                            ui.centered_and_justified(|ui| {
-                                ui.label("Web Browser\n(CEF Embed Placeholder)");
-                            });
-                        }
-                        _ => {}
-                    }
-                },
-            );
         });
+        
+        ui.separator();
+        
+        // Tab content
+        let active_tab = state.active_tab.lock().unwrap().clone();
+        match active_tab.as_str() {
+            "Multiview" => {
+                self.render_video_grid(ui, 2, 2);
+            }
+            "Analytics" => {
+                ui.centered_and_justified(|ui| {
+                    ui.label("Analytics Dashboard\n(Coming Soon)");
+                });
+            }
+            "Moderation" => {
+                ui.centered_and_justified(|ui| {
+                    ui.label("Moderation Tools\n(Coming Soon)");
+                });
+            }
+            "Discord" => {
+                ui.centered_and_justified(|ui| {
+                    ui.label("Discord Integration\n(CEF Embed Placeholder)");
+                });
+            }
+            "Browser" => {
+                ui.centered_and_justified(|ui| {
+                    ui.label("Web Browser\n(CEF Embed Placeholder)");
+                });
+            }
+            _ => {}
+        }
     }
 
     fn render_main_chat(&mut self, ui: &mut egui::Ui, state: &AppState, command_tx: &Sender<ChatCommand>) {
@@ -629,12 +648,13 @@ impl EguiRenderer {
         
         ui.vertical(|ui| {
             ui.set_height(available_height);
+            ui.set_width(ui.available_width());
             
             ui.label(RichText::new("Main Stream Chat").strong());
             ui.separator();
             
-            // Chat area
-            let chat_height = available_height - CHAT_CHROME_HEIGHT;
+            // Chat area - account for vertical container padding
+            let chat_height = available_height - CHAT_CHROME_HEIGHT - VERTICAL_CONTAINER_PADDING;
             ScrollArea::vertical()
                 .id_source("main_chat_scroll")
                 .max_height(chat_height)
@@ -691,31 +711,27 @@ impl EguiRenderer {
         let available_width = available_size.x;
         let available_height = available_size.y;
         
-        let button_area_height = available_height * 0.4;
-        let video_area_height = available_height * 0.6 - 10.0;
+        let section_spacing = 5.0;
+        let button_area_height = (available_height - section_spacing) * 0.4;
+        let video_area_height = (available_height - section_spacing) * 0.6;
         
-        ui.vertical(|ui| {
-            ui.set_width(available_width);
-            ui.set_height(available_height);
-            
-            // Stream deck style buttons (top 40%)
-            ui.push_id("action_buttons_area", |ui| {
+        // Stream deck style buttons (top 40%)
+        ui.push_id("action_buttons_area", |ui| {
                 ui.group(|ui| {
                     ui.set_height(button_area_height);
-                    ui.set_width(available_width - CONTENT_MARGIN * 2.0); // Account for margins
+                    ui.set_width(available_width);
                     
                     ui.label(RichText::new("Quick Actions").strong());
                     ui.separator();
                     
                     // Calculate button sizes with proper margins
-                    let group_padding = 5.0;
                     let button_spacing = 2.0;
                     let max_button_width = 50.0;
-                    let usable_width = (available_width - group_padding * 2.0).min(150.0);
+                    let usable_width = (ui.available_width() - GROUP_WIDGET_MARGIN).min(150.0);
                     let button_width = ((usable_width - button_spacing * 2.0) / 3.0).min(max_button_width);
                     
-                    let header_height = 30.0;
-                    let usable_height = button_area_height - header_height - group_padding;
+                    let header_height = HEADER_HEIGHT + SEPARATOR_HEIGHT;
+                    let usable_height = button_area_height - header_height - GROUP_WIDGET_MARGIN;
                     let button_height = ((usable_height - button_spacing * 2.0) / 3.0).min(35.0);
                     
                     // Create centered button grid
@@ -733,14 +749,13 @@ impl EguiRenderer {
                         }
                     });
                 });
-            });
-            
-            ui.add_space(5.0);
-            
-            // Video player (bottom 60%)
-            ui.push_id("main_video_area", |ui| {
-                self.render_video_player(ui, video_area_height, available_width - CONTENT_MARGIN * 2.0, "Main Stream");
-            });
+        });
+        
+        ui.add_space(section_spacing);
+        
+        // Video player (bottom 60%)
+        ui.push_id("main_video_area", |ui| {
+            self.render_video_player(ui, video_area_height, available_width, "Main Stream");
         });
     }
 
@@ -790,33 +805,34 @@ impl EguiRenderer {
 
     // Helper function to render video grid
     fn render_video_grid(&self, ui: &mut egui::Ui, cols: usize, rows: usize) {
+        // Don't use group here - it adds extra borders that overflow
         let available_size = ui.available_size();
         let spacing = 5.0;
         
         let cell_width = (available_size.x - spacing * (cols - 1) as f32) / cols as f32;
         let cell_height = (available_size.y - spacing * (rows - 1) as f32) / rows as f32;
-        
+            
         egui::Grid::new("video_grid")
             .num_columns(cols)
             .spacing([spacing, spacing])
             .show(ui, |ui| {
-                let mut player_num = 1;
-                for row in 0..rows {
-                    for col in 0..cols {
-                        ui.allocate_ui(Vec2::new(cell_width, cell_height), |ui| {
-                            self.render_video_player(
-                                ui,
-                                cell_height,
-                                cell_width,
-                                &format!("Stream {}", player_num),
-                            );
-                        });
-                        player_num += 1;
-                    }
-                    if row < rows - 1 {
-                        ui.end_row();
-                    }
+            let mut player_num = 1;
+            for row in 0..rows {
+                for col in 0..cols {
+                    ui.allocate_ui(Vec2::new(cell_width, cell_height), |ui| {
+                        self.render_video_player(
+                            ui,
+                            cell_height,
+                            cell_width,
+                            &format!("Stream {}", player_num),
+                        );
+                    });
+                    player_num += 1;
                 }
-            });
+                if row < rows - 1 {
+                    ui.end_row();
+                }
+            }
+        });
     }
 }
