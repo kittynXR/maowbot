@@ -66,7 +66,9 @@ fn build_linux(root: &PathBuf) {
     println!("cargo:rustc-link-lib=dylib=GLEW");
 
     // Use pkg-config to find system libraries
+    #[cfg(unix)]
     pkg_config::find_library("gl").ok();
+    #[cfg(unix)]
     pkg_config::find_library("glew").ok();
 
     cc::Build::new()

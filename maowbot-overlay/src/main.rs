@@ -9,7 +9,7 @@ use crossbeam_channel::{bounded, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tracing_subscriber::EnvFilter;
-
+use windows::core::Interface;
 use keyboard::VirtualKeyboard;
 use maowbot_ui::{AppEvent, AppState, ChatEvent, SharedGrpcClient};
 use imgui_renderer::ImGuiOverlayRenderer;
