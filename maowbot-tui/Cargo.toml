@@ -1,0 +1,28 @@
+[package]
+name = "maowbot-tui"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+maowbot-common = { path = "../maowbot-common" }
+maowbot-core = { path = "../maowbot-core" }
+maowbot-ai = { path = "../maowbot-ai" }
+tracing = { workspace = true }
+tokio = { workspace = true }
+
+reqwest = { workspace = true }
+
+open = "5.3"
+
+chrono = { workspace = true }
+uuid = { workspace = true }
+sqlx = { workspace = true }
+lazy_static = { workspace = true }
+serde_json = { workspace = true }
+serde = { workspace = true }
+rosc = { workspace = true }
+
+[lib]
+name = "maowbot_tui"
+crate-type = ["rlib"]
+path = "src/lib.rs"

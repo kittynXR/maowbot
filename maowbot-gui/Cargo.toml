@@ -1,0 +1,28 @@
+[package]
+name = "maowbot-gui"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "maowbot-gui"
+path = "src/main.rs"
+
+[dependencies]
+maowbot-ui = { path = "../maowbot-ui" }
+maowbot-proto = { path = "../maowbot-proto" }
+
+egui = "0.31"
+eframe = "0.31"
+
+tokio = { workspace = true }
+crossbeam-channel = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+uuid = { version = "1.11", features = ["v4"] }
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_System_Threading",
+] }

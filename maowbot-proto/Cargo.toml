@@ -1,0 +1,15 @@
+# maowbot-proto/Cargo.toml
+
+[package]
+name = "maowbot-proto"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+tonic = { workspace = true }
+prost = { workspace = true }
+prost-types = { workspace = true }
+
+[build-dependencies]
+tonic-build = { version = "^0.12" }
+prost-build = { version = "^0.13" }

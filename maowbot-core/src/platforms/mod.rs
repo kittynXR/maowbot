@@ -1,0 +1,9 @@
+// File: src/platforms/mod.rs
+// Re-export submodules
+pub mod twitch;
+pub mod discord;
+pub mod vrchat;
+pub mod manager;
+pub mod twitch_irc;
+pub mod twitch_eventsub;
+pub mod vrchat_pipeline;

@@ -1,0 +1,102 @@
+# maowbot/Cargo.toml  (top-level)
+[workspace]
+resolver = "2"
+members = [
+    "maowbot-ai",
+    "maowbot-common",
+    "maowbot-core",
+    "maowbot-gui",
+    "maowbot-osc",
+    "maowbot-overlay",
+    "maowbot-proto",
+    "maowbot-server",
+    "maowbot-tui",
+    "plugins/plugin_hello",
+    "maowbot-ui",
+]
+
+[workspace.package]
+version = "0.1.1"
+edition = "2024"
+
+[workspace.dependencies]
+maowbot-proto = { path = "maowbot-proto" }
+
+http = { version = "^1.2", features = ["default"] }
+
+twitch_api = {  version="^0.7", features = ["all", "reqwest"] }
+twitch_oauth2 = { version = "^0.15", features = ["all", "client", "reqwest", "default"]}
+
+
+twilight = { version = "^0.16" }
+twilight-gateway = { version = "^0.16", features = ["default"] }
+twilight-model = "^0.16"
+twilight-http = { version = "^0.16", features = ["rustls-native-roots"] }
+twilight-cache-inmemory = "^0.16"
+twilight-util = { version = "^0.16", features = ["builder"] }
+
+
+urlencoding = { version = "^2.1" }
+
+sqlx = { version = "^0.8", features = ["postgres", "runtime-tokio", "tls-native-tls", "chrono", "macros", "json", "uuid"] }
+
+rosc = { version = "^0.11" }
+
+tokio = { version = "^1.43", features = ["full"] }
+tokio-native-tls = "^0.3"
+tokio-util = { version = "^0.7" }
+native-tls = "^0.2"
+tokio-test = { version = "^0.4" }
+tokio-stream = { version = "0.1.17", features = ["net"] }
+
+
+dashmap = "^6.1"
+rcgen = "^0.13"
+
+chrono = { version = "^0.4", features = ["serde"] }
+
+serde = { version = "^1.0", features = ["derive"] }
+serde_path_to_error = "^0.1"
+
+serde_json = "^1.0"
+
+thiserror = "^2.0"
+anyhow = "^1.0"
+dotenv = "^0.15"
+dirs = "^6.0"
+
+base64 = "^0.22"
+uuid = { version = "^1.12", features = ["v4", "serde"] }
+rand = { version ="^0.9", features = ["os_rng"] }
+rand_core = "^0.9"
+
+aes-gcm = "^0.10"
+keyring = { version = "^3.6", features = ["windows-native", "linux-native-sync-persistent"] }
+
+async-trait = "^0.1"
+mockall = "0.13.1"
+reqwest = { version = "^0.12", features = ["json"] }
+
+url = "^2.5"
+
+clap = {  version = "^4.5", features = ["derive"] }
+
+# gRPC / protobuf:
+tonic = { version = "^0.12", features = ["transport", "tls"] }
+prost = { version = "^0.13"}
+prost-types = { version = "^0.13" }
+
+# --- New or updated below:
+tracing = "^0.1"
+tracing-subscriber = { version = "^0.3", features = ["env-filter"]}
+tracing-log = "^0.2"
+rustls-pemfile = "^2.2"
+futures-lite = "^2.6"
+tempfile = "^3.16"
+futures-util = "^0.3"
+futures-core = "^0.3"
+
+lazy_static = { version = "^1.5" }
+libloading = "^0.8"
+
+crossbeam-channel = "0.5"

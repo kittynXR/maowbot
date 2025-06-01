@@ -1,0 +1,44 @@
+# maowbot-server/Cargo.toml
+
+[package]
+name = "maowbot-server"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+tokio = { workspace = true }
+maowbot-common = { path = "../maowbot-common" }
+maowbot-core = { path = "../maowbot-core" }
+maowbot-proto = { path = "../maowbot-proto" }
+maowbot-tui = { path = "../maowbot-tui" }
+maowbot_osc = { path = "../maowbot-osc" }
+maowbot-ai = { path = "../maowbot-ai" }
+
+# plus any additional you need
+sqlx = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+tracing-log = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }
+
+clap = { workspace = true }
+
+anyhow = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+tonic = { workspace = true }
+tokio-stream = { workspace = true }
+futures-util = { workspace = true }
+async-trait = { workspace = true }
+rcgen = { workspace = true }
+if-addrs = "^0.13"
+
+format = "^0.2"
+
+base64 = { workspace = true }
+rand = { workspace = true }
+keyring = { workspace = true }
+dirs = { workspace = true }
+rosc = { workspace = true }

@@ -1,0 +1,42 @@
+[package]
+name        = "maowbot-overlay"
+version     = "0.1.0"
+edition     = "2021"
+build       = "build.rs"
+
+[dependencies]
+# ── UI Core ─────────────────────────────────────────────────────────────
+maowbot-ui    = { path = "../maowbot-ui" }
+maowbot-proto = { path = "../maowbot-proto" }
+
+# ── async runtime ───────────────────────────────────────────────────────
+tokio         = { workspace = true }
+tonic         = { workspace = true }
+tokio-stream  = { workspace = true }
+
+# ── core ────────────────────────────────────────────────────────────────
+tracing       = { workspace = true }
+tracing-subscriber = { workspace = true }
+anyhow        = { workspace = true }
+crossbeam-channel = { workspace = true }
+
+# ── FFI ─────────────────────────────────────────────────────────────────
+libc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+# ── Windows ─────────────────────────────────────────────────────────────
+windows = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Direct3D",
+    "Win32_Graphics_Direct3D11",
+    "Win32_Graphics_Dxgi",
+    "Win32_Graphics_Dxgi_Common",
+    "Win32_System_LibraryLoader",
+    "Win32_UI_WindowsAndMessaging",
+] }
+
+[build-dependencies]
+cc = "1.0"
+
+[target.'cfg(target_os = "linux")'.build-dependencies]
+pkg-config = "0.3"

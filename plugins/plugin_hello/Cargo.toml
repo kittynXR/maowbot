@@ -1,0 +1,20 @@
+# plugins/plugin_hello/Cargo.toml
+
+[package]
+name = "plugin_hello"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+maowbot-proto = { path = "../../maowbot-proto" }
+# If you want to call directly into maowbot-core's logic:
+# maowbot-core = { path = "../../maowbot-core" }
+
+tokio = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tonic = { workspace = true }
+clap = { workspace = true }
+tokio-stream = { workspace = true }
+tracing-subscriber = { workspace = true }
+futures-util = { workspace = true }

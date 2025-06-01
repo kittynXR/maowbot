@@ -1,0 +1,32 @@
+# maowbot-interfaces/Cargo.toml
+[package]
+name = "maowbot-common"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+maowbot-proto = { path = "../maowbot-proto" }
+
+twilight = {  workspace = true }
+twilight-gateway = {  workspace = true }
+twilight-model = {  workspace = true }
+twilight-http = {  workspace = true }
+twilight-cache-inmemory = {  workspace = true }
+rosc = { workspace = true }
+async-trait = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }
+tokio = { workspace = true }
+sqlx = { workspace = true }
+reqwest = { workspace = true }
+tonic = { workspace = true }
+libloading = { workspace = true }
+anyhow = { workspace = true }
+http = { workspace = true }
+keyring = { workspace = true }
+rcgen = { workspace = true }
+
+# Add any other small crates you need for trait method signatures
