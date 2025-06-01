@@ -129,7 +129,13 @@ impl EguiRenderer {
             *state.is_docked.lock().unwrap() = true;
             // Request repaint to ensure main window updates
             ctx.request_repaint();
-            // Send close command
+            
+            // On Windows, we need to wake up the main window
+            // Send a viewport command to the main window to force it to process events
+            let main_viewport = egui::ViewportId::ROOT;
+            ctx.send_viewport_cmd_to(main_viewport, egui::ViewportCommand::Focus);
+            
+            // Send close command to this window
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         }
     }

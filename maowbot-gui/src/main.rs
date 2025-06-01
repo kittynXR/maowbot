@@ -211,8 +211,10 @@ impl eframe::App for DesktopApp {
         // Request repaint for animations and state changes
         ctx.request_repaint();
         
-        // Also request repaint after a short delay to catch state changes
-        ctx.request_repaint_after(std::time::Duration::from_millis(100));
+        // If undocked, request more frequent repaints to catch dock events quickly
+        if !*self.state.is_docked.lock().unwrap() {
+            ctx.request_repaint_after(std::time::Duration::from_millis(50));
+        }
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
