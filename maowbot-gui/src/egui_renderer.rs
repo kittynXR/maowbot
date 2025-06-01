@@ -4,6 +4,7 @@ use maowbot_ui::{AppState, UIEvent, LayoutSection};
 use maowbot_ui::events::ChatCommand;
 use std::sync::{Arc, Mutex};
 
+use crate::layout_constants::*;
 use crate::process_manager::ProcessManager;
 use crate::WindowMode;
 
@@ -257,7 +258,11 @@ impl EguiRenderer {
         }
 
         // Main content area with 4 sections
-        egui::CentralPanel::default().show(ctx, |ui| {
+        egui::CentralPanel::default()
+            .frame(egui::Frame::default().inner_margin(egui::Margin::same(0)))
+            .show(ctx, |ui| {
+            // Enable clipping to prevent overflow
+            ui.set_clip_rect(ui.max_rect());
             // Calculate section widths with proper margins
             let total_width = ui.available_width();
             let margin = 5.0;
@@ -496,7 +501,7 @@ impl EguiRenderer {
             ui.label(RichText::new("Secondary Chat").strong());
             ui.separator();
             
-            let chat_height = available_height - 80.0;
+            let chat_height = available_height - CHAT_CHROME_HEIGHT;
             ScrollArea::vertical()
                 .id_source("secondary_chat_scroll")
                 .max_height(chat_height)
@@ -629,7 +634,7 @@ impl EguiRenderer {
             ui.separator();
             
             // Chat area
-            let chat_height = available_height - 80.0;
+            let chat_height = available_height - CHAT_CHROME_HEIGHT;
             ScrollArea::vertical()
                 .id_source("main_chat_scroll")
                 .max_height(chat_height)
@@ -696,9 +701,8 @@ impl EguiRenderer {
             // Stream deck style buttons (top 40%)
             ui.push_id("action_buttons_area", |ui| {
                 ui.group(|ui| {
-                    ui.set_min_height(button_area_height);
-                    ui.set_max_height(button_area_height);
-                    ui.set_width(available_width.min(300.0)); // Max width to prevent overflow
+                    ui.set_height(button_area_height);
+                    ui.set_width(available_width - CONTENT_MARGIN * 2.0); // Account for margins
                     
                     ui.label(RichText::new("Quick Actions").strong());
                     ui.separator();
@@ -735,7 +739,7 @@ impl EguiRenderer {
             
             // Video player (bottom 60%)
             ui.push_id("main_video_area", |ui| {
-                self.render_video_player(ui, video_area_height, available_width - 10.0, "Main Stream");
+                self.render_video_player(ui, video_area_height, available_width - CONTENT_MARGIN * 2.0, "Main Stream");
             });
         });
     }
