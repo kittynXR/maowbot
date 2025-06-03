@@ -1,5 +1,5 @@
 // Standalone TUI client using gRPC
-use maowbot_common_ui::GrpcClient;
+use maowbot_common_ui::{GrpcClient, ProcessManager};
 use maowbot_tui::{commands::dispatch_grpc, SimpleTuiModule};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use std::sync::Arc;
@@ -11,17 +11,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt::init();
 
     println!("MaowBot TUI (gRPC mode)");
-    println!("Connecting to gRPC server at https://127.0.0.1:9999...");
+    
+    // Create process manager
+    let process_manager = Arc::new(ProcessManager::new());
+    
+    // Ensure server is running
+    println!("Checking server status...");
+    let server_url = process_manager.ensure_server_running().await?;
+    
+    println!("Connecting to gRPC server at {}...", server_url);
 
     // Connect to gRPC server
-    let client = match GrpcClient::connect("https://127.0.0.1:9999").await {
+    let client = match GrpcClient::connect(&server_url).await {
         Ok(c) => {
             println!("✅ Connected to gRPC server!");
             c
         }
         Err(e) => {
             println!("❌ Failed to connect to gRPC server: {}", e);
-            println!("Make sure maowbot-server is running!");
             return Err(e.into());
         }
     };
@@ -67,7 +74,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
 
         // Otherwise, interpret line as a command
-        let (quit_requested, output) = dispatch_grpc(&line, &client, &tui_module).await;
+        let (quit_requested, output) = dispatch_grpc(&line, &client, &tui_module, &process_manager).await;
         
         if let Some(msg) = output {
             println!("{}", msg);
@@ -79,5 +86,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     println!("Goodbye!");
+    
+    // Stop server if we started it (optional - could make this configurable)
+    // For now, we'll leave the server running so other clients can connect
+    
     Ok(())
 }

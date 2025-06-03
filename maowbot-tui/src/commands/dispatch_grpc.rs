@@ -1,5 +1,5 @@
 use std::sync::Arc;
-use maowbot_common_ui::GrpcClient;
+use maowbot_common_ui::{GrpcClient, ProcessManager};
 use crate::help;
 use crate::tui_module_simple::SimpleTuiModule;
 
@@ -20,11 +20,13 @@ use super::drip_adapter;
 use super::member_adapter;
 use super::osc_adapter;
 use super::vrchat_adapter;
+use super::system;
 
 pub async fn dispatch_grpc(
     line: &str,
     client: &GrpcClient,
     tui_module: &Arc<SimpleTuiModule>,
+    process_manager: &Arc<ProcessManager>,
 ) -> (bool, Option<String>) {
     let parts: Vec<&str> = line.split_whitespace().collect();
     if parts.is_empty() {
@@ -132,6 +134,13 @@ pub async fn dispatch_grpc(
         "test_grpc" => {
             let msg = test_grpc::handle_test_grpc_command(args).await;
             (false, Some(msg))
+        }
+
+        "system" => {
+            match system::handle_system_command(args, process_manager).await {
+                Ok(msg) => (false, Some(msg)),
+                Err(e) => (false, Some(format!("System command error: {}", e))),
+            }
         }
 
         "quit" => {

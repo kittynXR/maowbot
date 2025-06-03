@@ -2,16 +2,15 @@
 
 mod egui_renderer;
 mod layout_constants;
-mod process_manager;
 mod settings;
 
 use anyhow::Result;
 use crossbeam_channel::{bounded, Sender, Receiver};
 use eframe::egui;
-use maowbot_common_ui::{AppState, AppEvent, SharedGrpcClient};
+use maowbot_common_ui::{AppState, AppEvent, SharedGrpcClient, ProcessManager, ProcessType};
 use maowbot_common_ui::events::ChatCommand;
-use process_manager::ProcessManager;
 use std::sync::{Arc, Mutex};
+use tracing::{info, error};
 use tracing_subscriber::EnvFilter;
 
 #[derive(Clone)]
@@ -52,8 +51,19 @@ impl DesktopApp {
         // Use provided state or create new
         let state = state.unwrap_or_else(AppState::new);
 
+        // Create process manager with event sender
+        let process_manager = ProcessManager::with_event_sender(event_tx.clone());
+
         // Only start gRPC client for main window
         if matches!(window_mode, WindowMode::Main) {
+            // Ensure server is running first
+            let server_url = tokio::runtime::Handle::current()
+                .block_on(process_manager.ensure_server_running())
+                .unwrap_or_else(|e| {
+                    error!("Failed to ensure server is running: {}", e);
+                    "https://127.0.0.1:9999".to_string()
+                });
+
             SharedGrpcClient::start(
                 "maowbot-gui".to_string(),
                 event_tx.clone(),
@@ -61,8 +71,7 @@ impl DesktopApp {
             );
         }
 
-        // Create process manager
-        let process_manager = Arc::new(Mutex::new(ProcessManager::new(event_tx.clone())));
+        let process_manager = Arc::new(Mutex::new(process_manager));
 
         Ok(Self {
             state,
@@ -104,14 +113,15 @@ impl DesktopApp {
         // Stop the overlay if it's running
         let overlay_running = *self.state.overlay_running.lock().unwrap();
         if overlay_running {
-            let pm = self.process_manager.lock().unwrap().clone();
+            let pm = self.process_manager.clone();
 
             // Use tokio::task::block_in_place to run async code in sync context
             tokio::task::block_in_place(|| {
                 tokio::runtime::Handle::current().block_on(async move {
+                    let manager = pm.lock().unwrap();
                     match tokio::time::timeout(
                         tokio::time::Duration::from_secs(5),
-                        pm.stop_overlay()
+                        manager.stop(ProcessType::Overlay)
                     ).await {
                         Ok(result) => {
                             if let Err(e) = result {

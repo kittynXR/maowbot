@@ -18,6 +18,7 @@ pub mod help_config;
 pub mod help_drip;
 pub mod help_test_harness;
 pub mod help_simulate;
+pub mod help_system;
 
 fn show_general_help() -> String {
     let text = r#"MaowBot TUI - Available Commands:
@@ -86,6 +87,9 @@ fn show_general_help() -> String {
   simulate <type> [args...]
     Trigger simulated Twitch events for testing without being live.
 
+  system <server|overlay> [start|stop|status]
+    Manage the MaowBot server and overlay processes.
+
   quit
     Shut down the TUI (and the entire bot).
 "#;
@@ -114,6 +118,7 @@ pub fn show_command_help(command: &str) -> String {
         "drip" => help_drip::DRIP_HELP_TEXT.to_owned(),
         "test_harness" => help_test_harness::help_test_harness(),
         "simulate" => help_simulate::help_simulate(),
+        "system" => help_system::system_help().to_owned(),
 
         // Built-in help snippet for "list"
         "list" => {

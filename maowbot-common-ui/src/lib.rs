@@ -1,6 +1,7 @@
 pub mod chat;
 pub mod grpc;
 pub mod grpc_client;
+pub mod process_manager;
 pub mod state;
 pub mod events;
 pub mod settings;
@@ -9,6 +10,7 @@ pub mod commands;
 pub use chat::{ChatState, ChatMessage, ChatEvent};
 pub use grpc::SharedGrpcClient;
 pub use grpc_client::GrpcClient;
+pub use process_manager::{ProcessManager, ProcessType, ProcessStatus};
 pub use state::{AppState, LayoutSection};
 pub use events::{UIEvent, AppEvent, ChatCommand};
 pub use settings::{

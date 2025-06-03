@@ -1,11 +1,10 @@
 use crossbeam_channel::Sender;
 use egui::{Color32, RichText, ScrollArea, TextEdit, Vec2, Rect};
-use maowbot_common_ui::{AppState, UIEvent, LayoutSection};
+use maowbot_common_ui::{AppState, UIEvent, LayoutSection, ProcessManager, ProcessType};
 use maowbot_common_ui::events::ChatCommand;
 use std::sync::{Arc, Mutex};
 
 use crate::layout_constants::*;
-use crate::process_manager::ProcessManager;
 use crate::settings::Settings;
 use crate::WindowMode;
 
@@ -255,28 +254,40 @@ impl EguiRenderer {
                 // Control buttons
                 if overlay_running {
                     if ui.button("Stop Overlay").clicked() {
-                        let pm = process_manager.lock().unwrap().clone();
-                        tokio::spawn(async move {
-                            if let Err(e) = pm.stop_overlay().await {
-                                tracing::error!("Failed to stop overlay: {}", e);
-                            }
+                        let pm = process_manager.clone();
+                        tokio::task::spawn_blocking(move || {
+                            tokio::runtime::Handle::current().block_on(async move {
+                                let manager = pm.lock().unwrap();
+                                if let Err(e) = manager.stop(ProcessType::Overlay).await {
+                                    tracing::error!("Failed to stop overlay: {}", e);
+                                }
+                            });
                         });
                     }
                     if ui.button("Restart Overlay").clicked() {
-                        let pm = process_manager.lock().unwrap().clone();
-                        tokio::spawn(async move {
-                            if let Err(e) = pm.restart_overlay().await {
-                                tracing::error!("Failed to restart overlay: {}", e);
-                            }
+                        let pm = process_manager.clone();
+                        tokio::task::spawn_blocking(move || {
+                            tokio::runtime::Handle::current().block_on(async move {
+                                let manager = pm.lock().unwrap();
+                                // Stop then start
+                                let _ = manager.stop(ProcessType::Overlay).await;
+                                tokio::time::sleep(tokio::time::Duration::from_millis(1000)).await;
+                                if let Err(e) = manager.start_overlay().await {
+                                    tracing::error!("Failed to restart overlay: {}", e);
+                                }
+                            });
                         });
                     }
                 } else {
                     if ui.button("Start Overlay").clicked() {
-                        let pm = process_manager.lock().unwrap().clone();
-                        tokio::spawn(async move {
-                            if let Err(e) = pm.start_overlay().await {
-                                tracing::error!("Failed to start overlay: {}", e);
-                            }
+                        let pm = process_manager.clone();
+                        tokio::task::spawn_blocking(move || {
+                            tokio::runtime::Handle::current().block_on(async move {
+                                let manager = pm.lock().unwrap();
+                                if let Err(e) = manager.start_overlay().await {
+                                    tracing::error!("Failed to start overlay: {}", e);
+                                }
+                            });
                         });
                     }
                 }
@@ -527,20 +538,26 @@ impl EguiRenderer {
                 // Control buttons
                 if overlay_running {
                     if ui.button("Stop Overlay").clicked() {
-                        let pm = process_manager.lock().unwrap().clone();
-                        tokio::spawn(async move {
-                            if let Err(e) = pm.stop_overlay().await {
-                                tracing::error!("Failed to stop overlay: {}", e);
-                            }
+                        let pm = process_manager.clone();
+                        tokio::task::spawn_blocking(move || {
+                            tokio::runtime::Handle::current().block_on(async move {
+                                let manager = pm.lock().unwrap();
+                                if let Err(e) = manager.stop(ProcessType::Overlay).await {
+                                    tracing::error!("Failed to stop overlay: {}", e);
+                                }
+                            });
                         });
                     }
                 } else {
                     if ui.button("Start Overlay").clicked() {
-                        let pm = process_manager.lock().unwrap().clone();
-                        tokio::spawn(async move {
-                            if let Err(e) = pm.start_overlay().await {
-                                tracing::error!("Failed to start overlay: {}", e);
-                            }
+                        let pm = process_manager.clone();
+                        tokio::task::spawn_blocking(move || {
+                            tokio::runtime::Handle::current().block_on(async move {
+                                let manager = pm.lock().unwrap();
+                                if let Err(e) = manager.start_overlay().await {
+                                    tracing::error!("Failed to start overlay: {}", e);
+                                }
+                            });
                         });
                     }
                 }

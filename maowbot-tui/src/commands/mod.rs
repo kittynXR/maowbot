@@ -18,6 +18,7 @@ mod osc;
 mod drip;
 mod config;
 mod discord;
+pub mod system;
 pub mod test_grpc;
 pub mod user_grpc;
 pub mod user_adapter;
