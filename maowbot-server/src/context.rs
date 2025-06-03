@@ -60,11 +60,15 @@ pub struct ServerContext {
 
     /// The raw references in case you need them.
     pub creds_repo: Arc<PostgresCredentialsRepository>,
-    pub bot_config_repo: Arc<dyn BotConfigRepository + Send + Sync>,
+    pub bot_config_repo: Arc<PostgresBotConfigRepository>,
+    pub command_repo: Arc<dyn CommandRepository + Send + Sync>,
+    pub command_usage_repo: Arc<dyn CommandUsageRepository + Send + Sync>,
+    pub redeem_repo: Arc<dyn RedeemRepository + Send + Sync>,
+    pub redeem_usage_repo: Arc<dyn RedeemUsageRepository + Send + Sync>,
 
     pub osc_manager: Arc<MaowOscManager>,
-    pub robo_control: Arc<Mutex<RoboControlSystem>>,
-    pub oscquery_server: Arc<Mutex<OscQueryServer>>,
+    pub robo_control: Arc<tokio::sync::Mutex<RoboControlSystem>>,
+    pub oscquery_server: Arc<tokio::sync::Mutex<OscQueryServer>>,
     pub ai_service: Option<Arc<maowbot_ai::plugins::ai_service::AiService>>,
 }
 
@@ -121,7 +125,7 @@ impl ServerContext {
         let encryptor = Encryptor::new(&get_master_key()?)?;
         let creds_repo_arc = Arc::new(PostgresCredentialsRepository::new(db.pool().clone(), encryptor.clone()));
         let platform_config_repo = Arc::new(PostgresPlatformConfigRepository::new(db.pool().clone()));
-        let bot_config_repo: Arc<dyn BotConfigRepository + Send + Sync> = Arc::new(
+        let bot_config_repo = Arc::new(
             PostgresBotConfigRepository::new(db.pool().clone())
         );
         let analytics_repo = Arc::new(PostgresAnalyticsRepository::new(db.pool().clone()));
@@ -167,7 +171,7 @@ impl ServerContext {
             min_quality_score: Some(0.2),
         };
         let cache_conf = CacheConfig { trim_policy };
-        let chat_cache = Arc::new(Mutex::new(
+        let chat_cache = Arc::new(tokio::sync::Mutex::new(
             ChatCache::new(user_analysis_repo.as_ref().clone(), cache_conf)
         ));
 
@@ -319,8 +323,8 @@ impl ServerContext {
             user_service,
             command_service.clone(),
             redeem_service.clone(),
-            cmd_usage_repo,
-            redeem_usage_repo,
+            cmd_usage_repo.clone(),
+            redeem_usage_repo.clone(),
             creds_repo_arc.clone(),
             Some(ai_api_impl.clone()),
         );
@@ -363,7 +367,7 @@ impl ServerContext {
         // Set up the VRChat avatar watcher if VRChat directories are found
         if let Some(avatar_dir) = maowbot_osc::vrchat::get_vrchat_avatar_dir() {
             tracing::info!("Found VRChat avatar directory: {}", avatar_dir.display());
-            let avatar_watcher = Arc::new(Mutex::new(maowbot_osc::vrchat::avatar_watcher::AvatarWatcher::new(avatar_dir)));
+            let avatar_watcher = Arc::new(tokio::sync::Mutex::new(maowbot_osc::vrchat::avatar_watcher::AvatarWatcher::new(avatar_dir)));
             osc_manager.set_vrchat_watcher(avatar_watcher);
         } else {
             tracing::warn!("VRChat avatar directory not found - avatar watcher disabled");
@@ -386,7 +390,7 @@ impl ServerContext {
         }
         
         if let Some(avatar_dir) = maowbot_osc::vrchat::get_vrchat_avatar_dir() {
-            let avatar_watcher = Arc::new(Mutex::new(maowbot_osc::vrchat::avatar_watcher::AvatarWatcher::new(avatar_dir)));
+            let avatar_watcher = Arc::new(tokio::sync::Mutex::new(maowbot_osc::vrchat::avatar_watcher::AvatarWatcher::new(avatar_dir)));
             holder_manager.set_vrchat_watcher(avatar_watcher.clone());
             {
                 let mut holder = osc_manager_holder.write().await;
@@ -407,7 +411,7 @@ impl ServerContext {
         plugin_manager.set_osc_manager(osc_manager_arc.clone());
 
         // Create the new robo system:
-        let robo_control = Arc::new(Mutex::new(RoboControlSystem::new()));
+        let robo_control = Arc::new(tokio::sync::Mutex::new(RoboControlSystem::new()));
 
         plugin_manager.set_osc_manager(Arc::clone(&osc_manager_arc));
 
@@ -428,6 +432,10 @@ impl ServerContext {
             redeem_service,
             creds_repo: creds_repo_arc,
             bot_config_repo: bot_config_repo,
+            command_repo: cmd_repo,
+            command_usage_repo: cmd_usage_repo.clone(),
+            redeem_repo: redeem_repo.clone(),
+            redeem_usage_repo: redeem_usage_repo.clone(),
             osc_manager: osc_manager_arc.clone(),
             robo_control,
             oscquery_server: Arc::clone(&osc_manager_arc.oscquery_server),

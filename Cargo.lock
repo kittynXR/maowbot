@@ -3480,6 +3480,7 @@ dependencies = [
  "tokio-stream",
  "tonic",
  "tracing",
+ "uuid",
 ]
 
 [[package]]
@@ -3613,6 +3614,8 @@ dependencies = [
  "maowbot-proto",
  "maowbot-tui",
  "maowbot_osc",
+ "prost",
+ "prost-types",
  "rand 0.9.1",
  "rcgen",
  "rosc",
@@ -3632,11 +3635,14 @@ dependencies = [
 name = "maowbot-tui"
 version = "0.1.1"
 dependencies = [
+ "async-trait",
  "chrono",
  "lazy_static",
  "maowbot-ai",
  "maowbot-common",
+ "maowbot-common-ui",
  "maowbot-core",
+ "maowbot-proto",
  "open",
  "reqwest",
  "rosc",
@@ -3644,7 +3650,9 @@ dependencies = [
  "serde_json",
  "sqlx",
  "tokio",
+ "tonic",
  "tracing",
+ "tracing-subscriber",
  "uuid",
 ]
 

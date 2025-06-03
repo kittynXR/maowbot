@@ -23,6 +23,23 @@ use maowbot_core::plugins::manager::PluginManager;
 use async_trait::async_trait;
 use serde_json::Value;
 
+// Import all gRPC service implementations
+use crate::grpc_services::*;
+use maowbot_proto::maowbot::services::{
+    user_service_server::UserServiceServer,
+    credential_service_server::CredentialServiceServer,
+    platform_service_server::PlatformServiceServer,
+    plugin_service_server::PluginServiceServer as NewPluginServiceServer,
+    config_service_server::ConfigServiceServer,
+    ai_service_server::AiServiceServer,
+    command_service_server::CommandServiceServer,
+    redeem_service_server::RedeemServiceServer,
+    twitch_service_server::TwitchServiceServer,
+    discord_service_server::DiscordServiceServer,
+    vr_chat_service_server::VrChatServiceServer,
+    osc_service_server::OscServiceServer,
+};
+
 use crate::Args;
 use crate::context::ServerContext;
 use crate::portable_postgres::*;
@@ -169,12 +186,76 @@ pub async fn run_server(args: Args) -> Result<(), Error> {
     let addr: SocketAddr = args.server_addr.parse()?;
     info!("Starting Tonic gRPC server on {}", addr);
 
-    let service_impl = PluginServiceGrpc {
+    // Create all service implementations
+    let plugin_service_impl = PluginServiceGrpc {
         manager: ctx.plugin_manager.clone(),
     };
+    
+    let user_service = UserServiceImpl::new(
+        ctx.plugin_manager.user_repo.clone(),
+        ctx.plugin_manager.user_analysis_repo.clone(),
+        ctx.plugin_manager.platform_identity_repo.clone(),
+    );
+    
+    let credential_service = CredentialServiceImpl::new(
+        ctx.auth_manager.clone(),
+        ctx.creds_repo.clone(),
+    );
+    
+    let platform_config_repo = Arc::new(maowbot_core::repositories::postgres::platform_config::PostgresPlatformConfigRepository::new(
+        ctx.db.pool().clone()
+    ));
+    
+    let platform_service = PlatformServiceImpl::new(
+        ctx.platform_manager.clone(),
+        platform_config_repo,
+    );
+    
+    let new_plugin_service = PluginServiceImpl::new(
+        ctx.plugin_manager.clone(),
+    );
+    
+    // Build the server with all services
     let server_future = Server::builder()
         .tls_config(tls_config)?
-        .add_service(PluginServiceServer::new(service_impl))
+        // Legacy plugin service
+        .add_service(PluginServiceServer::new(plugin_service_impl))
+        // New services
+        .add_service(UserServiceServer::new(user_service))
+        .add_service(CredentialServiceServer::new(credential_service))
+        .add_service(PlatformServiceServer::new(platform_service))
+        .add_service(NewPluginServiceServer::new(new_plugin_service))
+        .add_service(ConfigServiceServer::new(ConfigServiceImpl::new(
+            ctx.bot_config_repo.clone(),
+        )))
+        .add_service(AiServiceServer::new(AiServiceImpl::new()))
+        .add_service(CommandServiceServer::new(CommandServiceImpl::new(
+            ctx.command_repo.clone(),
+            ctx.command_usage_repo.clone(),
+        )))
+        .add_service(RedeemServiceServer::new(RedeemServiceImpl::new(
+            ctx.redeem_repo.clone(),
+            ctx.redeem_usage_repo.clone(),
+            ctx.redeem_service.clone(),
+        )))
+        .add_service(TwitchServiceServer::new(TwitchServiceImpl::new(
+            ctx.platform_manager.clone(),
+        )))
+        .add_service(DiscordServiceServer::new(DiscordServiceImpl::new(
+            ctx.plugin_manager.clone(),
+            Arc::new(maowbot_core::repositories::postgres::discord::PostgresDiscordRepository::new(
+                ctx.db.pool().clone()
+            )),
+        )))
+        .add_service(VrChatServiceServer::new(VRChatServiceImpl::new(
+            ctx.plugin_manager.clone(),
+        )))
+        .add_service(OscServiceServer::new(OscServiceImpl::new(
+            ctx.plugin_manager.clone(),
+            Arc::new(maowbot_core::repositories::postgres::osc_toggle::PostgresOscToggleRepository::new(
+                ctx.db.pool().clone()
+            )),
+        )))
         .serve(addr);
 
     let event_bus = ctx.event_bus.clone();

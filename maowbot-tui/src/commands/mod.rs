@@ -18,6 +18,14 @@ mod osc;
 mod drip;
 mod config;
 mod discord;
+pub mod test_grpc;
+pub mod user_grpc;
+pub mod user_adapter;
+pub mod platform_adapter;
+pub mod ttv_adapter;
+mod dispatch_grpc;
+
+pub use dispatch_grpc::dispatch_grpc;
 
 pub async fn dispatch_async(
     line: &str,
@@ -176,6 +184,11 @@ pub async fn dispatch_async(
 
         "config" => {
             let msg = config::handle_config_command(args, bot_api).await;
+            (false, Some(msg))
+        }
+
+        "test_grpc" => {
+            let msg = test_grpc::handle_test_grpc_command(args).await;
             (false, Some(msg))
         }
 

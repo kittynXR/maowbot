@@ -71,7 +71,7 @@ impl ProcessManager {
             cmd.env("MAOWBOT_GRPC_URL", grpc_url)
                 .env("MAOWBOT_GRPC_PASSPHRASE", grpc_pass)
                 .env("MAOWBOT_GRPC_CA", grpc_ca)
-                .env("RUST_LOG", "maowbot_overlay=debug,maowbot_ui=debug")
+                .env("RUST_LOG", "maowbot_overlay=debug,maowbot_common_ui=debug")
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped());
 

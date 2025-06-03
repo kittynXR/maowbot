@@ -11,3 +11,6 @@ pub mod maowbot {
         tonic::include_proto!("maowbot.services");
     }
 }
+
+// Re-export prost_types for convenience
+pub use prost_types;

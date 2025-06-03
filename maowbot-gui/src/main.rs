@@ -194,17 +194,17 @@ impl eframe::App for DesktopApp {
             &self.process_manager,
         ) {
             match event {
-                maowbot_ui::UIEvent::Quit => {
+                maowbot_common_ui::UIEvent::Quit => {
                     self.cleanup();
                     ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                 }
-                maowbot_ui::UIEvent::Undock => {
+                maowbot_common_ui::UIEvent::Undock => {
                     if matches!(self.window_mode, WindowMode::Main) {
                         *self.state.is_docked.lock().unwrap() = false;
                         self.should_open_secondary = true;
                     }
                 }
-                maowbot_ui::UIEvent::Dock => {
+                maowbot_common_ui::UIEvent::Dock => {
                     *self.state.is_docked.lock().unwrap() = true;
                     // Window will be closed in the next frame
                 }

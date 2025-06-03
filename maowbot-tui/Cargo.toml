@@ -5,10 +5,15 @@ edition.workspace = true
 
 [dependencies]
 maowbot-common = { path = "../maowbot-common" }
+maowbot-common-ui = { path = "../maowbot-common-ui" }
 maowbot-core = { path = "../maowbot-core" }
 maowbot-ai = { path = "../maowbot-ai" }
+maowbot-proto = { path = "../maowbot-proto" }
 tracing = { workspace = true }
 tokio = { workspace = true }
+tonic = { workspace = true }
+async-trait = { workspace = true }
+tracing-subscriber = { workspace = true }
 
 reqwest = { workspace = true }
 
@@ -26,3 +31,7 @@ rosc = { workspace = true }
 name = "maowbot_tui"
 crate-type = ["rlib"]
 path = "src/lib.rs"
+
+[[bin]]
+name = "maowbot-tui-grpc"
+path = "src/main.rs"
