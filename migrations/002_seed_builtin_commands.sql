@@ -14,7 +14,8 @@ INSERT INTO commands (
 VALUES
     ('twitch-irc', 'ping',      'everyone', true, now(), now(), 0, false, false, false),
     ('twitch-irc', 'followage', 'everyone', true, now(), now(), 0, false, false, false),
-    ('twitch-irc',     'world',     'everyone', true, now(), now(), 0, false, false, false),
-    ('twitch-irc',     'instance',  'everyone', true, now(), now(), 0, false, false, false),
-    ('twitch-irc',     'vrchat',    'mod',      true, now(), now(), 0, false, false, false)
+    ('twitch-irc', 'world',     'everyone', true, now(), now(), 0, false, false, false),
+    ('twitch-irc', 'instance',  'everyone', true, now(), now(), 0, false, false, false),
+    ('twitch-irc', 'vrchat',    'mod',      true, now(), now(), 0, false, false, false)
+    ('twitch-irc', 'vanish',    'everyone', true, now(), now(), 0, false, false, false)
     ON CONFLICT (platform, LOWER(command_name)) DO NOTHING;
