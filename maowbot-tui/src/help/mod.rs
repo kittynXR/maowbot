@@ -16,6 +16,8 @@ pub mod help_redeem;
 // NEW:
 pub mod help_config;
 pub mod help_drip;
+pub mod help_test_harness;
+pub mod help_simulate;
 
 fn show_general_help() -> String {
     let text = r#"MaowBot TUI - Available Commands:
@@ -78,6 +80,12 @@ fn show_general_help() -> String {
   ai <enable|disable|status|openai|anthropic|chat|addtrigger|removetrigger|listtriggers|systemprompt>
     Configure and interact with AI providers for the chat bot.
 
+  test_harness <run-all|twitch|commands|redeems|grpc>
+    Run the test harness for testing TUI functionality.
+
+  simulate <type> [args...]
+    Trigger simulated Twitch events for testing without being live.
+
   quit
     Shut down the TUI (and the entire bot).
 "#;
@@ -104,6 +112,8 @@ pub fn show_command_help(command: &str) -> String {
         // NEW:
         "config" => help_config::CONFIG_HELP_TEXT.to_owned(),
         "drip" => help_drip::DRIP_HELP_TEXT.to_owned(),
+        "test_harness" => help_test_harness::help_test_harness(),
+        "simulate" => help_simulate::help_simulate(),
 
         // Built-in help snippet for "list"
         "list" => {

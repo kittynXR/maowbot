@@ -161,8 +161,12 @@ pub async fn run_server(args: Args) -> Result<(), Error> {
         }
     };
     
-    // 5) If TUI was requested
+    // 5) If TUI was requested (DEPRECATED)
     if args.tui {
+        warn!("⚠️  The --tui flag is deprecated! Use the standalone 'maowbot-tui' binary instead.");
+        warn!("⚠️  The built-in TUI will be removed in a future version.");
+        warn!("⚠️  Run 'maowbot-tui --with-server' to start both TUI and server together.");
+        
         let tui_module = Arc::new(TuiModule::new(bot_api.clone(), ctx.event_bus.clone()).await);
         tui_module.spawn_tui_thread().await;
     }

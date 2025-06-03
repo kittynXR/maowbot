@@ -3,6 +3,7 @@
 mod tui_module;
 pub mod commands;
 pub mod help;
+pub mod test_harness;
 
 pub use tui_module::TuiModule;
 

@@ -32,6 +32,12 @@ cd maowbot-server && cargo run
 
 # Run with verbose logging
 RUST_LOG=debug cargo run
+
+# Run the standalone TUI client (requires server to be running)
+cargo run -p maowbot-tui --bin maowbot-tui-grpc
+
+# Run server with deprecated built-in TUI
+cargo run -p maowbot-server -- --tui
 ```
 
 ## Architecture
@@ -46,17 +52,33 @@ RUST_LOG=debug cargo run
    - `plugins/`: Plugin management supporting both in-process and gRPC plugins
    - `tasks/`: Background tasks (credential refresh, maintenance)
 
-2. **maowbot-proto**: gRPC definitions for remote plugins using bidirectional streaming
+2. **maowbot-proto**: gRPC definitions for services and remote plugins
+   - Service definitions for all bot operations (user, platform, twitch, discord, etc.)
+   - Plugin communication via bidirectional streaming
 
-3. **maowbot-server**: CLI application that orchestrates everything - runs migrations, starts platforms, loads plugins
+3. **maowbot-server**: Core server application
+   - Hosts gRPC services for all bot operations
+   - Runs database migrations on startup
+   - Manages platform connections and plugin loading
+   - The --tui flag is deprecated (use separate TUI client instead)
 
-4. **Platform Architecture**:
+4. **maowbot-common-ui**: Shared UI business logic
+   - gRPC client wrapper with connection pooling
+   - Command handlers that return structured data
+   - Used by both TUI and future GUI applications
+
+5. **maowbot-tui**: Terminal User Interface
+   - Standalone gRPC client binary: `maowbot-tui-grpc`
+   - Adapters that format common-ui results for console display
+   - Can connect to local or remote servers
+
+6. **Platform Architecture**:
    - Each platform has auth, client, and runtime modules
    - Platforms communicate via a central event bus
    - Twitch supports both IRC and EventSub simultaneously
    - VRChat includes OSC integration for avatar parameters and chatbox
 
-5. **Plugin System**:
+7. **Plugin System**:
    - In-process plugins: Loaded as cdylib, implement specific traits
    - gRPC plugins: Connect via bidirectional streaming defined in plugin.proto
    - Capability-based permissions system

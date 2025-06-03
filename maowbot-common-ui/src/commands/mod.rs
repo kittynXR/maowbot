@@ -7,6 +7,15 @@ pub mod twitch;
 pub mod discord;
 pub mod command;
 pub mod redeem;
+pub mod account;
+pub mod ai;
+pub mod config;
+pub mod plugin;
+pub mod connectivity;
+pub mod drip;
+pub mod member;
+pub mod osc;
+pub mod vrchat;
 
 /// Result type that can include both data and warnings
 pub struct CommandResult<T> {

@@ -26,6 +26,9 @@ lazy_static = { workspace = true }
 serde_json = { workspace = true }
 serde = { workspace = true }
 rosc = { workspace = true }
+colored = "2.1"
+anyhow = { workspace = true }
+prost = { workspace = true }
 
 [lib]
 name = "maowbot_tui"

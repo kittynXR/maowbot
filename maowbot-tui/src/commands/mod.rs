@@ -27,7 +27,18 @@ pub mod ttv_simple_adapter;
 pub mod discord_adapter;
 pub mod command_adapter;
 pub mod redeem_adapter;
+pub mod account_adapter;
+pub mod ai_adapter;
+pub mod config_adapter;
+pub mod plugin_adapter;
+pub mod connectivity_adapter;
+pub mod drip_adapter;
+pub mod member_adapter;
+pub mod osc_adapter;
+pub mod vrchat_adapter;
 mod dispatch_grpc;
+pub mod test_harness;
+pub mod simulate;
 
 pub use dispatch_grpc::dispatch_grpc;
 
@@ -51,8 +62,8 @@ pub async fn dispatch_async(
         }
 
         "vrchat" => {
-            let msg = vrchat::handle_vrchat_command(args, bot_api).await;
-            (false, Some(msg))
+            // Handled by gRPC dispatcher
+            (false, Some("VRChat command should be handled by gRPC dispatcher".to_string()))
         }
 
         "list" => {
@@ -117,8 +128,8 @@ pub async fn dispatch_async(
         }
 
         "osc" => {
-            let output = osc::handle_osc_command(args, bot_api, tui_module).await;
-            (false, Some(output))
+            // Handled by gRPC dispatcher
+            (false, Some("OSC command should be handled by gRPC dispatcher".to_string()))
         }
 
         "drip" => {
@@ -193,6 +204,18 @@ pub async fn dispatch_async(
 
         "test_grpc" => {
             let msg = test_grpc::handle_test_grpc_command(args).await;
+            (false, Some(msg))
+        }
+
+        "test_harness" => {
+            match test_harness::TestHarnessCommand::execute_from_args(args).await {
+                Ok(_) => (false, Some("Test harness completed successfully".to_string())),
+                Err(e) => (false, Some(format!("Test harness failed: {}", e))),
+            }
+        }
+
+        "simulate" => {
+            let msg = simulate::handle_simulate_command(args, bot_api, tui_module).await;
             (false, Some(msg))
         }
 
