@@ -150,7 +150,7 @@ impl CredentialService for CredentialServiceImpl {
                     .complete_auth_flow_for_user(
                         platform_internal,
                         oauth_data.code,
-                        user_id,
+                        &user_id.to_string(),
                     )
                     .await
                     .map_err(|e| Status::internal(format!("Failed to complete auth flow: {}", e)))?;
@@ -173,7 +173,7 @@ impl CredentialService for CredentialServiceImpl {
                     .await
                     .complete_auth_flow_for_user_multi(
                         platform_internal,
-                        user_id,
+                        &user_id,
                         creds_map,
                     )
                     .await
@@ -201,10 +201,10 @@ impl CredentialService for CredentialServiceImpl {
                 let credential = self.auth_manager
                     .lock()
                     .await
-                    .complete_auth_flow_for_user_2fa(
+                    .complete_auth_flow_for_user_twofactor(
                         platform_internal,
                         twofa_data.code,
-                        user_id,
+                        &user_id,
                     )
                     .await
                     .map_err(|e| Status::internal(format!("Failed to complete 2FA: {}", e)))?;
@@ -385,12 +385,13 @@ impl CredentialService for CredentialServiceImpl {
             existing_cred.updated_at = Utc::now();
             
             self.credential_repo
-                .update_credential(&existing_cred)
+                .store_credentials(&existing_cred)
                 .await
                 .map_err(|e| Status::internal(format!("Failed to update credential: {}", e)))?;
                 
             Ok(Response::new(StoreCredentialResponse {
                 credential: Some(Self::credential_to_proto(&existing_cred)),
+                was_updated: true,
             }))
         } else {
             // For new credentials, we can't really create them from scratch
