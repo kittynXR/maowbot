@@ -7,4 +7,4 @@ pub mod help;
 pub use tui_module::TuiModule;
 
 // Export adapters for use in main.rs
-pub use commands::{user_adapter, platform_adapter, test_grpc};
+pub use commands::{user_adapter, platform_adapter, ttv_adapter, test_grpc};

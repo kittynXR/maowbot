@@ -4,6 +4,9 @@
 pub mod user;
 pub mod platform;
 pub mod twitch;
+pub mod discord;
+pub mod command;
+pub mod redeem;
 
 /// Result type that can include both data and warnings
 pub struct CommandResult<T> {

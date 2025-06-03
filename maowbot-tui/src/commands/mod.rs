@@ -23,6 +23,10 @@ pub mod user_grpc;
 pub mod user_adapter;
 pub mod platform_adapter;
 pub mod ttv_adapter;
+pub mod ttv_simple_adapter;
+pub mod discord_adapter;
+pub mod command_adapter;
+pub mod redeem_adapter;
 mod dispatch_grpc;
 
 pub use dispatch_grpc::dispatch_grpc;

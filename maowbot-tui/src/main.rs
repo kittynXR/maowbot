@@ -26,6 +26,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("\nAvailable commands:");
     println!("  user <add|remove|edit|info|search|list> - User management");
     println!("  platform <add|remove|list|show> - Platform configuration"); 
+    println!("  ttv <msg|join|part|info|follow|stream|ban|unban> - Twitch commands");
+    println!("  discord <liverole|guilds|channels|send|member|members> - Discord commands");
+    println!("  command <list|enable|disable|setcooldown|setwarnonce> - Command management");
+    println!("  redeem <list|info|add|enable|pause|setcost|sync> - Redeem management");
     println!("  test_grpc - Test gRPC connectivity");
     println!("  quit - Exit");
     println!("\nType 'help' for more information.\n");
@@ -62,6 +66,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 use maowbot_tui::commands::platform_adapter;
                 platform_adapter::handle_platform_command(&parts[1..], &client).await
             }
+            "ttv" => {
+                use maowbot_tui::commands::ttv_simple_adapter;
+                ttv_simple_adapter::handle_ttv_command(&parts[1..], &client).await
+            }
+            "discord" => {
+                use maowbot_tui::commands::discord_adapter;
+                discord_adapter::handle_discord_command(&parts[1..], &client).await
+            }
+            "command" => {
+                use maowbot_tui::commands::command_adapter;
+                command_adapter::handle_command_command(&parts[1..], &client).await
+            }
+            "redeem" => {
+                use maowbot_tui::commands::redeem_adapter;
+                redeem_adapter::handle_redeem_command(&parts[1..], &client).await
+            }
             "test_grpc" => {
                 use maowbot_tui::commands::test_grpc;
                 test_grpc::handle_test_grpc_command(&parts[1..]).await
@@ -71,6 +91,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 "Available commands:\n  \
                 user <add|remove|edit|info|search|list>\n  \
                 platform <add|remove|list|show>\n  \
+                ttv <msg|join|part|info|follow|stream|ban|unban>\n  \
+                discord <liverole|guilds|channels|send|member|members>\n  \
+                command <list|enable|disable|setcooldown|setwarnonce>\n  \
+                redeem <list|info|add|enable|pause|setcost|sync>\n  \
                 test_grpc\n  \
                 quit".to_string()
             }
