@@ -107,6 +107,8 @@ message PlatformCredential {
   google.protobuf.Timestamp last_refreshed = 11;
   bool is_active = 12;
   bool is_bot = 13;
+  bool is_broadcaster = 14;
+  bool is_teammate = 15;
 }
 
 // Platform config

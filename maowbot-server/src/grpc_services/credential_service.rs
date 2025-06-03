@@ -46,6 +46,7 @@ impl CredentialServiceImpl {
                 maowbot_common::models::platform::Platform::TwitchEventSub => Platform::TwitchEventsub as i32,
                 maowbot_common::models::platform::Platform::Discord => Platform::Discord as i32,
                 maowbot_common::models::platform::Platform::VRChat => Platform::Vrchat as i32,
+                maowbot_common::models::platform::Platform::Twitch => Platform::TwitchHelix as i32,
                 _ => Platform::Unknown as i32,
             },
             user_id: cred.user_id.to_string(),
@@ -68,6 +69,8 @@ impl CredentialServiceImpl {
             }),
             is_active: true, // We don't have is_active in the model
             is_bot: cred.is_bot,
+            is_broadcaster: cred.is_broadcaster,
+            is_teammate: cred.is_teammate,
         }
     }
 }
@@ -90,6 +93,7 @@ impl CredentialService for CredentialServiceImpl {
             Platform::TwitchEventsub => "twitch-eventsub",
             Platform::Discord => "discord",
             Platform::Vrchat => "vrchat",
+            Platform::TwitchHelix => "twitch",
             _ => return Err(Status::invalid_argument("Unsupported platform")),
         };
         
@@ -120,44 +124,99 @@ impl CredentialService for CredentialServiceImpl {
         let platform = Platform::try_from(req.platform)
             .map_err(|_| Status::invalid_argument("Invalid platform"))?;
         
-        let user_id = Uuid::parse_str(&req.user_id)
-            .map_err(|e| Status::invalid_argument(format!("Invalid user_id: {}", e)))?;
-        
-        info!("Completing auth flow for platform: {:?}, user: {}", platform, user_id);
-        
-        // Handle different auth data types
-        let code = match req.auth_data {
-            Some(complete_auth_flow_request::AuthData::Code(code)) => code,
-            Some(complete_auth_flow_request::AuthData::Credentials(_)) => {
-                return Err(Status::unimplemented("Multi-field auth not yet implemented"));
-            }
-            None => return Err(Status::invalid_argument("Missing auth data")),
-        };
+        info!("Completing auth flow for platform: {:?}", platform);
         
         let platform_str = match platform {
             Platform::TwitchIrc => "twitch-irc",
             Platform::TwitchEventsub => "twitch-eventsub",
             Platform::Discord => "discord",
             Platform::Vrchat => "vrchat",
+            Platform::TwitchHelix => "twitch",
             _ => return Err(Status::invalid_argument("Unsupported platform")),
         };
         
-        let credential = self.auth_manager
-            .lock()
-            .await
-            .complete_auth_flow_for_user(
-                maowbot_common::models::platform::Platform::from_str(platform_str).unwrap(),
-                code,
-                &user_id.to_string(),
-            )
-            .await
-            .map_err(|e| Status::internal(format!("Failed to complete auth flow: {}", e)))?;
+        let platform_internal = maowbot_common::models::platform::Platform::from_str(platform_str)
+            .map_err(|_| Status::invalid_argument("Invalid platform"))?;
         
-        Ok(Response::new(CompleteAuthFlowResponse {
-            credential: Some(Self::credential_to_proto(&credential)),
-            requires_2fa: false,
-            session_token: String::new(),
-        }))
+        // Handle different auth data types
+        match req.auth_data {
+            Some(complete_auth_flow_request::AuthData::OauthCode(oauth_data)) => {
+                let user_id = Uuid::parse_str(&oauth_data.user_id)
+                    .map_err(|e| Status::invalid_argument(format!("Invalid user_id: {}", e)))?;
+                
+                let credential = self.auth_manager
+                    .lock()
+                    .await
+                    .complete_auth_flow_for_user(
+                        platform_internal,
+                        oauth_data.code,
+                        user_id,
+                    )
+                    .await
+                    .map_err(|e| Status::internal(format!("Failed to complete auth flow: {}", e)))?;
+                
+                Ok(Response::new(CompleteAuthFlowResponse {
+                    credential: Some(Self::credential_to_proto(&credential)),
+                    requires_2fa: false,
+                    session_token: String::new(),
+                }))
+            }
+            Some(complete_auth_flow_request::AuthData::CredentialsMap(creds_data)) => {
+                let user_id = Uuid::parse_str(&creds_data.user_id)
+                    .map_err(|e| Status::invalid_argument(format!("Invalid user_id: {}", e)))?;
+                
+                // Convert credentials map to the format expected by auth manager
+                let creds_map: HashMap<String, String> = creds_data.credentials.into_iter().collect();
+                
+                let credential = self.auth_manager
+                    .lock()
+                    .await
+                    .complete_auth_flow_for_user_multi(
+                        platform_internal,
+                        user_id,
+                        creds_map,
+                    )
+                    .await
+                    .map_err(|e| {
+                        // Check if this is a 2FA prompt
+                        let error_msg = e.to_string();
+                        if error_msg.contains("__2FA_PROMPT__") {
+                            // Return a special error that the client can handle
+                            Status::unauthenticated(error_msg)
+                        } else {
+                            Status::internal(format!("Failed to complete auth flow: {}", e))
+                        }
+                    })?;
+                
+                Ok(Response::new(CompleteAuthFlowResponse {
+                    credential: Some(Self::credential_to_proto(&credential)),
+                    requires_2fa: false,
+                    session_token: String::new(),
+                }))
+            }
+            Some(complete_auth_flow_request::AuthData::TwoFactorCode(twofa_data)) => {
+                let user_id = Uuid::parse_str(&twofa_data.user_id)
+                    .map_err(|e| Status::invalid_argument(format!("Invalid user_id: {}", e)))?;
+                
+                let credential = self.auth_manager
+                    .lock()
+                    .await
+                    .complete_auth_flow_for_user_2fa(
+                        platform_internal,
+                        twofa_data.code,
+                        user_id,
+                    )
+                    .await
+                    .map_err(|e| Status::internal(format!("Failed to complete 2FA: {}", e)))?;
+                
+                Ok(Response::new(CompleteAuthFlowResponse {
+                    credential: Some(Self::credential_to_proto(&credential)),
+                    requires_2fa: false,
+                    session_token: String::new(),
+                }))
+            }
+            None => Err(Status::invalid_argument("Missing auth data")),
+        }
     }
     
     async fn list_credentials(
@@ -294,15 +353,50 @@ impl CredentialService for CredentialServiceImpl {
             Platform::TwitchEventsub => maowbot_common::models::platform::Platform::TwitchEventSub,
             Platform::Discord => maowbot_common::models::platform::Platform::Discord,
             Platform::Vrchat => maowbot_common::models::platform::Platform::VRChat,
+            Platform::TwitchHelix => maowbot_common::models::platform::Platform::Twitch,
             _ => return Err(Status::invalid_argument("Unsupported platform")),
         };
         
         let user_id = Uuid::parse_str(&cred_proto.user_id)
             .map_err(|e| Status::invalid_argument(format!("Invalid user_id: {}", e)))?;
         
-        // NOTE: The actual PlatformCredential model is quite different from the proto
-        // This would need proper mapping based on your actual implementation
-        return Err(Status::unimplemented("store_credential needs proper implementation"))
+        let credential_id = if cred_proto.credential_id.is_empty() {
+            Uuid::new_v4()
+        } else {
+            Uuid::parse_str(&cred_proto.credential_id)
+                .map_err(|e| Status::invalid_argument(format!("Invalid credential_id: {}", e)))?
+        };
+        
+        // Get the existing credential if updating
+        let existing = if req.update_if_exists {
+            self.credential_repo
+                .get_credential_by_id(credential_id)
+                .await
+                .map_err(|e| Status::internal(format!("Failed to get existing credential: {}", e)))?
+        } else {
+            None
+        };
+        
+        if let Some(mut existing_cred) = existing {
+            // Update only the flags
+            existing_cred.is_bot = cred_proto.is_bot;
+            existing_cred.is_broadcaster = cred_proto.is_broadcaster;
+            existing_cred.is_teammate = cred_proto.is_teammate;
+            existing_cred.updated_at = Utc::now();
+            
+            self.credential_repo
+                .update_credential(&existing_cred)
+                .await
+                .map_err(|e| Status::internal(format!("Failed to update credential: {}", e)))?;
+                
+            Ok(Response::new(StoreCredentialResponse {
+                credential: Some(Self::credential_to_proto(&existing_cred)),
+            }))
+        } else {
+            // For new credentials, we can't really create them from scratch
+            // They should be created through the auth flow
+            Err(Status::invalid_argument("Cannot create new credentials through store_credential. Use auth flow instead."))
+        }
     }
     
     async fn revoke_credential(

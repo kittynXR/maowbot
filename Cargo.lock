@@ -3659,6 +3659,7 @@ dependencies = [
  "maowbot-proto",
  "open",
  "prost",
+ "prost-types",
  "reqwest",
  "rosc",
  "serde",

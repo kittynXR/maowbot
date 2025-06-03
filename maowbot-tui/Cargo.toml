@@ -29,6 +29,7 @@ rosc = { workspace = true }
 colored = "2.1"
 anyhow = { workspace = true }
 prost = { workspace = true }
+prost-types = { workspace = true }
 
 [lib]
 name = "maowbot_tui"
