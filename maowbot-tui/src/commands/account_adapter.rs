@@ -108,11 +108,11 @@ pub async fn handle_account_command(args: &[&str], client: &GrpcClient) -> Strin
             
             // Do the actual auth flow based on platform
             let result = if platform == Platform::Vrchat {
-                vrchat_add_flow(client, platform, user_id).await
+                vrchat_add_flow(client, platform, user_id.clone()).await
             } else if platform == Platform::Discord && is_bot {
-                discord_bot_add_flow(client, platform, user_id).await
+                discord_bot_add_flow(client, platform, user_id.clone()).await
             } else {
-                oauth_add_flow(client, platform, user_id, is_bot).await
+                oauth_add_flow(client, platform, user_id.clone(), is_bot).await
             };
             
             match result {
@@ -131,13 +131,13 @@ pub async fn handle_account_command(args: &[&str], client: &GrpcClient) -> Strin
                         println!("\nBecause this is a non-bot Twitch account, also create matching:\n - twitch-irc\n - twitch-eventsub\n");
                         
                         // Create twitch-irc
-                        if let Ok(irc_id) = oauth_add_flow(client, Platform::TwitchIrc, user_id, false).await {
+                        if let Ok(irc_id) = oauth_add_flow(client, Platform::TwitchIrc, user_id.clone(), false).await {
                             let _ = update_credential_flags(client, &irc_id, false, is_broadcaster, is_teammate).await;
                             println!("Created twitch-irc credentials.\n");
                         }
                         
                         // Create twitch-eventsub (reusing helix tokens)
-                        if let Err(e) = reuse_twitch_helix_for_eventsub(client, user_id).await {
+                        if let Err(e) = reuse_twitch_helix_for_eventsub(client, user_id.clone()).await {
                             println!("(Warning) Could not create twitch-eventsub => {}", e);
                         } else {
                             println!("Created twitch-eventsub credentials.\n");
@@ -149,7 +149,7 @@ pub async fn handle_account_command(args: &[&str], client: &GrpcClient) -> Strin
                         }
                     }
                     
-                    format!("Success! Created credential(s) for user_id={}", user_id)
+                    format!("Success! Created credential(s) for user_id={}", &user_id)
                 }
                 Err(e) => format!("Error creating credential for {:?} => {}", platform, e),
             }
@@ -289,8 +289,11 @@ async fn find_or_create_user(client: &GrpcClient, username: &str) -> Result<Stri
     let mut user_client = client.user.clone();
     let search_request = SearchUsersRequest {
         query: username.to_string(),
-        limit: 10,
-        offset: 0,
+        search_fields: vec![],
+        page: Some(maowbot_proto::maowbot::common::PageRequest {
+            page_size: 10,
+            page_token: String::new(),
+        }),
     };
     
     let search_response = user_client
@@ -298,19 +301,23 @@ async fn find_or_create_user(client: &GrpcClient, username: &str) -> Result<Stri
         .await
         .map_err(|e| e.to_string())?;
         
-    let users = search_response.into_inner().users;
+    let search_response = search_response.into_inner();
     
-    // Look for exact match
-    if let Some(user) = users.iter().find(|u| {
-        u.global_username.to_lowercase() == username.to_lowercase()
+    // Look for exact match in results
+    if let Some(result) = search_response.results.iter().find(|r| {
+        r.user.as_ref()
+            .map(|u| u.global_username.to_lowercase() == username.to_lowercase())
+            .unwrap_or(false)
     }) {
-        return Ok(user.user_id.clone());
+        if let Some(user) = &result.user {
+            return Ok(user.user_id.clone());
+        }
     }
     
     // Create new user
     let create_request = CreateUserRequest {
-        user_id: None, // Let server generate
-        global_username: username.to_string(),
+        user_id: String::new(), // Empty string means let server generate
+        display_name: username.to_string(),
         is_active: true,
     };
     
@@ -371,12 +378,16 @@ async fn oauth_add_flow(
     println!("OAuth flow initiated. Please complete authentication in your browser.");
     
     // Wait for callback
-    let callback_result = done_rx.await
-        .map_err(|e| {
+    let callback_result = match done_rx.await {
+        Ok(result) => {
             let _ = shutdown_tx.send(());
-            format!("Error receiving OAuth code: {}", e)
-        })?;
-    let _ = shutdown_tx.send(());
+            result
+        }
+        Err(e) => {
+            let _ = shutdown_tx.send(());
+            return Err(format!("Error receiving OAuth code: {}", e));
+        }
+    };
     
     // Complete auth flow
     let complete_request = CompleteAuthFlowRequest {
@@ -385,6 +396,7 @@ async fn oauth_add_flow(
         auth_data: Some(AuthData::OauthCode(complete_auth_flow_request::OauthCode {
             code: callback_result.code,
             user_id: user_id,
+            code_verifier: String::new(),
         })),
     };
     
@@ -440,9 +452,10 @@ async fn vrchat_add_flow(
     keys_map.insert("password".to_string(), password_line.trim().to_string());
     
     // Complete auth flow with credentials
+    let state = begin_response.state.clone();
     let complete_request = CompleteAuthFlowRequest {
         platform: platform as i32,
-        state: begin_response.state,
+        state: state.clone(),
         auth_data: Some(AuthData::CredentialsMap(complete_auth_flow_request::CredentialsMap {
             credentials: keys_map,
             user_id: user_id.clone(),
@@ -472,7 +485,7 @@ async fn vrchat_add_flow(
                 // Complete with 2FA
                 let twofa_request = CompleteAuthFlowRequest {
                     platform: platform as i32,
-                    state: begin_response.state,
+                    state: state,
                     auth_data: Some(AuthData::TwoFactorCode(complete_auth_flow_request::TwoFactorCode {
                         code,
                         user_id,
@@ -728,6 +741,7 @@ async fn update_credential_flags(
     let mut cred_client = client.credential.clone();
     let get_request = GetCredentialRequest {
         credential_id: credential_id.to_string(),
+        include_user: false,
     };
     
     let get_response = cred_client
