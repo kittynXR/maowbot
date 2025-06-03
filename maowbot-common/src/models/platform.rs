@@ -18,6 +18,7 @@ pub enum Platform {
     VRChat,
     #[sqlx(rename = "twitch-irc")]
     TwitchIRC,
+    #[sqlx(rename = "twitch-eventsub")]
     TwitchEventSub
 }
 
