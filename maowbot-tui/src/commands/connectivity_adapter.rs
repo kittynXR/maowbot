@@ -1,13 +1,13 @@
 // Connectivity command adapter for TUI
 use maowbot_common_ui::{GrpcClient, commands::connectivity::ConnectivityCommands};
 use std::io::{stdin, stdout, Write};
-use crate::tui_module::TuiModule;
+use crate::tui_module_simple::SimpleTuiModule;
 use std::sync::Arc;
 
 pub async fn handle_connectivity_command(
     args: &[&str],
     client: &GrpcClient,
-    tui_module: &Arc<TuiModule>,
+    tui_module: &Arc<SimpleTuiModule>,
 ) -> String {
     if args.is_empty() {
         return r#"Usage:
@@ -217,7 +217,7 @@ async fn handle_stop_cmd(args: &[&str], client: &GrpcClient) -> String {
     }
 }
 
-async fn handle_chat_cmd(args: &[&str], tui_module: &Arc<TuiModule>) -> String {
+async fn handle_chat_cmd(args: &[&str], tui_module: &Arc<SimpleTuiModule>) -> String {
     if args.is_empty() {
         return "Usage: chat <on/off> [platform] [account]".to_string();
     }

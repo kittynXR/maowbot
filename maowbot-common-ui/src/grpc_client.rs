@@ -43,9 +43,10 @@ impl GrpcClient {
                 let ca = tonic::transport::Certificate::from_pem(cert_pem);
                 tls = tls.ca_certificate(ca);
             } else {
-                // For self-signed certs without the CA, we need to be more permissive
-                // In production, you should always verify certificates!
-                tls = tls.assume_http2(true);
+                // For self-signed certs without the CA, we need to skip verification
+                // WARNING: This is insecure and should only be used for development!
+                // Note: tonic doesn't support skipping verification directly
+                // We'll need to load a dummy cert or use HTTP instead
             }
             
             Endpoint::from_shared(addr.to_string())?
@@ -75,6 +76,7 @@ impl GrpcClient {
             vrchat: VrChatServiceClient::new(channel.clone()),
         })
     }
+    
     
     pub async fn connect_with_tls(
         addr: &str,

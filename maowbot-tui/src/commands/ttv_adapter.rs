@@ -1,6 +1,6 @@
 // TTV (Twitch) command adapter for TUI
 use maowbot_common_ui::{GrpcClient, commands::twitch::TwitchCommands};
-use crate::tui_module::TuiModule;
+use crate::tui_module_simple::SimpleTuiModule;
 use std::sync::Arc;
 
 /// Helper to require an active Twitch-IRC account name from the TUI state.
@@ -17,7 +17,7 @@ fn require_active_account(opt: &Option<String>) -> Result<&str, String> {
 pub async fn handle_ttv_command(
     args: &[&str],
     client: &GrpcClient,
-    tui_module: &Arc<TuiModule>,
+    tui_module: &Arc<SimpleTuiModule>,
 ) -> String {
     if args.is_empty() {
         return r#"Usage:
@@ -76,7 +76,7 @@ pub async fn handle_ttv_command(
 
 async fn set_active_account(
     account: &str,
-    tui_module: &Arc<TuiModule>,
+    tui_module: &Arc<SimpleTuiModule>,
 ) -> String {
     {
         let mut st = tui_module.ttv_state.lock().unwrap();
@@ -91,7 +91,7 @@ async fn set_active_account(
 async fn do_join_channel(
     channel: &str,
     client: &GrpcClient,
-    tui_module: &Arc<TuiModule>,
+    tui_module: &Arc<SimpleTuiModule>,
 ) -> String {
     let account = {
         let st = tui_module.ttv_state.lock().unwrap();
@@ -126,7 +126,7 @@ async fn do_join_channel(
 async fn do_part_channel(
     channel: &str,
     client: &GrpcClient,
-    tui_module: &Arc<TuiModule>,
+    tui_module: &Arc<SimpleTuiModule>,
 ) -> String {
     let account = {
         let st = tui_module.ttv_state.lock().unwrap();
@@ -167,7 +167,7 @@ async fn do_send_message(
     channel: &str,
     text: &str,
     client: &GrpcClient,
-    tui_module: &Arc<TuiModule>,
+    tui_module: &Arc<SimpleTuiModule>,
 ) -> String {
     let account = {
         let st = tui_module.ttv_state.lock().unwrap();

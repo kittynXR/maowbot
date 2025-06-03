@@ -1,12 +1,12 @@
 // OSC command adapter for TUI
 use maowbot_common_ui::{GrpcClient, commands::osc::OscCommands};
 use std::sync::Arc;
-use crate::tui_module::TuiModule;
+use crate::tui_module_simple::SimpleTuiModule;
 
 pub async fn handle_osc_command(
     args: &[&str],
     client: &GrpcClient,
-    tui_module: &Arc<TuiModule>,
+    tui_module: &Arc<SimpleTuiModule>,
 ) -> String {
     if args.is_empty() {
         return r#"Usage:

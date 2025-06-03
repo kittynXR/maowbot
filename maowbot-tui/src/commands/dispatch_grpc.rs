@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use maowbot_common_ui::GrpcClient;
 use crate::help;
-use crate::TuiModule;
+use crate::tui_module_simple::SimpleTuiModule;
 
 // Import the new adapters
 use super::user_adapter;
@@ -24,7 +24,7 @@ use super::vrchat_adapter;
 pub async fn dispatch_grpc(
     line: &str,
     client: &GrpcClient,
-    tui_module: &Arc<TuiModule>,
+    tui_module: &Arc<SimpleTuiModule>,
 ) -> (bool, Option<String>) {
     let parts: Vec<&str> = line.split_whitespace().collect();
     if parts.is_empty() {

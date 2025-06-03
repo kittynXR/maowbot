@@ -35,9 +35,8 @@ RUST_LOG=debug cargo run
 
 # Run the standalone TUI client (requires server to be running)
 cargo run -p maowbot-tui --bin maowbot-tui-grpc
-
-# Run server with deprecated built-in TUI
-cargo run -p maowbot-server -- --tui
+# Or use the convenience script:
+./run-tui.sh
 ```
 
 ## Architecture
@@ -60,7 +59,7 @@ cargo run -p maowbot-server -- --tui
    - Hosts gRPC services for all bot operations
    - Runs database migrations on startup
    - Manages platform connections and plugin loading
-   - The --tui flag is deprecated (use separate TUI client instead)
+   - Provides gRPC API for all bot operations
 
 4. **maowbot-common-ui**: Shared UI business logic
    - gRPC client wrapper with connection pooling

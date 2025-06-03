@@ -1,12 +1,12 @@
 // Drip command adapter for TUI
 use maowbot_common_ui::{GrpcClient, commands::drip::DripCommands};
 use std::sync::Arc;
-use crate::tui_module::TuiModule;
+use crate::tui_module_simple::SimpleTuiModule;
 
 pub async fn handle_drip_command(
     args: &[&str],
     client: &GrpcClient,
-    _tui: &Arc<TuiModule>,
+    _tui: &Arc<SimpleTuiModule>,
 ) -> String {
     if args.is_empty() {
         return help_text();

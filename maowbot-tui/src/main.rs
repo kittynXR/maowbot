@@ -1,6 +1,9 @@
-// Simple main for testing gRPC commands
+// Standalone TUI client using gRPC
 use maowbot_common_ui::GrpcClient;
+use maowbot_tui::{commands::dispatch_grpc, SimpleTuiModule};
 use tokio::io::{AsyncBufReadExt, BufReader};
+use std::sync::Arc;
+use std::io::{stdout, Write};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -23,23 +26,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     };
 
-    println!("\nAvailable commands:");
-    println!("  user <add|remove|edit|info|search|list> - User management");
-    println!("  platform <add|remove|list|show> - Platform configuration"); 
-    println!("  ttv <msg|join|part|info|follow|stream|ban|unban> - Twitch commands");
-    println!("  discord <liverole|guilds|channels|send|member|members> - Discord commands");
-    println!("  command <list|enable|disable|setcooldown|setwarnonce> - Command management");
-    println!("  redeem <list|info|add|enable|pause|setcost|sync> - Redeem management");
-    println!("  test_grpc - Test gRPC connectivity");
-    println!("  quit - Exit");
-    println!("\nType 'help' for more information.\n");
+    // Create a minimal TUI module for the gRPC client
+    let tui_module = Arc::new(SimpleTuiModule::new());
+
+    println!("\nType 'help' for available commands.\n");
 
     // Main input loop
     let mut reader = BufReader::new(tokio::io::stdin()).lines();
     
     loop {
-        print!("tui> ");
-        use std::io::{stdout, Write};
+        print!("{}", tui_module.prompt_string());
         stdout().flush()?;
 
         let line = match reader.next_line().await? {
@@ -51,57 +47,35 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             continue;
         }
 
-        // Simple command dispatcher
-        let parts: Vec<&str> = line.split_whitespace().collect();
-        if parts.is_empty() {
-            continue;
+        // Check if we're in special chat modes
+        {
+            let is_in_ttv_chat = tui_module.ttv_state.lock().unwrap().is_in_chat_mode;
+            if is_in_ttv_chat {
+                if tui_module.handle_ttv_chat_line(&line, &client).await {
+                    continue;
+                }
+            }
         }
 
-        let output = match parts[0] {
-            "user" => {
-                use maowbot_tui::commands::user_adapter;
-                user_adapter::handle_user_command(&parts[1..], &client).await
+        {
+            let is_in_osc_chat = tui_module.osc_state.lock().unwrap().is_in_chat_mode;
+            if is_in_osc_chat {
+                if tui_module.handle_osc_chat_line(&line, &client).await {
+                    continue;
+                }
             }
-            "platform" => {
-                use maowbot_tui::commands::platform_adapter;
-                platform_adapter::handle_platform_command(&parts[1..], &client).await
-            }
-            "ttv" => {
-                use maowbot_tui::commands::ttv_simple_adapter;
-                ttv_simple_adapter::handle_ttv_command(&parts[1..], &client).await
-            }
-            "discord" => {
-                use maowbot_tui::commands::discord_adapter;
-                discord_adapter::handle_discord_command(&parts[1..], &client).await
-            }
-            "command" => {
-                use maowbot_tui::commands::command_adapter;
-                command_adapter::handle_command_command(&parts[1..], &client).await
-            }
-            "redeem" => {
-                use maowbot_tui::commands::redeem_adapter;
-                redeem_adapter::handle_redeem_command(&parts[1..], &client).await
-            }
-            "test_grpc" => {
-                use maowbot_tui::commands::test_grpc;
-                test_grpc::handle_test_grpc_command(&parts[1..]).await
-            }
-            "quit" => break,
-            "help" => {
-                "Available commands:\n  \
-                user <add|remove|edit|info|search|list>\n  \
-                platform <add|remove|list|show>\n  \
-                ttv <msg|join|part|info|follow|stream|ban|unban>\n  \
-                discord <liverole|guilds|channels|send|member|members>\n  \
-                command <list|enable|disable|setcooldown|setwarnonce>\n  \
-                redeem <list|info|add|enable|pause|setcost|sync>\n  \
-                test_grpc\n  \
-                quit".to_string()
-            }
-            _ => format!("Unknown command '{}'. Type 'help' for usage.", parts[0]),
-        };
+        }
 
-        println!("{}", output);
+        // Otherwise, interpret line as a command
+        let (quit_requested, output) = dispatch_grpc(&line, &client, &tui_module).await;
+        
+        if let Some(msg) = output {
+            println!("{}", msg);
+        }
+        
+        if quit_requested {
+            break;
+        }
     }
 
     println!("Goodbye!");

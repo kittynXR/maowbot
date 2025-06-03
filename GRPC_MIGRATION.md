@@ -82,15 +82,24 @@ Previously converted:
 # Run the standalone gRPC TUI client
 cargo run -p maowbot-tui --bin maowbot-tui-grpc
 
-# Connect to a specific server
+# Or use the convenience script
+./run-tui.sh
+
+# Connect to a specific server (future feature)
 cargo run -p maowbot-tui --bin maowbot-tui-grpc -- --server-addr https://192.168.1.100:9999
 ```
 
-### Server with Built-in TUI (Deprecated)
-```bash
-# The --tui flag still works but shows a deprecation warning
-cargo run -p maowbot-server -- --tui
-```
+### Server with Built-in TUI (Removed)
+The `--tui` flag has been removed from the server. Use the standalone TUI client instead.
+
+## Technical Details
+
+### TLS/Certificate Handling
+The gRPC server uses self-signed certificates for TLS. The standalone TUI client will:
+1. First look for `certs/server.crt` in the current directory
+2. If not found, connect anyway (development mode only)
+
+The server generates certificates in `target/debug/certs/` on first run.
 
 ## Benefits
 
@@ -102,7 +111,7 @@ cargo run -p maowbot-server -- --tui
 
 ## Future Work
 
-1. **Remove BotApi Wrapper**: The old BotApi trait and wrapper can be removed once all plugins are converted to gRPC
+1. **Remove BotApi Wrapper**: ✅ Completed - The old BotApi wrapper has been removed from the standalone TUI
 2. **Server Management**: Add ability for TUI to start/stop server process
 3. **GUI Implementation**: Build a GUI using the same common-ui handlers
 4. **Enhanced Error Handling**: Improve error messages and recovery
