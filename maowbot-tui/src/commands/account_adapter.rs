@@ -128,19 +128,19 @@ pub async fn handle_account_command(args: &[&str], client: &GrpcClient) -> Strin
                     }
                     
                     if platform == Platform::TwitchHelix && !is_bot {
-                        println!("\nBecause this is a non-bot Twitch account, also create matching:\n - twitch-irc\n - twitch-eventsub\n");
+                        println!("\nBecause this is a non-bot TwitchHelix account, also create matching:\n - TwitchIrc\n - TwitchEventSub\n");
                         
-                        // Create twitch-irc
+                        // Create TwitchIrc
                         if let Ok(irc_id) = oauth_add_flow(client, Platform::TwitchIrc, user_id.clone(), false).await {
                             let _ = update_credential_flags(client, &irc_id, false, is_broadcaster, is_teammate).await;
-                            println!("Created twitch-irc credentials.\n");
+                            println!("Created TwitchIrc credentials.\n");
                         }
                         
-                        // Create twitch-eventsub (reusing helix tokens)
+                        // Create TwitchEventSub (reusing helix tokens)
                         if let Err(e) = reuse_twitch_helix_for_eventsub(client, user_id.clone()).await {
-                            println!("(Warning) Could not create twitch-eventsub => {}", e);
+                            println!("(Warning) Could not create TwitchEventSub => {}", e);
                         } else {
-                            println!("Created twitch-eventsub credentials.\n");
+                            println!("Created TwitchEventSub credentials.\n");
                         }
                         
                         // If broadcaster, set redeem active_credential_id
@@ -830,12 +830,12 @@ async fn reuse_twitch_helix_for_eventsub(
 
 fn parse_platform(platform_str: &str) -> Result<Platform, String> {
     match platform_str.to_lowercase().as_str() {
-        "twitch" | "twitch-helix" => Ok(Platform::TwitchHelix),
-        "twitch-irc" => Ok(Platform::TwitchIrc),
-        "twitch-eventsub" => Ok(Platform::TwitchEventsub),
+        "twitch" | "twitch-helix" | "twitchhelix" => Ok(Platform::TwitchHelix),
+        "twitch-irc" | "twitchirc" => Ok(Platform::TwitchIrc),
+        "twitch-eventsub" | "twitcheventsub" => Ok(Platform::TwitchEventsub),
         "discord" => Ok(Platform::Discord),
         "vrchat" => Ok(Platform::Vrchat),
-        "vrchat-pipeline" => Ok(Platform::VrchatPipeline),
+        "vrchat-pipeline" | "vrchatpipeline" => Ok(Platform::VrchatPipeline),
         _ => Err(format!("Unknown platform '{}'", platform_str)),
     }
 }

@@ -156,7 +156,7 @@ async fn handle_platform_add(plat: i32, client: &GrpcClient) -> String {
                         println!("(Warning) could not create 'twitch-eventsub': {}", e)
                     });
                     
-                    msg.push_str("\nAlso created configs for twitch-irc and twitch-eventsub.");
+                    msg.push_str("\nAlso created configs for TwitchIrc and TwitchEventSub.");
                 }
                 
                 msg
@@ -264,7 +264,7 @@ async fn platform_show(plat: i32, client: &GrpcClient) -> String {
 // Helper functions
 fn parse_platform(s: &str) -> Result<i32, String> {
     let plat = match s.to_lowercase().as_str() {
-        "twitch" | "twitch-helix" => 6, // PLATFORM_TWITCH_HELIX
+        "twitch" | "twitch-helix" | "twitchhelix" => 6, // PLATFORM_TWITCH_HELIX
         "twitch-irc" | "twitchirc" => 1, // PLATFORM_TWITCH_IRC
         "twitch-eventsub" | "twitcheventsub" => 2, // PLATFORM_TWITCH_EVENTSUB
         "discord" => 3, // PLATFORM_DISCORD
@@ -277,26 +277,26 @@ fn parse_platform(s: &str) -> Result<i32, String> {
 
 fn format_platform(plat: i32) -> String {
     match plat {
-        0 => "unknown",
-        6 => "twitch",
-        1 => "twitch-irc",
-        2 => "twitch-eventsub",
-        3 => "discord",
-        4 => "vrchat",
-        5 => "vrchat-pipeline",
-        _ => "unknown",
+        0 => "Unknown",
+        6 => "TwitchHelix",
+        1 => "TwitchIrc",
+        2 => "TwitchEventSub",
+        3 => "Discord",
+        4 => "VRChat",
+        5 => "VRChatPipeline",
+        _ => "Unknown",
     }.to_string()
 }
 
 fn format_platform_str(plat: &str) -> String {
     match plat {
-        "0" => "unknown",
-        "6" => "twitch",
-        "1" => "twitch-irc",
-        "2" => "twitch-eventsub",
-        "3" => "discord",
-        "4" => "vrchat",
-        "5" => "vrchat-pipeline",
-        _ => "unknown",
+        "0" => "Unknown",
+        "6" => "TwitchHelix",
+        "1" => "TwitchIrc",
+        "2" => "TwitchEventSub",
+        "3" => "Discord",
+        "4" => "VRChat",
+        "5" => "VRChatPipeline",
+        _ => plat,
     }.to_string()
 }

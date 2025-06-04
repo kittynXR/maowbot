@@ -6,6 +6,19 @@ use maowbot_proto::maowbot::services::{
 };
 use maowbot_proto::maowbot::common::Platform;
 
+/// Convert Platform enum to user-friendly string
+fn platform_to_display_string(platform: Platform) -> &'static str {
+    match platform {
+        Platform::TwitchHelix => "TwitchHelix",
+        Platform::TwitchIrc => "TwitchIrc",
+        Platform::TwitchEventsub => "TwitchEventSub",
+        Platform::Discord => "Discord",
+        Platform::Vrchat => "VRChat",
+        Platform::VrchatPipeline => "VRChatPipeline",
+        Platform::Unknown => "Unknown",
+    }
+}
+
 /// Result of adding an account
 pub struct AddAccountResult {
     pub message: String,
@@ -168,7 +181,7 @@ impl AccountCommands {
                 } else { 
                     user.global_username 
                 },
-                platform: format!("{:?}", Platform::try_from(cred.platform).unwrap_or(Platform::Unknown)),
+                platform: platform_to_display_string(Platform::try_from(cred.platform).unwrap_or(Platform::Unknown)).to_string(),
                 is_bot: cred.is_bot,
                 credential_id: cred.credential_id,
                 user_id: cred.user_id,
@@ -220,7 +233,7 @@ impl AccountCommands {
         let credential = credential_info.map(|info| {
             let cred = info.credential.unwrap_or_default();
             CredentialDetail {
-                platform: format!("{:?}", Platform::try_from(cred.platform).unwrap_or(Platform::Unknown)),
+                platform: platform_to_display_string(Platform::try_from(cred.platform).unwrap_or(Platform::Unknown)).to_string(),
                 user_id: cred.user_id,
                 is_bot: cred.is_bot,
                 is_active: cred.is_active,
@@ -361,12 +374,12 @@ impl AccountCommands {
 
 fn parse_platform(platform_str: &str) -> Result<Platform, CommandError> {
     match platform_str.to_lowercase().as_str() {
-        "twitch" | "twitch-helix" => Ok(Platform::TwitchHelix),
-        "twitch-irc" => Ok(Platform::TwitchIrc),
-        "twitch-eventsub" => Ok(Platform::TwitchEventsub),
+        "twitch" | "twitch-helix" | "twitchhelix" => Ok(Platform::TwitchHelix),
+        "twitch-irc" | "twitchirc" => Ok(Platform::TwitchIrc),
+        "twitch-eventsub" | "twitcheventsub" => Ok(Platform::TwitchEventsub),
         "discord" => Ok(Platform::Discord),
         "vrchat" => Ok(Platform::Vrchat),
-        "vrchat-pipeline" => Ok(Platform::VrchatPipeline),
+        "vrchat-pipeline" | "vrchatpipeline" => Ok(Platform::VrchatPipeline),
         _ => Err(CommandError::InvalidInput(format!("Unknown platform '{}'", platform_str))),
     }
 }

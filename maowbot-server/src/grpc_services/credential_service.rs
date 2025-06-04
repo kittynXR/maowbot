@@ -18,9 +18,9 @@ use maowbot_common::traits::repository_traits::CredentialsRepository;
 use std::sync::Arc;
 use std::str::FromStr;
 use std::collections::HashMap;
-use uuid::Uuid;
 use chrono::Utc;
-use tracing::{info, error, debug};
+use uuid::Uuid;
+use tracing::{info, debug};
 
 pub struct CredentialServiceImpl {
     auth_manager: Arc<Mutex<AuthManager>>,
@@ -394,9 +394,50 @@ impl CredentialService for CredentialServiceImpl {
                 was_updated: true,
             }))
         } else {
-            // For new credentials, we can't really create them from scratch
-            // They should be created through the auth flow
-            Err(Status::invalid_argument("Cannot create new credentials through store_credential. Use auth flow instead."))
+            // Special case: EventSub credentials can be created by copying from Helix
+            if platform_internal == maowbot_common::models::platform::Platform::TwitchEventSub {
+                // Look for existing Helix credential for this user
+                let helix_cred = self.credential_repo
+                    .get_credentials(&maowbot_common::models::platform::Platform::Twitch, user_id)
+                    .await
+                    .map_err(|e| Status::internal(format!("Failed to get Helix credential: {}", e)))?;
+                    
+                if let Some(helix) = helix_cred {
+                    // Create EventSub credential based on Helix
+                    let eventsub_cred = Credential {
+                        credential_id,
+                        platform: platform_internal,
+                        platform_id: helix.platform_id.clone(),
+                        credential_type: helix.credential_type.clone(),
+                        user_id,
+                        user_name: helix.user_name.clone(),
+                        primary_token: helix.primary_token.clone(),
+                        refresh_token: helix.refresh_token.clone(),
+                        additional_data: helix.additional_data.clone(),
+                        expires_at: helix.expires_at,
+                        created_at: Utc::now(),
+                        updated_at: Utc::now(),
+                        is_bot: cred_proto.is_bot,
+                        is_broadcaster: cred_proto.is_broadcaster,
+                        is_teammate: cred_proto.is_teammate,
+                    };
+                    
+                    self.credential_repo
+                        .store_credentials(&eventsub_cred)
+                        .await
+                        .map_err(|e| Status::internal(format!("Failed to create EventSub credential: {}", e)))?;
+                        
+                    Ok(Response::new(StoreCredentialResponse {
+                        credential: Some(Self::credential_to_proto(&eventsub_cred)),
+                        was_updated: false,
+                    }))
+                } else {
+                    Err(Status::failed_precondition("Cannot create EventSub credential: No Helix credential found for user"))
+                }
+            } else {
+                // For other new credentials, they should be created through the auth flow
+                Err(Status::invalid_argument("Cannot create new credentials through store_credential. Use auth flow instead."))
+            }
         }
     }
     
