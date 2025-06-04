@@ -116,14 +116,9 @@ pub async fn dispatch_grpc(
             (false, Some(msg))
         }
         
-        // Keep legacy support for now
+        // Legacy command redirects
         "autostart" | "start" | "stop" | "chat" => {
-            let msg = connectivity_adapter::handle_connectivity_command(
-                &[cmd.as_str()].iter().chain(args.iter()).map(|s| *s).collect::<Vec<_>>(),
-                client,
-                tui_module
-            ).await;
-            (false, Some(msg))
+            (false, Some(format!("The '{}' command has been merged into 'connection'.\nUse 'connection {}' instead.", cmd, cmd)))
         }
 
         "drip" => {
@@ -132,9 +127,7 @@ pub async fn dispatch_grpc(
         }
 
         "member" => {
-            // Legacy support - redirect to unified user command
-            let msg = unified_user_adapter::handle_user_command(args, client).await;
-            (false, Some(format!("Note: 'member' command is deprecated. Use 'user' instead.\n\n{}", msg)))
+            (false, Some("The 'member' command has been merged into 'user'.\nUse 'user' for all user management functionality.".to_string()))
         }
 
         "osc" => {
@@ -166,6 +159,15 @@ pub async fn dispatch_grpc(
 
         "quit" => {
             (true, Some("(TUI) shutting down...".to_string()))
+        }
+
+        // Renamed command redirects
+        "ttv" => {
+            (false, Some("The 'ttv' command has been renamed to 'twitch'.\nUse 'twitch' instead.".to_string()))
+        }
+        
+        "plug" => {
+            (false, Some("The 'plug' command has been renamed to 'plugin'.\nUse 'plugin' instead.".to_string()))
         }
 
         _ => {

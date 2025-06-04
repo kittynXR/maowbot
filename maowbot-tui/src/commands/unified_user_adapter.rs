@@ -67,7 +67,7 @@ pub async fn handle_user_command(args: &[&str], client: &GrpcClient) -> String {
                     
                     let updates = UserUpdates {
                         is_active: Some(new_active),
-                        global_username: None,
+                        username: None,
                     };
                     
                     match UserCommands::update_user(client, &user.user_id, updates).await {
@@ -93,7 +93,7 @@ pub async fn handle_user_command(args: &[&str], client: &GrpcClient) -> String {
             }
             
             // Use member info for more detailed information
-            match MemberCommands::get_member_info(client, args[1]).await {
+            match MemberCommands::get_user_info(client, args[1]).await {
                 Ok(result) => {
                     let mut output = String::new();
                     
@@ -103,16 +103,33 @@ pub async fn handle_user_command(args: &[&str], client: &GrpcClient) -> String {
                     output.push_str(&format!("  ID: {}\n", user.user_id));
                     output.push_str(&format!("  Username: {}\n", user.global_username));
                     output.push_str(&format!("  Active: {}\n", user.is_active));
-                    output.push_str(&format!("  Created: {}\n", user.created_at));
-                    output.push_str(&format!("  Updated: {}\n", user.updated_at));
+                    if let Some(created) = &user.created_at {
+                        output.push_str(&format!("  Created: {}\n", 
+                            chrono::DateTime::<chrono::Utc>::from_timestamp(created.seconds, 0)
+                                .map(|dt| dt.format("%Y-%m-%d %H:%M:%S UTC").to_string())
+                                .unwrap_or_else(|| "Invalid timestamp".to_string())
+                        ));
+                    }
+                    if let Some(last_seen) = &user.last_seen {
+                        output.push_str(&format!("  Last Seen: {}\n", 
+                            chrono::DateTime::<chrono::Utc>::from_timestamp(last_seen.seconds, 0)
+                                .map(|dt| dt.format("%Y-%m-%d %H:%M:%S UTC").to_string())
+                                .unwrap_or_else(|| "Invalid timestamp".to_string())
+                        ));
+                    }
                     
                     // Platform identities
                     if !result.identities.is_empty() {
                         output.push_str("\nPlatform Identities:\n");
                         for identity in &result.identities {
+                            let display_name = if identity.platform_display_name.is_empty() {
+                                &identity.platform_username
+                            } else {
+                                &identity.platform_display_name
+                            };
                             output.push_str(&format!("  {} - {} ({})\n", 
                                 identity.platform, 
-                                identity.platform_display_name.as_ref().unwrap_or(&identity.platform_username),
+                                display_name,
                                 identity.platform_user_id
                             ));
                         }
@@ -121,11 +138,10 @@ pub async fn handle_user_command(args: &[&str], client: &GrpcClient) -> String {
                     // User analysis
                     if let Some(analysis) = &result.analysis {
                         output.push_str(&format!("\nAnalysis:\n"));
-                        output.push_str(&format!("  Total Messages: {}\n", analysis.total_messages));
-                        output.push_str(&format!("  Commands Used: {}\n", analysis.commands_used));
-                        output.push_str(&format!("  Last Active: {}\n", analysis.last_active_at));
-                        if let Some(note) = &analysis.note {
-                            output.push_str(&format!("  Note: {}\n", note));
+                        output.push_str(&format!("  Spam Score: {:.2}\n", analysis.spam_score));
+                        output.push_str(&format!("  Quality Score: {:.2}\n", analysis.quality_score));
+                        if !analysis.moderator_notes.is_empty() {
+                            output.push_str(&format!("  Moderator Notes: {}\n", analysis.moderator_notes));
                         }
                     }
                     
@@ -137,14 +153,14 @@ pub async fn handle_user_command(args: &[&str], client: &GrpcClient) -> String {
         
         "list" => {
             let page_size = args.get(1).and_then(|s| s.parse().ok()).unwrap_or(20);
-            let page = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(0);
+            let page_token = args.get(2).map(|s| s.to_string());
             
-            match UserCommands::list_users(client, page_size, page).await {
+            match UserCommands::list_users(client, page_size, page_token, false).await {
                 Ok(result) => {
                     if result.data.users.is_empty() {
                         "No users found.".to_string()
                     } else {
-                        let mut output = format!("Users (page {}, {} per page):\n", page, page_size);
+                        let mut output = format!("Users ({} per page):\n", page_size);
                         for user in result.data.users {
                             output.push_str(&format!(
                                 "  {} - {} [{}]\n",
@@ -152,6 +168,9 @@ pub async fn handle_user_command(args: &[&str], client: &GrpcClient) -> String {
                                 user.global_username,
                                 if user.is_active { "Active" } else { "Inactive" }
                             ));
+                        }
+                        if result.data.has_more {
+                            output.push_str(&format!("\nNext page token: {}\n", result.data.next_page_token));
                         }
                         output
                     }
@@ -166,13 +185,13 @@ pub async fn handle_user_command(args: &[&str], client: &GrpcClient) -> String {
             }
             let query = args[1];
             
-            match UserCommands::search_users(client, query).await {
+            match UserCommands::search_users(client, query, 50).await {
                 Ok(result) => {
-                    if result.data.results.is_empty() {
+                    if result.data.users.is_empty() {
                         format!("No users found matching '{}'", query)
                     } else {
-                        let mut output = format!("Found {} users:\n", result.data.results.len());
-                        for user in result.data.results {
+                        let mut output = format!("Found {} users:\n", result.data.users.len());
+                        for user in result.data.users {
                             output.push_str(&format!(
                                 "  {} - {} [{}]\n",
                                 user.user_id,
@@ -202,7 +221,7 @@ pub async fn handle_user_command(args: &[&str], client: &GrpcClient) -> String {
             let identifier = args[1];
             let note_text = args[2..].join(" ");
             
-            match MemberCommands::update_user_note(client, identifier, &note_text).await {
+            match MemberCommands::add_moderator_note(client, identifier, &note_text).await {
                 Ok(_) => format!("Note updated for user '{}'", identifier),
                 Err(e) => format!("Error updating note: {}", e),
             }
@@ -215,7 +234,7 @@ pub async fn handle_user_command(args: &[&str], client: &GrpcClient) -> String {
             let primary = args[1];
             let secondary = args[2];
             
-            match MemberCommands::merge_users(client, primary, secondary).await {
+            match MemberCommands::merge_users(client, primary, secondary, None).await {
                 Ok(_) => format!("Successfully merged '{}' into '{}'", secondary, primary),
                 Err(e) => format!("Error merging users: {}", e),
             }
@@ -235,36 +254,20 @@ pub async fn handle_user_command(args: &[&str], client: &GrpcClient) -> String {
                         return "Usage: user roles add <username> <role>".to_string();
                     }
                     let role = args[3];
-                    match MemberCommands::add_user_role(client, username, role).await {
-                        Ok(_) => format!("Added role '{}' to user '{}'", role, username),
-                        Err(e) => format!("Error adding role: {}", e),
-                    }
+                    // For now, roles need platform info which isn't provided here
+                    format!("Error: Role management requires platform specification. Use 'user roles add <username> <platform> <role>'")
                 }
                 "remove" => {
                     if args.len() < 4 {
                         return "Usage: user roles remove <username> <role>".to_string();
                     }
                     let role = args[3];
-                    match MemberCommands::remove_user_role(client, username, role).await {
-                        Ok(_) => format!("Removed role '{}' from user '{}'", role, username),
-                        Err(e) => format!("Error removing role: {}", e),
-                    }
+                    // For now, roles need platform info which isn't provided here
+                    format!("Error: Role management requires platform specification. Use 'user roles remove <username> <platform> <role>'")
                 }
                 "list" => {
-                    match MemberCommands::list_user_roles(client, username).await {
-                        Ok(result) => {
-                            if result.roles.is_empty() {
-                                format!("User '{}' has no roles", username)
-                            } else {
-                                let mut output = format!("Roles for user '{}':\n", username);
-                                for role in result.roles {
-                                    output.push_str(&format!("  - {}\n", role));
-                                }
-                                output
-                            }
-                        }
-                        Err(e) => format!("Error listing roles: {}", e),
-                    }
+                    // List roles would require getting all platform identities first
+                    "Role listing not yet implemented for unified user command".to_string()
                 }
                 _ => "Usage: user roles <add|remove|list> <username> [role]".to_string(),
             }
@@ -275,21 +278,26 @@ pub async fn handle_user_command(args: &[&str], client: &GrpcClient) -> String {
                 return "Usage: user analysis <usernameOrUUID>".to_string();
             }
             
-            match MemberCommands::get_user_analysis(client, args[1]).await {
+            match MemberCommands::get_user_info(client, args[1]).await {
                 Ok(result) => {
-                    let analysis = &result.analysis;
-                    let mut output = format!("User Analysis for '{}':\n", args[1]);
-                    output.push_str(&format!("  Total Messages: {}\n", analysis.total_messages));
-                    output.push_str(&format!("  Commands Used: {}\n", analysis.commands_used));
-                    output.push_str(&format!("  Redeems Used: {}\n", analysis.redeems_used));
-                    output.push_str(&format!("  First Seen: {}\n", analysis.first_seen_at));
-                    output.push_str(&format!("  Last Active: {}\n", analysis.last_active_at));
-                    output.push_str(&format!("  Average Messages/Day: {:.2}\n", analysis.average_messages_per_day));
-                    output.push_str(&format!("  Favorite Platform: {}\n", analysis.favorite_platform));
-                    if let Some(note) = &analysis.note {
-                        output.push_str(&format!("  Note: {}\n", note));
+                    if let Some(analysis) = &result.analysis {
+                        let mut output = format!("User Analysis for '{}':\n", args[1]);
+                        output.push_str(&format!("  Spam Score: {:.2}\n", analysis.spam_score));
+                        output.push_str(&format!("  Intelligibility Score: {:.2}\n", analysis.intelligibility_score));
+                        output.push_str(&format!("  Quality Score: {:.2}\n", analysis.quality_score));
+                        output.push_str(&format!("  Horni Score: {:.2}\n", analysis.horni_score));
+                        
+                        if !analysis.ai_notes.is_empty() {
+                            output.push_str(&format!("  AI Notes: {}\n", analysis.ai_notes));
+                        }
+                        if !analysis.moderator_notes.is_empty() {
+                            output.push_str(&format!("  Moderator Notes: {}\n", analysis.moderator_notes));
+                        }
+                        
+                        output
+                    } else {
+                        format!("No analysis data available for user '{}'", args[1])
                     }
-                    output
                 }
                 Err(e) => format!("Error getting user analysis: {}", e),
             }

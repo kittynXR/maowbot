@@ -2,10 +2,8 @@
 use maowbot_common_ui::GrpcClient;
 use maowbot_proto::maowbot::services::{
     GetSystemStatusRequest, GetCredentialHealthRequest,
-    ListPlatformRuntimesRequest, ListPluginsRequest,
-    plugin_service_client::PluginServiceClient,
+    ListActiveRuntimesRequest, ListPluginsRequest,
 };
-use std::collections::HashMap;
 
 pub async fn handle_diagnostics_command(args: &[&str], client: &GrpcClient) -> String {
     if args.is_empty() {
@@ -45,14 +43,16 @@ async fn get_system_health(client: &GrpcClient) -> String {
     output.push_str("=== System Health Check ===\n\n");
     
     // Check plugin status
-    let plugin_request = GetSystemStatusRequest {};
+    let plugin_request = GetSystemStatusRequest {
+        include_metrics: true,
+    };
     let mut plugin_client = client.plugin.clone();
     
     match plugin_client.get_system_status(plugin_request).await {
         Ok(response) => {
             let status = response.into_inner();
             output.push_str(&format!("Plugin System: ✓ HEALTHY\n"));
-            output.push_str(&format!("  Connected Plugins: {}\n", status.connected_plugins));
+            output.push_str(&format!("  Total Plugins: {}\n", status.total_plugins));
             output.push_str(&format!("  Active Plugins: {}\n", status.active_plugins));
             output.push_str(&format!("  System Uptime: {}s\n", status.uptime_seconds));
         }
@@ -135,8 +135,8 @@ async fn get_detailed_status(client: &GrpcClient) -> String {
     
     // Get plugin details
     let request = ListPluginsRequest {
-        include_disabled: true,
-        page: None,
+        active_only: false,
+        include_system_plugins: true,
     };
     let mut plugin_client = client.plugin.clone();
     
@@ -146,24 +146,21 @@ async fn get_detailed_status(client: &GrpcClient) -> String {
             output.push_str(&format!("Plugins ({} total):\n", plugins.len()));
             
             for plugin in plugins {
-                let status_icon = match plugin.status {
-                    1 => "✓", // Connected
-                    2 => "◐", // Connecting
-                    3 => "✗", // Disconnected
-                    4 => "!", // Error
-                    _ => "?",
+                let plugin_data = &plugin.plugin.as_ref().unwrap();
+                let status_icon = if plugin_data.is_connected {
+                    "✓"
+                } else {
+                    "✗"
                 };
                 
                 output.push_str(&format!("  {} {} - v{}\n",
                     status_icon,
-                    plugin.name,
-                    plugin.version
+                    plugin_data.plugin_name,
+                    plugin_data.version
                 ));
                 
-                if let Some(metadata) = plugin.metadata {
-                    if let Some(author) = metadata.get("author") {
-                        output.push_str(&format!("      Author: {}\n", author));
-                    }
+                if let Some(author) = plugin_data.metadata.get("author") {
+                    output.push_str(&format!("      Author: {}\n", author));
                 }
             }
         }
@@ -193,7 +190,7 @@ async fn get_detailed_status(client: &GrpcClient) -> String {
                 if let Some(stats) = runtime.stats {
                     output.push_str(&format!("    Messages Sent: {}\n", stats.messages_sent));
                     output.push_str(&format!("    Messages Received: {}\n", stats.messages_received));
-                    output.push_str(&format!("    Errors: {}\n", stats.errors));
+                    output.push_str(&format!("    Errors: {}\n", stats.errors_count));
                 }
             }
         }
@@ -255,7 +252,9 @@ async fn run_connectivity_tests(client: &GrpcClient) -> String {
     
     // Test gRPC connection
     output.push_str("gRPC Connection: ");
-    let test_request = GetSystemStatusRequest {};
+    let test_request = GetSystemStatusRequest {
+        include_metrics: false,
+    };
     let mut plugin_client = client.plugin.clone();
     
     match plugin_client.get_system_status(test_request).await {
@@ -271,6 +270,8 @@ async fn run_connectivity_tests(client: &GrpcClient) -> String {
             page_size: 1,
             page_token: String::new(),
         }),
+        order_by: String::new(),
+        descending: false,
     };
     let mut user_client = client.user.clone();
     
