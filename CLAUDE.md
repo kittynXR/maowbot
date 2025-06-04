@@ -64,11 +64,15 @@ cargo run -p maowbot-tui --bin maowbot-tui-grpc
 4. **maowbot-common-ui**: Shared UI business logic
    - gRPC client wrapper with connection pooling
    - Command handlers that return structured data
+   - Unified tab completion system with context awareness
+   - Process manager for server and overlay control
    - Used by both TUI and future GUI applications
 
 5. **maowbot-tui**: Terminal User Interface
    - Standalone gRPC client binary: `maowbot-tui-grpc`
    - Adapters that format common-ui results for console display
+   - Modernized command structure with no legacy commands
+   - Tab completion support via rustyline
    - Can connect to local or remote servers
 
 6. **Platform Architecture**:
@@ -97,6 +101,15 @@ Tests are in `maowbot-core/tests/`:
 - Integration tests in `tests/integration/`
 - Most tests require PostgreSQL (can use `--test-threads=1` for database tests)
 
+## Recent Updates (2025-06-04)
+
+- **Command Structure**: Modernized TUI commands with consistent naming (ttv→twitch, plug→plugin)
+- **New Commands**: Added credential, connection, diagnostics, system shutdown
+- **Tab Completion**: Implemented unified completion system for all UI components
+- **Config Management**: Added import/export functionality for configuration
+- **Process Management**: Server and overlay can be controlled from TUI
+- **Graceful Shutdown**: System shutdown command works regardless of how server was started
+
 ## Development Notes
 
 - This is preproduction - APIs are unstable
@@ -104,3 +117,4 @@ Tests are in `maowbot-core/tests/`:
 - Platforms use different libraries: Twilight for Discord, twitch_api for Twitch Helix
 - VRChat uses OSC via rosc and custom OSCQuery implementation
 - Plugin development examples in `plugins/` directory
+- Documentation for recent changes in `docs/` directory
