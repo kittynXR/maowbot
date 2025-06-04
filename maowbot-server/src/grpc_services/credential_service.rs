@@ -93,7 +93,7 @@ impl CredentialService for CredentialServiceImpl {
             Platform::TwitchEventsub => "twitch-eventsub",
             Platform::Discord => "discord",
             Platform::Vrchat => "vrchat",
-            Platform::TwitchHelix => "twitch",
+            Platform::TwitchHelix => "twitch-helix",
             _ => return Err(Status::invalid_argument("Unsupported platform")),
         };
         
@@ -131,7 +131,7 @@ impl CredentialService for CredentialServiceImpl {
             Platform::TwitchEventsub => "twitch-eventsub",
             Platform::Discord => "discord",
             Platform::Vrchat => "vrchat",
-            Platform::TwitchHelix => "twitch",
+            Platform::TwitchHelix => "twitch-helix",
             _ => return Err(Status::invalid_argument("Unsupported platform")),
         };
         

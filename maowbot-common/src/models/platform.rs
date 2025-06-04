@@ -25,7 +25,7 @@ pub enum Platform {
 impl fmt::Display for Platform {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Platform::Twitch => write!(f, "twitch"),
+            Platform::Twitch => write!(f, "twitch-helix"),
             Platform::Discord => write!(f, "discord"),
             Platform::VRChat => write!(f, "vrchat"),
             Platform::TwitchIRC => write!(f, "twitch-irc"),
@@ -39,6 +39,7 @@ impl FromStr for Platform {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
             "twitch" => Ok(Platform::Twitch),
+            "twitch-helix" => Ok(Platform::Twitch),
             "discord" => Ok(Platform::Discord),
             "vrchat" => Ok(Platform::VRChat),
             "twitch-irc" => Ok(Platform::TwitchIRC),
