@@ -52,8 +52,8 @@ pub async fn handle_connection_command(
                             // Start all accounts
                             let mut results = Vec::new();
                             for account in &accounts {
-                                // Pass user_id instead of user_name (server expects user_id)
-                                match ConnectivityCommands::start_platform(client, platform, &account.user_id).await {
+                                // Pass user_name - server expects username not user_id
+                                match ConnectivityCommands::start_platform(client, platform, &account.user_name).await {
                                     Ok(result) => results.push(format!("✓ Started {} for {}", 
                                         result.platform, account.user_name)),
                                     Err(e) => results.push(format!("✗ Failed to start {} for {}: {}", 
@@ -64,8 +64,8 @@ pub async fn handle_connection_command(
                         } else if let Ok(num) = trimmed.parse::<usize>() {
                             if num > 0 && num <= accounts.len() {
                                 let selected = &accounts[num - 1];
-                                // Pass user_id instead of user_name (server expects user_id)
-                                match ConnectivityCommands::start_platform(client, platform, &selected.user_id).await {
+                                // Pass user_name - server expects username not user_id
+                                match ConnectivityCommands::start_platform(client, platform, &selected.user_name).await {
                                     Ok(result) => return format!("Started {} runtime for account {}", 
                                         result.platform, selected.user_name),
                                     Err(e) => return format!("Error starting platform: {}", e),
@@ -81,19 +81,10 @@ pub async fn handle_connection_command(
                 }
             }
             
-            // When account is specified, we need to find its user_id
-            match ConnectivityCommands::list_platform_accounts(client, platform).await {
-                Ok(accounts) => {
-                    if let Some(acc) = accounts.iter().find(|a| a.user_name == account || a.display_name == account || a.user_id == account) {
-                        match ConnectivityCommands::start_platform(client, platform, &acc.user_id).await {
-                            Ok(result) => format!("Started {} runtime for account {}", result.platform, acc.user_name),
-                            Err(e) => format!("Error starting platform: {}", e),
-                        }
-                    } else {
-                        format!("Account '{}' not found for platform {}", account, platform)
-                    }
-                }
-                Err(e) => format!("Error listing accounts: {}", e),
+            // Pass the account name directly
+            match ConnectivityCommands::start_platform(client, platform, account).await {
+                Ok(result) => format!("Started {} runtime for account {}", result.platform, result.account),
+                Err(e) => format!("Error starting platform: {}", e),
             }
         }
         
@@ -108,19 +99,10 @@ pub async fn handle_connection_command(
                 return "Please specify an account to stop.".to_string();
             }
             
-            // Find the user_id for the account
-            match ConnectivityCommands::list_platform_accounts(client, platform).await {
-                Ok(accounts) => {
-                    if let Some(acc) = accounts.iter().find(|a| a.user_name == account || a.display_name == account || a.user_id == account) {
-                        match ConnectivityCommands::stop_platform(client, platform, &acc.user_id).await {
-                            Ok(result) => format!("Stopped {} runtime for account {}", result.platform, acc.user_name),
-                            Err(e) => format!("Error stopping platform: {}", e),
-                        }
-                    } else {
-                        format!("Account '{}' not found for platform {}", account, platform)
-                    }
-                }
-                Err(e) => format!("Error listing accounts: {}", e),
+            // Pass the account name directly
+            match ConnectivityCommands::stop_platform(client, platform, account).await {
+                Ok(result) => format!("Stopped {} runtime for account {}", result.platform, result.account),
+                Err(e) => format!("Error stopping platform: {}", e),
             }
         }
         
@@ -274,6 +256,15 @@ pub async fn handle_connection_command(
             let mut output = String::new();
             output.push_str("Connection Status:\n\n");
             
+            // Create a mapping of user_id to username from active runtimes
+            // Since server returns user_id as account_name in runtimes
+            let mut user_id_to_username = std::collections::HashMap::new();
+            for cred_info in &all_credentials {
+                if let Some(cred) = &cred_info.credential {
+                    user_id_to_username.insert(cred.user_id.clone(), cred.user_name.clone());
+                }
+            }
+            
             // Group by platform
             let platforms = ["TwitchIrc", "TwitchEventSub", "Discord", "VRChat"];
             
@@ -324,19 +315,18 @@ pub async fn handle_connection_command(
                                 _ => platform_name,
                             };
                             
-                            // Get the user_id for this credential
+                            // Check if runtime is active for this account
+                            // Server might return either username or user_id as account_name
                             let user_id = &cred.user_id;
-                            
-                            // Check if runtime is active for this user_id (server returns user_id as account_name)
                             let is_running = active_runtimes.iter().any(|rt| {
                                 rt.platform == platform_runtime_name && 
-                                rt.account_name == *user_id
+                                (rt.account_name == *username || rt.account_name == *user_id)
                             });
                             
                             if is_running {
                                 let runtime = active_runtimes.iter()
                                     .find(|rt| rt.platform == platform_runtime_name && 
-                                               rt.account_name == *user_id)
+                                               (rt.account_name == *username || rt.account_name == *user_id))
                                     .unwrap();
                                 output.push_str(&format!(
                                     "  - {} ({}) [CONNECTED - {}s]\n",
