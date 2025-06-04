@@ -5,6 +5,8 @@ pub mod tui_module_simple;
 pub mod commands;
 pub mod help;
 pub mod test_harness;
+pub mod completion;
+pub mod unified_completer;
 
 pub use tui_module::TuiModule;
 pub use tui_module_simple::SimpleTuiModule;

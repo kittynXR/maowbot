@@ -6,6 +6,7 @@ pub mod state;
 pub mod events;
 pub mod settings;
 pub mod commands;
+pub mod completion;
 
 pub use chat::{ChatState, ChatMessage, ChatEvent};
 pub use grpc::SharedGrpcClient;

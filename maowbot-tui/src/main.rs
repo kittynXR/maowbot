@@ -1,9 +1,9 @@
 // Standalone TUI client using gRPC
 use maowbot_common_ui::{GrpcClient, ProcessManager};
-use maowbot_tui::{commands::dispatch_grpc, SimpleTuiModule};
-use tokio::io::{AsyncBufReadExt, BufReader};
+use maowbot_tui::{commands::dispatch_grpc, SimpleTuiModule, completion::TuiCompleter};
 use std::sync::Arc;
-use std::io::{stdout, Write};
+use rustyline::error::ReadlineError;
+use rustyline::Editor;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -38,16 +38,42 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("\nType 'help' for available commands.\n");
 
-    // Main input loop
-    let mut reader = BufReader::new(tokio::io::stdin()).lines();
+    // Initialize readline with tab completion
+    let mut rl = Editor::<TuiCompleter, _>::new()?;
+    rl.set_helper(Some(TuiCompleter::new()));
     
+    // Load history if it exists
+    let history_path = dirs::home_dir()
+        .map(|mut path| {
+            path.push(".maowbot_tui_history");
+            path
+        });
+    
+    if let Some(ref path) = history_path {
+        let _ = rl.load_history(path);
+    }
+    
+    // Main input loop
     loop {
-        print!("{}", tui_module.prompt_string());
-        stdout().flush()?;
-
-        let line = match reader.next_line().await? {
-            Some(line) => line.trim().to_string(),
-            None => break, // EOF
+        let prompt = tui_module.prompt_string();
+        
+        let line = match rl.readline(&prompt) {
+            Ok(line) => {
+                rl.add_history_entry(line.as_str())?;
+                line.trim().to_string()
+            }
+            Err(ReadlineError::Interrupted) => {
+                println!("^C");
+                continue;
+            }
+            Err(ReadlineError::Eof) => {
+                println!("^D");
+                break;
+            }
+            Err(err) => {
+                eprintln!("Error: {:?}", err);
+                break;
+            }
         };
 
         if line.is_empty() {
@@ -85,6 +111,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
+    // Save history
+    if let Some(path) = history_path {
+        let _ = rl.save_history(&path);
+    }
+    
     println!("Goodbye!");
     
     // Stop server if we started it (optional - could make this configurable)
