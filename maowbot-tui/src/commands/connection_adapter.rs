@@ -289,14 +289,23 @@ pub async fn handle_connection_command(
                             };
                             
                             // Check if this account is running
+                            // Runtime platforms come as "twitch-irc", "twitch-eventsub", etc.
+                            let platform_runtime_name = match *platform_name {
+                                "TwitchIrc" => "twitch-irc",
+                                "TwitchEventSub" => "twitch-eventsub", 
+                                "Discord" => "discord",
+                                "VRChat" => "vrchat",
+                                _ => platform_name,
+                            };
+                            
                             let is_running = active_runtimes.iter().any(|rt| {
-                                rt.platform.to_lowercase() == platform_name.to_lowercase() && 
+                                rt.platform == platform_runtime_name && 
                                 rt.account_name == *username
                             });
                             
                             if is_running {
                                 let runtime = active_runtimes.iter()
-                                    .find(|rt| rt.platform.to_lowercase() == platform_name.to_lowercase() && 
+                                    .find(|rt| rt.platform == platform_runtime_name && 
                                                rt.account_name == *username)
                                     .unwrap();
                                 output.push_str(&format!(

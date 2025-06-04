@@ -5,7 +5,7 @@ use maowbot_proto::maowbot::services::{
     JoinChannelRequest, GetConfigRequest, SetConfigRequest,
     ListCredentialsRequest, GetUserRequest,
 };
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use serde::{Serialize, Deserialize};
 
 /// Result of autostart configuration
@@ -187,13 +187,19 @@ impl ConnectivityCommands {
             
         let credentials = response.into_inner().credentials;
         
-        // Get user details for each credential
+        // Get user details for each credential and deduplicate by user_name
         let mut accounts = Vec::new();
+        let mut seen_usernames = std::collections::HashSet::new();
         let mut user_client = client.user.clone();
         
         for cred_info in credentials {
             let credential = cred_info.credential.ok_or_else(|| 
                 CommandError::DataError("Missing credential data".to_string()))?;
+            
+            // Skip if we've already seen this username
+            if !seen_usernames.insert(credential.user_name.clone()) {
+                continue;
+            }
                 
             let user_request = GetUserRequest {
                 user_id: credential.user_id.clone(),
