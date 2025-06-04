@@ -231,6 +231,7 @@ pub async fn run_server(args: Args) -> Result<(), Error> {
         .add_service(NewPluginServiceServer::new(new_plugin_service))
         .add_service(ConfigServiceServer::new(ConfigServiceImpl::new(
             ctx.bot_config_repo.clone(),
+            ctx.event_bus.clone(),
         )))
         .add_service(AiServiceServer::new(AiServiceImpl::new()))
         .add_service(CommandServiceServer::new(CommandServiceImpl::new(
@@ -317,8 +318,10 @@ pub async fn run_server(args: Args) -> Result<(), Error> {
 
     // Ensure DB logger is done
     db_logger_handle.abort();
-
-    Ok(())
+    
+    // Force exit to ensure the process terminates
+    // This is necessary when the server is started from console
+    std::process::exit(0)
 }
 
 /// Spawns the DB-logger task, returns (JoinHandle, DbLoggerControl).

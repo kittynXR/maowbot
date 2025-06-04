@@ -1,19 +1,47 @@
-use maowbot_common_ui::{ProcessManager, ProcessType};
+use maowbot_common_ui::{ProcessManager, ProcessType, GrpcClient, commands::config::ConfigCommands};
 use std::sync::Arc;
 
 pub async fn handle_system_command(
     parts: &[&str],
     process_manager: &Arc<ProcessManager>,
+    client: Option<&GrpcClient>,
 ) -> Result<String, Box<dyn std::error::Error>> {
     if parts.is_empty() {
-        return Ok("Usage: system [overlay|server] [start|stop|status]".to_string());
+        return Ok("Usage: system [overlay|server|shutdown] [start|stop|status]".to_string());
     }
 
-    let process_type = match parts[0] {
-        "overlay" => ProcessType::Overlay,
-        "server" => ProcessType::Server,
-        _ => return Ok(format!("Unknown process type: {}. Use 'overlay' or 'server'", parts[0])),
-    };
+    // Handle shutdown command
+    if parts[0] == "shutdown" {
+        if let Some(client) = client {
+            let reason = parts.get(1).map(|s| *s);
+            let grace_period = parts.get(2).and_then(|s| s.parse::<i32>().ok());
+            
+            match ConfigCommands::shutdown_server(client, reason, grace_period).await {
+                Ok(result) => {
+                    if result.accepted {
+                        let shutdown_time = result.shutdown_at
+                            .map(|dt| dt.format("%Y-%m-%d %H:%M:%S UTC").to_string())
+                            .unwrap_or_else(|| "unknown time".to_string());
+                        
+                        // Also stop overlay if it's managed by this process manager
+                        let _ = process_manager.stop(ProcessType::Overlay).await;
+                        
+                        Ok(format!("{}\nShutdown scheduled for: {}\nUI components will also be shut down.", result.message, shutdown_time))
+                    } else {
+                        Ok(format!("Shutdown request rejected: {}", result.message))
+                    }
+                }
+                Err(e) => Ok(format!("Error requesting shutdown: {}", e)),
+            }
+        } else {
+            Ok("Cannot shutdown server: not connected to gRPC service".to_string())
+        }
+    } else {
+        let process_type = match parts[0] {
+            "overlay" => ProcessType::Overlay,
+            "server" => ProcessType::Server,
+            _ => return Ok(format!("Unknown process type: {}. Use 'overlay', 'server', or 'shutdown'", parts[0])),
+        };
 
     if parts.len() < 2 {
         // Just show status
@@ -53,5 +81,6 @@ pub async fn handle_system_command(
             ))
         }
         _ => Ok(format!("Unknown command: {}. Use 'start', 'stop', or 'status'", parts[1])),
+    }
     }
 }

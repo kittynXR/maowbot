@@ -146,8 +146,12 @@ pub async fn dispatch_grpc(
         }
 
         "system" => {
-            match system::handle_system_command(args, process_manager).await {
-                Ok(msg) => (false, Some(msg)),
+            match system::handle_system_command(args, process_manager, Some(client)).await {
+                Ok(msg) => {
+                    // Check if this was a shutdown command
+                    let should_quit = args.get(0) == Some(&"shutdown") && msg.contains("Shutdown scheduled");
+                    (should_quit, Some(msg))
+                },
                 Err(e) => (false, Some(format!("System command error: {}", e))),
             }
         }

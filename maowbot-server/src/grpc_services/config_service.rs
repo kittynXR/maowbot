@@ -3,20 +3,22 @@ use maowbot_proto::maowbot::services::{config_service_server::ConfigService, *};
 use maowbot_proto::maowbot::common::CacheControl;
 use maowbot_core::repositories::postgres::bot_config::PostgresBotConfigRepository;
 use maowbot_common::traits::repository_traits::BotConfigRepository;
+use maowbot_core::eventbus::EventBus;
 use std::sync::Arc;
 use std::collections::HashMap;
 use chrono::Utc;
-use tracing::{info, error, debug};
+use tracing::{info, error, debug, warn};
 use prost_types;
 use serde_json;
 
 pub struct ConfigServiceImpl {
     bot_config_repo: Arc<PostgresBotConfigRepository>,
+    event_bus: Arc<EventBus>,
 }
 
 impl ConfigServiceImpl {
-    pub fn new(bot_config_repo: Arc<PostgresBotConfigRepository>) -> Self {
-        Self { bot_config_repo }
+    pub fn new(bot_config_repo: Arc<PostgresBotConfigRepository>, event_bus: Arc<EventBus>) -> Self {
+        Self { bot_config_repo, event_bus }
     }
     
     fn value_to_config_type(value: &str) -> ConfigType {
@@ -581,5 +583,34 @@ impl ConfigService for ConfigServiceImpl {
     type StreamConfigUpdatesStream = tonic::codec::Streaming<ConfigUpdateEvent>;
     async fn stream_config_updates(&self, _: Request<StreamConfigUpdatesRequest>) -> Result<Response<Self::StreamConfigUpdatesStream>, Status> {
         Err(Status::unimplemented("Not implemented"))
+    }
+    
+    async fn shutdown_server(&self, request: Request<ShutdownServerRequest>) -> Result<Response<ShutdownServerResponse>, Status> {
+        let req = request.into_inner();
+        let reason = if req.reason.is_empty() { "User requested shutdown" } else { &req.reason };
+        let grace_period = if req.grace_period_seconds > 0 { req.grace_period_seconds } else { 30 };
+        
+        info!("Server shutdown requested - reason: {}, grace period: {}s", reason, grace_period);
+        
+        // Get the current time + grace period
+        let shutdown_time = Utc::now() + chrono::Duration::seconds(grace_period as i64);
+        
+        // Schedule shutdown after grace period
+        let event_bus = self.event_bus.clone();
+        tokio::spawn(async move {
+            info!("Starting shutdown grace period of {} seconds", grace_period);
+            tokio::time::sleep(tokio::time::Duration::from_secs(grace_period as u64)).await;
+            info!("Grace period expired, triggering shutdown");
+            event_bus.shutdown();
+        });
+        
+        Ok(Response::new(ShutdownServerResponse {
+            accepted: true,
+            message: format!("Server shutdown scheduled in {} seconds - {}", grace_period, reason),
+            shutdown_at: Some(prost_types::Timestamp {
+                seconds: shutdown_time.timestamp(),
+                nanos: shutdown_time.timestamp_subsec_nanos() as i32,
+            }),
+        }))
     }
 }

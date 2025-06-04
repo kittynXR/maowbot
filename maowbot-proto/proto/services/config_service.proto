@@ -28,6 +28,9 @@ service ConfigService {
   
   // Streaming
   rpc StreamConfigUpdates(StreamConfigUpdatesRequest) returns (stream ConfigUpdateEvent);
+  
+  // Server Control
+  rpc ShutdownServer(ShutdownServerRequest) returns (ShutdownServerResponse);
 }
 
 // Get Config
@@ -246,4 +249,16 @@ enum ConfigUpdateType {
   CONFIG_UPDATE_TYPE_CREATED = 1;
   CONFIG_UPDATE_TYPE_UPDATED = 2;
   CONFIG_UPDATE_TYPE_DELETED = 3;
+}
+
+// Server Control
+message ShutdownServerRequest {
+  string reason = 1; // Optional reason for shutdown
+  int32 grace_period_seconds = 2; // Grace period before forceful shutdown (default 30)
+}
+
+message ShutdownServerResponse {
+  bool accepted = 1;
+  string message = 2;
+  google.protobuf.Timestamp shutdown_at = 3;
 }
