@@ -161,8 +161,16 @@ impl ConnectivityCommands {
         client: &GrpcClient,
         platform: &str,
     ) -> Result<Vec<PlatformAccountInfo>, CommandError> {
-        let platform_enum = maowbot_proto::maowbot::common::Platform::from_str_name(platform)
-            .ok_or_else(|| CommandError::InvalidInput(format!("Unknown platform: {}", platform)))?;
+        // Parse platform string to enum value
+        let platform_enum = match platform.to_lowercase().as_str() {
+            "twitch" | "twitch-helix" | "twitchhelix" => maowbot_proto::maowbot::common::Platform::TwitchHelix,
+            "twitch-irc" | "twitchirc" => maowbot_proto::maowbot::common::Platform::TwitchIrc,
+            "twitch-eventsub" | "twitcheventsub" => maowbot_proto::maowbot::common::Platform::TwitchEventsub,
+            "discord" => maowbot_proto::maowbot::common::Platform::Discord,
+            "vrchat" => maowbot_proto::maowbot::common::Platform::Vrchat,
+            "vrchat-pipeline" | "vrchatpipeline" => maowbot_proto::maowbot::common::Platform::VrchatPipeline,
+            _ => return Err(CommandError::InvalidInput(format!("Unknown platform: {}", platform))),
+        };
             
         let request = ListCredentialsRequest {
             platforms: vec![platform_enum as i32],

@@ -3,7 +3,7 @@ use maowbot_common_ui::{GrpcClient, commands::connectivity::{ConnectivityCommand
 use crate::tui_module_simple::SimpleTuiModule;
 use std::sync::Arc;
 use maowbot_proto::maowbot::services::{
-    GetConfigRequest, ListActiveRuntimesRequest,
+    GetConfigRequest, ListActiveRuntimesRequest, ListCredentialsRequest,
 };
 
 pub async fn handle_connection_command(
@@ -24,19 +24,56 @@ pub async fn handle_connection_command(
             let account = args.get(2).map(|s| *s).unwrap_or("");
             
             if account.is_empty() {
-                // List available accounts
+                // List available accounts and prompt for selection
                 match ConnectivityCommands::list_platform_accounts(client, platform).await {
                     Ok(accounts) => {
                         if accounts.is_empty() {
                             return format!("No accounts found for platform {}", platform);
                         }
-                        return format!("Please specify an account. Available accounts for {}:\n{}", 
-                            platform,
-                            accounts.iter()
-                                .map(|a| format!("  - {}", a.user_name))
-                                .collect::<Vec<_>>()
-                                .join("\n")
-                        );
+                        
+                        // Show available accounts
+                        println!("Available accounts for {}:", platform);
+                        for (idx, account) in accounts.iter().enumerate() {
+                            println!("  {}. {} ({})", idx + 1, account.user_name, account.display_name);
+                        }
+                        println!("\nEnter account number (1-{}) or press Enter to start all:", accounts.len());
+                        
+                        // Read user input
+                        use std::io::{self, Write};
+                        print!("> ");
+                        let _ = io::stdout().flush();
+                        let mut input = String::new();
+                        if let Err(e) = io::stdin().read_line(&mut input) {
+                            return format!("Error reading input: {}", e);
+                        }
+                        
+                        let trimmed = input.trim();
+                        if trimmed.is_empty() {
+                            // Start all accounts
+                            let mut results = Vec::new();
+                            for account in &accounts {
+                                match ConnectivityCommands::start_platform(client, platform, &account.user_name).await {
+                                    Ok(result) => results.push(format!("✓ Started {} for {}", 
+                                        result.platform, result.account)),
+                                    Err(e) => results.push(format!("✗ Failed to start {} for {}: {}", 
+                                        platform, account.user_name, e)),
+                                }
+                            }
+                            return results.join("\n");
+                        } else if let Ok(num) = trimmed.parse::<usize>() {
+                            if num > 0 && num <= accounts.len() {
+                                let selected = &accounts[num - 1];
+                                match ConnectivityCommands::start_platform(client, platform, &selected.user_name).await {
+                                    Ok(result) => return format!("Started {} runtime for account {}", 
+                                        result.platform, result.account),
+                                    Err(e) => return format!("Error starting platform: {}", e),
+                                }
+                            } else {
+                                return format!("Invalid selection. Please enter a number between 1 and {}.", accounts.len());
+                            }
+                        } else {
+                            return "Invalid input. Please enter a number or press Enter.".to_string();
+                        }
                     }
                     Err(e) => return format!("Error listing accounts: {}", e),
                 }
@@ -183,33 +220,102 @@ pub async fn handle_connection_command(
         }
         
         "status" => {
-            let request = maowbot_proto::maowbot::services::ListActiveRuntimesRequest {
+            // Get active runtimes
+            let runtime_request = ListActiveRuntimesRequest {
                 platforms: vec![],  // Empty means all platforms
             };
             
             let mut platform_client = client.platform.clone();
-            match platform_client.list_active_runtimes(request).await {
-                Ok(response) => {
-                    let runtimes = response.into_inner().runtimes;
-                    let mut output = "Connection Status:\n".to_string();
-                    
-                    if runtimes.is_empty() {
-                        output.push_str("  No active connections.\n");
-                    } else {
-                        for runtime in runtimes {
-                            output.push_str(&format!(
-                                "  {} - {} [Running for {}s]\n",
-                                runtime.platform,
-                                runtime.account_name,
-                                runtime.uptime_seconds
-                            ));
+            let active_runtimes = match platform_client.list_active_runtimes(runtime_request).await {
+                Ok(response) => response.into_inner().runtimes,
+                Err(e) => return format!("Error getting connection status: {}", e),
+            };
+            
+            // Get all credentials
+            let cred_request = ListCredentialsRequest {
+                platforms: vec![],  // Empty means all platforms
+                include_expired: false,
+                active_only: true,
+                page: None,
+            };
+            
+            let mut cred_client = client.credential.clone();
+            let all_credentials = match cred_client.list_credentials(cred_request).await {
+                Ok(response) => response.into_inner().credentials,
+                Err(e) => return format!("Error getting credentials: {}", e),
+            };
+            
+            let mut output = String::new();
+            output.push_str("Connection Status:\n\n");
+            
+            // Group by platform
+            let platforms = ["TwitchIrc", "TwitchEventSub", "Discord", "VRChat"];
+            
+            for platform_name in &platforms {
+                output.push_str(&format!("{}:\n", platform_name));
+                
+                // Find all credentials for this platform
+                let platform_creds: Vec<_> = all_credentials.iter()
+                    .filter(|cred_info| {
+                        if let Some(cred) = &cred_info.credential {
+                            if let Ok(plat) = maowbot_proto::maowbot::common::Platform::try_from(cred.platform) {
+                                let display_name = match plat {
+                                    maowbot_proto::maowbot::common::Platform::TwitchIrc => "TwitchIrc",
+                                    maowbot_proto::maowbot::common::Platform::TwitchEventsub => "TwitchEventSub",
+                                    maowbot_proto::maowbot::common::Platform::Discord => "Discord",
+                                    maowbot_proto::maowbot::common::Platform::Vrchat => "VRChat",
+                                    _ => return false,
+                                };
+                                display_name == *platform_name
+                            } else {
+                                false
+                            }
+                        } else {
+                            false
+                        }
+                    })
+                    .collect();
+                
+                if platform_creds.is_empty() {
+                    output.push_str("  (no credentials)\n");
+                } else {
+                    for cred_info in platform_creds {
+                        if let Some(cred) = &cred_info.credential {
+                            let username = &cred.user_name;
+                            let display_name = if let Some(user) = &cred_info.user {
+                                &user.global_username
+                            } else {
+                                username
+                            };
+                            
+                            // Check if this account is running
+                            let is_running = active_runtimes.iter().any(|rt| {
+                                rt.platform.to_lowercase() == platform_name.to_lowercase() && 
+                                rt.account_name == *username
+                            });
+                            
+                            if is_running {
+                                let runtime = active_runtimes.iter()
+                                    .find(|rt| rt.platform.to_lowercase() == platform_name.to_lowercase() && 
+                                               rt.account_name == *username)
+                                    .unwrap();
+                                output.push_str(&format!(
+                                    "  - {} ({}) [CONNECTED - {}s]\n",
+                                    username, display_name, runtime.uptime_seconds
+                                ));
+                            } else {
+                                output.push_str(&format!(
+                                    "  - {} ({}) [Available]\n",
+                                    username, display_name
+                                ));
+                            }
                         }
                     }
-                    
-                    output
                 }
-                Err(e) => format!("Error getting connection status: {}", e),
+                output.push('\n');
             }
+            
+            output
         }
         
         _ => format!("Unknown connection subcommand: {}", args[0]),
