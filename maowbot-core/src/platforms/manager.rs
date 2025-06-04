@@ -5,6 +5,7 @@ use tracing::{info, error, warn, debug};
 use tokio::sync::Mutex as AsyncMutex;
 use std::sync::Mutex;
 use twilight_cache_inmemory::InMemoryCache;
+use chrono::Utc;
 use maowbot_common::models::discord::DiscordEmbed;
 use maowbot_common::models::platform::{Platform, PlatformCredential};
 use maowbot_common::traits::platform_traits::{ChatPlatform, ConnectionStatus, PlatformIntegration};
@@ -26,6 +27,7 @@ pub struct PlatformRuntimeHandle {
     pub join_handle: JoinHandle<()>,
     pub platform: String,
     pub user_id: String,
+    pub started_at: chrono::DateTime<chrono::Utc>,
 
     pub twitch_irc_instance: Option<Arc<AsyncMutex<TwitchIrcPlatform>>>,
     pub vrchat_instance: Option<Arc<AsyncMutex<VRChatPlatform>>>,
@@ -295,6 +297,7 @@ impl PlatformManager {
             join_handle,
             platform: "discord".into(),
             user_id: user_id_str,
+            started_at: Utc::now(),
             discord_instance: Some(cloned_discord),
             twitch_irc_instance: None,
             vrchat_instance: None,
@@ -368,6 +371,7 @@ impl PlatformManager {
             join_handle,
             platform: "twitch".into(),
             user_id: user_id_str_for_handle,
+            started_at: Utc::now(),
             twitch_irc_instance: None,
             vrchat_instance: None,
             discord_instance: None,
@@ -423,6 +427,7 @@ impl PlatformManager {
             join_handle,
             platform: "vrchat".into(),
             user_id: user_id_str_for_handle,
+            started_at: Utc::now(),
             twitch_irc_instance: None,
             vrchat_instance: Some(arc_vrc),
             discord_instance: None,
@@ -490,6 +495,7 @@ impl PlatformManager {
             join_handle,
             platform: "twitch-irc".into(),
             user_id: user_id_str_for_handle,
+            started_at: Utc::now(),
             twitch_irc_instance: Some(arc_irc),
             vrchat_instance: None,
             discord_instance: None,
@@ -524,6 +530,7 @@ impl PlatformManager {
             join_handle,
             platform: "twitch-eventsub".into(),
             user_id: user_id_str_for_handle,
+            started_at: Utc::now(),
             twitch_irc_instance: None,
             vrchat_instance: None,
             discord_instance: None,

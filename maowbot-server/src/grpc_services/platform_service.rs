@@ -369,7 +369,7 @@ impl PlatformService for PlatformServiceImpl {
         let runtimes_guard = pm.active_runtimes.lock().await;
         let mut runtime_infos = Vec::new();
         
-        for ((platform, account_name), _handle) in runtimes_guard.iter() {
+        for ((platform, account_name), handle) in runtimes_guard.iter() {
             // Filter by platform if specified
             if !req.platforms.is_empty() {
                 let platform_proto = Self::platform_str_to_proto(platform);
@@ -378,12 +378,18 @@ impl PlatformService for PlatformServiceImpl {
                 }
             }
             
+            // Calculate uptime
+            let uptime_seconds = (chrono::Utc::now() - handle.started_at).num_seconds();
+            
             runtime_infos.push(RuntimeInfo {
                 runtime_id: format!("{}-{}", platform, account_name),
                 platform: platform.clone(),
                 account_name: account_name.clone(),
-                started_at: None, // TODO: Track start time
-                uptime_seconds: 0, // TODO: Calculate uptime
+                started_at: Some(prost_types::Timestamp {
+                    seconds: handle.started_at.timestamp(),
+                    nanos: handle.started_at.timestamp_subsec_nanos() as i32,
+                }),
+                uptime_seconds,
                 stats: Some(RuntimeStatistics {
                     messages_sent: 0,
                     messages_received: 0,
