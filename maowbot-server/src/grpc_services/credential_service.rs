@@ -232,11 +232,30 @@ impl CredentialService for CredentialServiceImpl {
                 .await
                 .map_err(|e| Status::internal(format!("Failed to list credentials: {}", e)))?
         } else {
-            // TODO: Filter by platforms
-            self.credential_repo
+            // Get all credentials and filter by requested platforms
+            let all_creds = self.credential_repo
                 .get_all_credentials()
                 .await
-                .map_err(|e| Status::internal(format!("Failed to list credentials: {}", e)))?
+                .map_err(|e| Status::internal(format!("Failed to list credentials: {}", e)))?;
+            
+            // Convert requested platform IDs to internal platform enums
+            let requested_platforms: Vec<maowbot_common::models::platform::Platform> = req.platforms.iter()
+                .filter_map(|&p| {
+                    match Platform::try_from(p) {
+                        Ok(Platform::TwitchIrc) => Some(maowbot_common::models::platform::Platform::TwitchIRC),
+                        Ok(Platform::TwitchEventsub) => Some(maowbot_common::models::platform::Platform::TwitchEventSub),
+                        Ok(Platform::Discord) => Some(maowbot_common::models::platform::Platform::Discord),
+                        Ok(Platform::Vrchat) => Some(maowbot_common::models::platform::Platform::VRChat),
+                        Ok(Platform::TwitchHelix) => Some(maowbot_common::models::platform::Platform::Twitch),
+                        _ => None,
+                    }
+                })
+                .collect();
+            
+            // Filter credentials by platform
+            all_creds.into_iter()
+                .filter(|cred| requested_platforms.contains(&cred.platform))
+                .collect()
         };
         
         let credential_infos: Vec<CredentialInfo> = credentials.into_iter()
