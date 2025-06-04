@@ -22,6 +22,8 @@ use super::osc_adapter;
 use super::vrchat_adapter;
 use super::credential_adapter;
 use super::connection_adapter;
+use super::unified_user_adapter;
+use super::diagnostics_adapter;
 use super::system;
 
 pub async fn dispatch_grpc(
@@ -45,7 +47,7 @@ pub async fn dispatch_grpc(
         }
 
         "user" => {
-            let message = user_adapter::handle_user_command(args, client).await;
+            let message = unified_user_adapter::handle_user_command(args, client).await;
             (false, Some(message))
         }
 
@@ -130,8 +132,9 @@ pub async fn dispatch_grpc(
         }
 
         "member" => {
-            let msg = member_adapter::handle_member_command(args, client).await;
-            (false, Some(msg))
+            // Legacy support - redirect to unified user command
+            let msg = unified_user_adapter::handle_user_command(args, client).await;
+            (false, Some(format!("Note: 'member' command is deprecated. Use 'user' instead.\n\n{}", msg)))
         }
 
         "osc" => {
@@ -154,6 +157,11 @@ pub async fn dispatch_grpc(
                 Ok(msg) => (false, Some(msg)),
                 Err(e) => (false, Some(format!("System command error: {}", e))),
             }
+        }
+        
+        "diagnostics" | "diag" => {
+            let msg = diagnostics_adapter::handle_diagnostics_command(args, client).await;
+            (false, Some(msg))
         }
 
         "quit" => {

@@ -14,6 +14,8 @@ pub mod help_command;
 pub mod help_redeem;
 pub mod help_credential;
 pub mod help_connection;
+pub mod help_unified_user;
+pub mod help_diagnostics;
 
 // NEW:
 pub mod help_config;
@@ -47,11 +49,11 @@ fn show_general_help() -> String {
   credential <list|refresh|revoke|health|batch-refresh> ...
     Direct credential management (tokens, expiration, health).
 
-  user <add|remove|edit|info|search|list> ...
-    Manage user records in the database.
-
-  member <info|chat|list|search|note|merge|roles> ...
-    Manage members (extended user data, merges, roles, chat logs).
+  user <add|remove|edit|info|search|list|chat|note|merge|roles|analysis> ...
+    Comprehensive user management (includes all former 'member' functionality).
+    
+  member [deprecated]
+    This command has been merged into 'user'. Use 'user' for all functionality.
 
   command <list|setcooldown|setwarnonce|setrespond|enable|disable>
     Manage built-in or custom commands, including cooldowns and response credentials.
@@ -97,6 +99,9 @@ fn show_general_help() -> String {
 
   system <server|overlay> [start|stop|status]
     Manage the MaowBot server and overlay processes.
+  
+  diagnostics <health|status|metrics|logs|test>
+    System health monitoring and troubleshooting (alias: diag).
 
   quit
     Shut down the TUI (and the entire bot).
@@ -114,8 +119,8 @@ pub fn show_command_help(command: &str) -> String {
         "autostart" | "start" | "stop" | "chat" => help_connectivity::CONNECTIVITY_HELP_TEXT.to_owned(),
         "platform" => help_platform::PLATFORM_HELP_TEXT.to_owned(),
         "plugin" => help_plugin::PLUGIN_HELP_TEXT.to_owned(),
-        "user" => help_user::USER_HELP_TEXT.to_owned(),
-        "member" => help_member::MEMBER_HELP_TEXT.to_owned(),
+        "user" => help_unified_user::UNIFIED_USER_HELP_TEXT.to_owned(),
+        "member" => "The 'member' command has been deprecated and merged into 'user'.\nUse 'help user' to see all available functionality.".to_owned(),
         "twitch" => help_twitch::TWITCH_HELP_TEXT.to_owned(),
         "vrchat" => help_vrchat::VRCHAT_HELP_TEXT.to_owned(),
         "command" => help_command::COMMAND_HELP_TEXT.to_owned(),
@@ -129,6 +134,7 @@ pub fn show_command_help(command: &str) -> String {
         "test_harness" => help_test_harness::help_test_harness(),
         "simulate" => help_simulate::help_simulate(),
         "system" => help_system::system_help().to_owned(),
+        "diagnostics" | "diag" => help_diagnostics::DIAGNOSTICS_HELP_TEXT.to_owned(),
 
         // Built-in help snippet for "list"
         "list" => {

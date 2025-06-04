@@ -39,6 +39,8 @@ pub mod osc_adapter;
 pub mod vrchat_adapter;
 pub mod credential_adapter;
 pub mod connection_adapter;
+pub mod unified_user_adapter;
+pub mod diagnostics_adapter;
 mod dispatch_grpc;
 pub mod test_harness;
 pub mod simulate;
