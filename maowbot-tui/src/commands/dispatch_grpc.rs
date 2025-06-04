@@ -6,7 +6,7 @@ use crate::tui_module_simple::SimpleTuiModule;
 // Import the new adapters
 use super::user_adapter;
 use super::platform_adapter;
-use super::ttv_adapter;
+use super::twitch_adapter;
 use super::test_grpc;
 use super::command_adapter;
 use super::discord_adapter;
@@ -20,6 +20,8 @@ use super::drip_adapter;
 use super::member_adapter;
 use super::osc_adapter;
 use super::vrchat_adapter;
+use super::credential_adapter;
+use super::connection_adapter;
 use super::system;
 
 pub async fn dispatch_grpc(
@@ -52,8 +54,8 @@ pub async fn dispatch_grpc(
             (false, Some(message))
         }
 
-        "ttv" => {
-            let msg = ttv_adapter::handle_ttv_command(args, client, tui_module).await;
+        "twitch" => {
+            let msg = twitch_adapter::handle_twitch_command(args, client, tui_module).await;
             (false, Some(msg))
         }
 
@@ -76,6 +78,11 @@ pub async fn dispatch_grpc(
             let msg = account_adapter::handle_account_command(args, client).await;
             (false, Some(msg))
         }
+        
+        "credential" => {
+            let msg = credential_adapter::handle_credential_command(args, client).await;
+            (false, Some(msg))
+        }
 
         "ai" => {
             let msg = ai_adapter::handle_ai_command(args, client).await;
@@ -87,7 +94,7 @@ pub async fn dispatch_grpc(
             (false, Some(msg))
         }
 
-        "plug" => {
+        "plugin" => {
             let msg = plugin_adapter::handle_plugin_command(args, client).await;
             (false, Some(msg))
         }
@@ -102,6 +109,12 @@ pub async fn dispatch_grpc(
             (false, Some(msg))
         }
 
+        "connection" => {
+            let msg = connection_adapter::handle_connection_command(args, client, tui_module).await;
+            (false, Some(msg))
+        }
+        
+        // Keep legacy support for now
         "autostart" | "start" | "stop" | "chat" => {
             let msg = connectivity_adapter::handle_connectivity_command(
                 &[cmd.as_str()].iter().chain(args.iter()).map(|s| *s).collect::<Vec<_>>(),

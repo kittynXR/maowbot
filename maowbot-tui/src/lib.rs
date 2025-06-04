@@ -10,4 +10,4 @@ pub use tui_module::TuiModule;
 pub use tui_module_simple::SimpleTuiModule;
 
 // Export adapters for use in main.rs
-pub use commands::{user_adapter, platform_adapter, ttv_adapter, test_grpc};
+pub use commands::{user_adapter, platform_adapter, twitch_adapter, test_grpc};

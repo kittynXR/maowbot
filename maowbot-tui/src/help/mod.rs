@@ -7,11 +7,13 @@ pub mod help_connectivity;
 pub mod help_member;
 pub mod help_platform;
 pub mod help_plugin;
-pub mod help_ttv;
+pub mod help_twitch;
 pub mod help_user;
 pub mod help_vrchat;
 pub mod help_command;
 pub mod help_redeem;
+pub mod help_credential;
+pub mod help_connection;
 
 // NEW:
 pub mod help_config;
@@ -33,7 +35,7 @@ fn show_general_help() -> String {
     Shows current uptime + connected plugins, etc.
     'status config' includes bot_config key/values.
 
-  plug <enable|disable|remove> <pluginName>
+  plugin <enable|disable|remove> <pluginName>
     Manage plugin connections or remove them from the system.
 
   platform <add|remove|list|show> ...
@@ -41,6 +43,9 @@ fn show_general_help() -> String {
 
   account <add|remove|list|show|refresh> ...
     Manage user credentials for a given platform.
+  
+  credential <list|refresh|revoke|health|batch-refresh> ...
+    Direct credential management (tokens, expiration, health).
 
   user <add|remove|edit|info|search|list> ...
     Manage user records in the database.
@@ -57,20 +62,23 @@ fn show_general_help() -> String {
   config <list|set|delete>
     Manage key-value pairs in the bot_config table.
 
+  connection <start|stop|autostart|chat|status> ...
+    Unified connection management for platforms (start, stop, autostart, chat).
+  
   autostart <on/off> <platform> <account>
-    Toggle a (platform,account) autostart on boot.
+    Toggle a (platform,account) autostart on boot. (Legacy - use 'connection')
 
   start <platform> [account]
-    Connect a platform runtime for the given user account.
+    Connect a platform runtime for the given user account. (Legacy - use 'connection')
 
   stop <platform> [account]
-    Disconnect a platform runtime for the given user account.
+    Disconnect a platform runtime for the given user account. (Legacy - use 'connection')
 
   chat <on/off> [platform] [account]
-    Enable or disable chat display in TUI (with optional filters).
+    Enable or disable chat display in TUI (with optional filters). (Legacy - use 'connection')
 
-  ttv <active|join|part|msg|chat|default> ...
-    Twitch IRC commands, e.g. 'ttv join #channel', etc.
+  twitch <active|join|part|msg|chat|default> ...
+    Twitch IRC commands, e.g. 'twitch join #channel', etc.
 
   vrchat <world|avatar|instance> ...
     VRChat integration commands.
@@ -105,13 +113,15 @@ pub fn show_command_help(command: &str) -> String {
         "ai" => help_ai::AI_HELP_TEXT.to_owned(),
         "autostart" | "start" | "stop" | "chat" => help_connectivity::CONNECTIVITY_HELP_TEXT.to_owned(),
         "platform" => help_platform::PLATFORM_HELP_TEXT.to_owned(),
-        "plug" => help_plugin::PLUGIN_HELP_TEXT.to_owned(),
+        "plugin" => help_plugin::PLUGIN_HELP_TEXT.to_owned(),
         "user" => help_user::USER_HELP_TEXT.to_owned(),
         "member" => help_member::MEMBER_HELP_TEXT.to_owned(),
-        "ttv" => help_ttv::TTV_HELP_TEXT.to_owned(),
+        "twitch" => help_twitch::TWITCH_HELP_TEXT.to_owned(),
         "vrchat" => help_vrchat::VRCHAT_HELP_TEXT.to_owned(),
         "command" => help_command::COMMAND_HELP_TEXT.to_owned(),
         "redeem" => help_redeem::REDEEM_HELP_TEXT.to_owned(),
+        "credential" => help_credential::CREDENTIAL_HELP_TEXT.to_owned(),
+        "connection" => help_connection::CONNECTION_HELP_TEXT.to_owned(),
 
         // NEW:
         "config" => help_config::CONFIG_HELP_TEXT.to_owned(),

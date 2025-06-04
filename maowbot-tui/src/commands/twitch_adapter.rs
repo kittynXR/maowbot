@@ -1,4 +1,4 @@
-// TTV (Twitch) command adapter for TUI
+// Twitch command adapter for TUI
 use maowbot_common_ui::{GrpcClient, commands::twitch::TwitchCommands};
 use crate::tui_module_simple::SimpleTuiModule;
 use std::sync::Arc;
@@ -8,13 +8,13 @@ fn require_active_account(opt: &Option<String>) -> Result<&str, String> {
     match opt.as_deref() {
         Some(a) => Ok(a),
         None => Err(
-            "No active Twitch-IRC account is set. Use 'ttv active <account>' first.".to_string()
+            "No active Twitch-IRC account is set. Use 'twitch active <account>' first.".to_string()
         ),
     }
 }
 
-/// The main 'ttv' command handler using gRPC
-pub async fn handle_ttv_command(
+/// The main 'twitch' command handler using gRPC
+pub async fn handle_twitch_command(
     args: &[&str],
     client: &GrpcClient,
     tui_module: &Arc<SimpleTuiModule>,

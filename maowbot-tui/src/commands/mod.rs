@@ -8,7 +8,7 @@ mod ai;
 mod connectivity;
 mod platform;
 mod plugin;
-mod ttv;
+mod twitch;
 mod user;
 mod vrchat;
 mod member;
@@ -23,8 +23,8 @@ pub mod test_grpc;
 pub mod user_grpc;
 pub mod user_adapter;
 pub mod platform_adapter;
-pub mod ttv_adapter;
-pub mod ttv_simple_adapter;
+pub mod twitch_adapter;
+pub mod twitch_simple_adapter;
 pub mod discord_adapter;
 pub mod command_adapter;
 pub mod redeem_adapter;
@@ -37,6 +37,8 @@ pub mod drip_adapter;
 pub mod member_adapter;
 pub mod osc_adapter;
 pub mod vrchat_adapter;
+pub mod credential_adapter;
+pub mod connection_adapter;
 mod dispatch_grpc;
 pub mod test_harness;
 pub mod simulate;
@@ -138,7 +140,7 @@ pub async fn dispatch_async(
             (false, Some(output))
         }
 
-        "plug" => {
+        "plugin" => {
             let message = plugin::handle_plugin_command(args, bot_api).await;
             (false, Some(message))
         }
@@ -173,6 +175,13 @@ pub async fn dispatch_async(
             (false, Some(msg))
         }
 
+        "connection" => {
+            let full_args = [cmd.as_str()].iter().chain(args.iter()).map(|s| *s).collect::<Vec<_>>();
+            let message = connectivity::handle_connectivity_command(&full_args[1..], bot_api, tui_module).await;
+            (false, Some(message))
+        }
+        
+        // Keep legacy support for now
         "autostart" | "start" | "stop" | "chat" => {
             let message = connectivity::handle_connectivity_command(
                 &[cmd.as_str()].iter().chain(args.iter()).map(|s| *s).collect::<Vec<_>>(),
@@ -182,8 +191,8 @@ pub async fn dispatch_async(
             (false, Some(message))
         }
 
-        "ttv" => {
-            let msg = ttv::handle_ttv_command(args, bot_api, tui_module).await;
+        "twitch" => {
+            let msg = twitch::handle_twitch_command(args, bot_api, tui_module).await;
             (false, Some(msg))
         }
 

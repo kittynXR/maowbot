@@ -8,7 +8,7 @@ use maowbot_proto::maowbot::services::{
     SearchField, ListUsersFilter,
 };
 use maowbot_proto::maowbot::common::{PageRequest, User as ProtoUser};
-// use maowbot_proto::prost_types::FieldMask;  // TODO: Fix prost_types import
+// FieldMask is not needed when update_mask is None
 use std::io::{stdin, stdout, Write};
 use uuid::Uuid;
 

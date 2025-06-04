@@ -7,16 +7,16 @@ fn require_active_account(opt: &Option<String>) -> Result<&str, String> {
     match opt.as_deref() {
         Some(a) => Ok(a),
         None => Err(
-            "No active Twitch-IRC account is set. Use 'ttv active <account>' first.".to_string()
+            "No active Twitch-IRC account is set. Use 'twitch active <account>' first.".to_string()
         ),
     }
 }
 
-/// The main 'ttv' command handler.
+/// The main 'twitch' command handler.
 ///
-/// Old subcommands like `ttv broadcaster <channel>` or `ttv secondary <account>` have been removed.
+/// Old subcommands like `twitch broadcaster <channel>` or `twitch secondary <account>` have been removed.
 /// The broadcaster is now inferred from any credential with `is_broadcaster = true`.
-pub async fn handle_ttv_command(
+pub async fn handle_twitch_command(
     args: &[&str],
     bot_api: &Arc<dyn BotApi>,
     tui_module: &Arc<TuiModule>,

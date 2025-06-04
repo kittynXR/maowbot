@@ -501,19 +501,19 @@ fn try_open_incognito(url: &str) -> Result<(), Box<dyn std::error::Error>> {
             .arg(url)
             .spawn();
         match status_chrome {
-            Ok(_) => Ok::<(), Box<dyn std::error::Error>>(()),
+            Ok(_) => return Ok(()),
             Err(_) => {
                 std::process::Command::new("chromium")
                     .arg("--incognito")
                     .arg(url)
                     .spawn()?;
-                Ok(())
+                return Ok(());
             }
-        }?;
-        return Ok(());
+        }
     }
 
     // fallback:
+    #[allow(unreachable_code)]
     Err("Incognito opening not implemented for this platform.".into())
 }
 
