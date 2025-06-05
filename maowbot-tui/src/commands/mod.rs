@@ -4,7 +4,6 @@ use crate::tui_module::TuiModule;
 use crate::help;
 
 mod account;
-mod ai;
 mod connectivity;
 mod platform;
 mod plugin;
@@ -205,8 +204,8 @@ pub async fn dispatch_async(
         }
 
         "ai" => {
-            let msg = ai::handle_ai_command(args, bot_api).await;
-            (false, Some(msg))
+            // Handled by gRPC dispatcher
+            (false, Some("AI command should be handled by gRPC dispatcher".to_string()))
         }
 
         "config" => {

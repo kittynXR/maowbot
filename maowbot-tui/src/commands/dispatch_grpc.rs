@@ -87,7 +87,7 @@ pub async fn dispatch_grpc(
         }
 
         "ai" => {
-            let msg = ai_adapter::handle_ai_command(args, client).await;
+            let msg = ai_adapter::AiAdapter::handle_command(args, client).await;
             (false, Some(msg))
         }
 

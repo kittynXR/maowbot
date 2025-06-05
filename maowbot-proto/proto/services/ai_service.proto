@@ -9,6 +9,11 @@ import "google/protobuf/struct.proto";
 import "google/protobuf/field_mask.proto";
 
 service AIService {
+  // Service Control
+  rpc EnableAI(EnableAIRequest) returns (EnableAIResponse);
+  rpc DisableAI(DisableAIRequest) returns (DisableAIResponse);
+  rpc GetAIStatus(GetAIStatusRequest) returns (GetAIStatusResponse);
+  
   // Chat Generation
   rpc GenerateChat(GenerateChatRequest) returns (GenerateChatResponse);
   rpc StreamGenerateChat(StreamGenerateChatRequest) returns (stream ChatToken);
@@ -18,6 +23,7 @@ service AIService {
   rpc GetProviderConfig(GetProviderConfigRequest) returns (GetProviderConfigResponse);
   rpc ListProviders(ListProvidersRequest) returns (ListProvidersResponse);
   rpc TestProvider(TestProviderRequest) returns (TestProviderResponse);
+  rpc ShowProviderKeys(ShowProviderKeysRequest) returns (ShowProviderKeysResponse);
   
   // Function Management
   rpc RegisterFunction(RegisterFunctionRequest) returns (google.protobuf.Empty);
@@ -442,4 +448,49 @@ message ModelPerformance {
   float success_rate = 5;
   float average_tokens_per_second = 6;
   int32 sample_count = 7;
+}
+
+// Service Control Messages
+message EnableAIRequest {
+}
+
+message EnableAIResponse {
+  bool success = 1;
+  string message = 2;
+}
+
+message DisableAIRequest {
+}
+
+message DisableAIResponse {
+  bool success = 1;
+  string message = 2;
+}
+
+message GetAIStatusRequest {
+}
+
+message GetAIStatusResponse {
+  bool enabled = 1;
+  string active_provider = 2;
+  int32 active_models_count = 3;
+  int32 active_agents_count = 4;
+  map<string, string> statistics = 5;
+}
+
+// Provider Key Display
+message ShowProviderKeysRequest {
+  string provider_name = 1; // Optional - if empty, show all
+}
+
+message ShowProviderKeysResponse {
+  repeated ProviderKeyInfo keys = 1;
+}
+
+message ProviderKeyInfo {
+  string provider_name = 1;
+  string masked_key = 2; // Shows only last 4 characters
+  string api_base = 3;
+  bool is_active = 4;
+  google.protobuf.Timestamp configured_at = 5;
 }

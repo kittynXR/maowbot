@@ -1,304 +1,229 @@
-// AI command adapter for TUI
-use maowbot_common_ui::{GrpcClient, commands::ai::AICommands};
-use std::collections::HashMap;
+use maowbot_common_ui::commands::ai::{AiCommands, AiStatusInfo, ProviderKeyDisplay, ProviderDisplay};
+use maowbot_common_ui::grpc_client::GrpcClient;
 
-pub async fn handle_ai_command(args: &[&str], client: &GrpcClient) -> String {
-    if args.is_empty() {
-        return "Usage: ai [enable|disable|status|provider|chat|function|prompt]".to_string();
+/// TUI adapter for AI commands
+pub struct AiAdapter;
+
+impl AiAdapter {
+    /// Handle AI command
+    pub async fn handle_command(args: &[&str], grpc_client: &GrpcClient) -> String {
+        if args.is_empty() {
+            return "Usage: ai [enable|disable|status|provider|configure|chat]".to_string();
+        }
+
+        let subcommand = args[0].to_lowercase();
+        match subcommand.as_str() {
+            "help" => {
+                "AI Command Usage:\n\
+                 - ai status: Show AI system status\n\
+                 - ai enable/disable: Enable or disable AI processing\n\
+                 - ai provider [list|show]: Manage AI providers\n\
+                 - ai configure [openai|anthropic]: Configure AI providers\n\
+                 - ai chat <message>: Test chat with AI".to_string()
+            },
+            
+            "enable" => {
+                let mut client = grpc_client.clone();
+                match AiCommands::enable(&mut client).await {
+                    Ok(message) => message,
+                    Err(e) => format!("Error: {}", e)
+                }
+            },
+            
+            "disable" => {
+                let mut client = grpc_client.clone();
+                match AiCommands::disable(&mut client).await {
+                    Ok(message) => message,
+                    Err(e) => format!("Error: {}", e)
+                }
+            },
+            
+            "status" => {
+                let mut client = grpc_client.clone();
+                match AiCommands::status(&mut client).await {
+                    Ok(status) => Self::format_status(status),
+                    Err(e) => format!("Error: {}", e)
+                }
+            },
+            
+            "provider" => {
+                if args.len() < 2 {
+                    return "Usage: ai provider [list|show]".to_string();
+                }
+                
+                let provider_command = args[1].to_lowercase();
+                match provider_command.as_str() {
+                    "list" => {
+                        let mut client = grpc_client.clone();
+                        match AiCommands::list_providers(&mut client, false).await {
+                            Ok(providers) => Self::format_providers(providers),
+                            Err(e) => format!("Error: {}", e)
+                        }
+                    },
+                    "show" => {
+                        let provider_name = if args.len() > 2 {
+                            Some(args[2].to_string())
+                        } else {
+                            None
+                        };
+                        
+                        let mut client = grpc_client.clone();
+                        match AiCommands::show_provider_keys(&mut client, provider_name).await {
+                            Ok(keys) => Self::format_provider_keys(keys),
+                            Err(e) => format!("Error: {}", e)
+                        }
+                    },
+                    _ => format!("Unknown provider subcommand: {}", provider_command)
+                }
+            },
+            
+            "configure" => {
+                if args.len() < 2 {
+                    return "Usage: ai configure [openai|anthropic]".to_string();
+                }
+                
+                let provider_type = args[1].to_lowercase();
+                
+                if provider_type != "openai" && provider_type != "anthropic" {
+                    return "Supported providers: openai, anthropic".to_string();
+                }
+                
+                if args.len() < 4 || args[2] != "--api-key" {
+                    return format!("Usage: ai configure {} --api-key <KEY> [--model <MODEL>] [--api-base <URL>]", provider_type).to_string();
+                }
+                
+                let mut api_key = String::new();
+                let mut model = None;
+                let mut api_base = None;
+                
+                let mut i = 2;
+                while i < args.len() {
+                    match args[i] {
+                        "--api-key" => {
+                            if i + 1 < args.len() {
+                                api_key = args[i + 1].to_string();
+                                i += 2;
+                            } else {
+                                return "Missing value for --api-key".to_string();
+                            }
+                        },
+                        "--model" => {
+                            if i + 1 < args.len() {
+                                model = Some(args[i + 1].to_string());
+                                i += 2;
+                            } else {
+                                return "Missing value for --model".to_string();
+                            }
+                        },
+                        "--api-base" => {
+                            if i + 1 < args.len() {
+                                api_base = Some(args[i + 1].to_string());
+                                i += 2;
+                            } else {
+                                return "Missing value for --api-base".to_string();
+                            }
+                        },
+                        _ => {
+                            i += 1;
+                        }
+                    }
+                }
+                
+                if api_key.is_empty() {
+                    return "API key is required".to_string();
+                }
+                
+                let mut client = grpc_client.clone();
+                match AiCommands::configure_provider(&mut client, provider_type, api_key, model, api_base).await {
+                    Ok(message) => message,
+                    Err(e) => format!("Error: {}", e)
+                }
+            },
+            
+            "chat" => {
+                if args.len() < 2 {
+                    return "Usage: ai chat <MESSAGE>".to_string();
+                }
+                
+                let message = args[1..].join(" ");
+                
+                let mut client = grpc_client.clone();
+                match AiCommands::chat(&mut client, message).await {
+                    Ok(response) => response,
+                    Err(e) => format!("Error: {}", e)
+                }
+            },
+            
+            _ => format!("Unknown AI subcommand: {}", subcommand)
+        }
     }
-
-    match args[0] {
-        "help" => {
-            "AI Command Usage:\n\
-             - ai status: Show AI system status\n\
-             - ai provider [list|configure|test]: Manage AI providers\n\
-             - ai chat <message>: Test chat with AI\n\
-             - ai function [list|register|unregister]: Manage AI functions\n\
-             - ai prompt [list|set|get]: Manage system prompts".to_string()
-        }
+    
+    /// Format status information
+    fn format_status(status: AiStatusInfo) -> String {
+        let mut result = format!("AI Status: {}\n", if status.enabled { "Enabled" } else { "Disabled" });
+        result.push_str(&format!("Active Provider: {}\n", status.active_provider));
+        result.push_str(&format!("Active Models: {}\n", status.active_models_count));
+        result.push_str(&format!("Active Agents: {}\n", status.active_agents_count));
         
-        "status" => {
-            // For now, we'll use the provider list to determine status
-            match AICommands::list_providers(client, true).await {
-                Ok(result) => {
-                    if result.providers.is_empty() {
-                        "AI Status: No providers configured".to_string()
-                    } else {
-                        let active_count = result.providers.iter().filter(|p| p.is_active).count();
-                        format!(
-                            "AI Status: {} providers configured, {} active\nActive provider: {}",
-                            result.providers.len(),
-                            active_count,
-                            if result.active_provider.is_empty() { "None" } else { &result.active_provider }
-                        )
-                    }
-                }
-                Err(e) => format!("Error checking AI status: {}", e),
+        if !status.statistics.is_empty() {
+            result.push_str("\nStatistics:\n");
+            for (key, value) in &status.statistics {
+                result.push_str(&format!("  {}: {}\n", key, value));
             }
         }
         
-        "provider" => {
-            if args.len() < 2 {
-                return "Usage: ai provider [list|configure|test]".to_string();
+        result
+    }
+    
+    /// Format provider list
+    fn format_providers(providers: Vec<ProviderDisplay>) -> String {
+        if providers.is_empty() {
+            return "No providers configured".to_string();
+        }
+        
+        let mut result = "Configured providers:\n".to_string();
+        for provider in providers {
+            result.push_str(&format!("- {} ({}):", provider.name, provider.provider_type));
+            if provider.is_active {
+                result.push_str(" [ACTIVE]");
             }
+            if provider.is_configured {
+                result.push_str(" [CONFIGURED]");
+            }
+            result.push('\n');
             
-            match args[1] {
-                "list" => {
-                    match AICommands::list_providers(client, false).await {
-                        Ok(result) => {
-                            if result.providers.is_empty() {
-                                "No providers available".to_string()
-                            } else {
-                                let mut output = "Available providers:\n".to_string();
-                                for provider in result.providers {
-                                    output.push_str(&format!(
-                                        "- {} ({}): {} {}\n",
-                                        provider.name,
-                                        provider.provider_type,
-                                        if provider.is_configured { "Configured" } else { "Not configured" },
-                                        if provider.is_active { "[Active]" } else { "" }
-                                    ));
-                                    if !provider.supported_models.is_empty() {
-                                        output.push_str(&format!("  Models: {}\n", provider.supported_models.join(", ")));
-                                    }
-                                }
-                                output
-                            }
-                        }
-                        Err(e) => format!("Error listing providers: {}", e),
-                    }
-                }
-                
-                "configure" => {
-                    if args.len() < 3 {
-                        return "Usage: ai provider configure <provider> --api-key <KEY> [--model <MODEL>] [--api-base <URL>]".to_string();
-                    }
-                    
-                    let provider_name = args[2];
-                    let mut config = HashMap::new();
-                    
-                    // Parse arguments
-                    let mut i = 3;
-                    while i < args.len() {
-                        match args[i] {
-                            "--api-key" => {
-                                if i + 1 < args.len() {
-                                    config.insert("api_key".to_string(), args[i + 1].to_string());
-                                    i += 2;
-                                } else {
-                                    return "Missing value for --api-key".to_string();
-                                }
-                            }
-                            "--model" => {
-                                if i + 1 < args.len() {
-                                    config.insert("default_model".to_string(), args[i + 1].to_string());
-                                    i += 2;
-                                } else {
-                                    return "Missing value for --model".to_string();
-                                }
-                            }
-                            "--api-base" => {
-                                if i + 1 < args.len() {
-                                    config.insert("api_base".to_string(), args[i + 1].to_string());
-                                    i += 2;
-                                } else {
-                                    return "Missing value for --api-base".to_string();
-                                }
-                            }
-                            _ => i += 1,
-                        }
-                    }
-                    
-                    if !config.contains_key("api_key") {
-                        return "API key is required (--api-key <KEY>)".to_string();
-                    }
-                    
-                    match AICommands::configure_provider(client, provider_name, config).await {
-                        Ok(result) => result.message,
-                        Err(e) => format!("Error configuring provider: {}", e),
-                    }
-                }
-                
-                "test" => {
-                    if args.len() < 3 {
-                        return "Usage: ai provider test <provider> [test message]".to_string();
-                    }
-                    
-                    let provider_name = args[2];
-                    let test_prompt = if args.len() > 3 {
-                        Some(args[3..].join(" "))
-                    } else {
-                        None
-                    };
-                    
-                    match AICommands::test_provider(client, provider_name, test_prompt.as_deref()).await {
-                        Ok(result) => {
-                            if result.success {
-                                format!(
-                                    "Provider test successful ({}ms):\n{}",
-                                    result.latency_ms,
-                                    result.response
-                                )
-                            } else {
-                                format!("Provider test failed: {}", result.response)
-                            }
-                        }
-                        Err(e) => format!("Error testing provider: {}", e),
-                    }
-                }
-                
-                _ => format!("Unknown provider subcommand: {}", args[1]),
+            if !provider.supported_models.is_empty() {
+                result.push_str(&format!("  Models: {}\n", provider.supported_models.join(", ")));
+            }
+            if !provider.capabilities.is_empty() {
+                result.push_str(&format!("  Capabilities: {}\n", provider.capabilities.join(", ")));
             }
         }
         
-        "chat" => {
-            if args.len() < 2 {
-                return "Usage: ai chat <message>".to_string();
-            }
-            
-            let message = args[1..].join(" ");
-            
-            match AICommands::generate_chat(client, &message, None).await {
-                Ok(result) => {
-                    format!(
-                        "{}\n\n[Model: {}, Tokens: {}]",
-                        result.response,
-                        result.model_used,
-                        result.tokens_used
-                    )
-                }
-                Err(e) => format!("Error: {}", e),
-            }
+        result
+    }
+    
+    /// Format provider keys display
+    fn format_provider_keys(keys: Vec<ProviderKeyDisplay>) -> String {
+        if keys.is_empty() {
+            return "No provider API keys configured".to_string();
         }
         
-        "function" => {
-            if args.len() < 2 {
-                return "Usage: ai function [list|register|unregister]".to_string();
+        let mut result = "Provider API Keys:\n".to_string();
+        for key in keys {
+            result.push_str(&format!("- {}: {}", key.provider_name, key.masked_key));
+            if key.is_active {
+                result.push_str(" [ACTIVE]");
             }
-            
-            match args[1] {
-                "list" => {
-                    match AICommands::list_functions(client, vec![]).await {
-                        Ok(result) => {
-                            if result.functions.is_empty() {
-                                "No functions registered".to_string()
-                            } else {
-                                let mut output = "Registered functions:\n".to_string();
-                                for func in result.functions {
-                                    output.push_str(&format!(
-                                        "- {}: {} {} (called {} times)\n",
-                                        func.name,
-                                        func.description,
-                                        if func.is_enabled { "[Enabled]" } else { "[Disabled]" },
-                                        func.call_count
-                                    ));
-                                }
-                                output
-                            }
-                        }
-                        Err(e) => format!("Error listing functions: {}", e),
-                    }
-                }
-                
-                "register" => {
-                    if args.len() < 4 {
-                        return "Usage: ai function register <name> <description>".to_string();
-                    }
-                    
-                    let name = args[2];
-                    let description = args[3..].join(" ");
-                    
-                    match AICommands::register_function(client, name, &description).await {
-                        Ok(_) => format!("Function '{}' registered successfully", name),
-                        Err(e) => format!("Error registering function: {}", e),
-                    }
-                }
-                
-                "unregister" => {
-                    if args.len() < 3 {
-                        return "Usage: ai function unregister <name>".to_string();
-                    }
-                    
-                    let name = args[2];
-                    
-                    match AICommands::unregister_function(client, name).await {
-                        Ok(_) => format!("Function '{}' unregistered successfully", name),
-                        Err(e) => format!("Error unregistering function: {}", e),
-                    }
-                }
-                
-                _ => format!("Unknown function subcommand: {}", args[1]),
+            if !key.api_base.is_empty() {
+                result.push_str(&format!(" (base: {})", key.api_base));
             }
+            if let Some(configured_at) = key.configured_at {
+                result.push_str(&format!(" - configured at {}", configured_at));
+            }
+            result.push('\n');
         }
         
-        "prompt" => {
-            if args.len() < 2 {
-                return "Usage: ai prompt [list|set|get]".to_string();
-            }
-            
-            match args[1] {
-                "list" => {
-                    match AICommands::list_system_prompts(client).await {
-                        Ok(result) => {
-                            if result.prompts.is_empty() {
-                                "No system prompts configured".to_string()
-                            } else {
-                                let mut output = "System prompts:\n".to_string();
-                                for prompt in result.prompts {
-                                    let is_active = prompt.prompt_id == result.active_prompt_id;
-                                    output.push_str(&format!(
-                                        "- {}: {} {}\n",
-                                        prompt.prompt_id,
-                                        if prompt.prompt.len() > 50 { 
-                                            format!("{}...", &prompt.prompt[..50]) 
-                                        } else { 
-                                            prompt.prompt.clone() 
-                                        },
-                                        if is_active { "[Active]" } else { "" }
-                                    ));
-                                }
-                                output
-                            }
-                        }
-                        Err(e) => format!("Error listing prompts: {}", e),
-                    }
-                }
-                
-                "set" => {
-                    if args.len() < 4 {
-                        return "Usage: ai prompt set <id> <prompt>".to_string();
-                    }
-                    
-                    let prompt_id = args[2];
-                    let prompt = args[3..].join(" ");
-                    
-                    match AICommands::set_system_prompt(client, prompt_id, &prompt).await {
-                        Ok(_) => format!("System prompt '{}' set successfully", prompt_id),
-                        Err(e) => format!("Error setting prompt: {}", e),
-                    }
-                }
-                
-                "get" => {
-                    if args.len() < 3 {
-                        return "Usage: ai prompt get <id>".to_string();
-                    }
-                    
-                    let prompt_id = args[2];
-                    
-                    match AICommands::get_system_prompt(client, prompt_id).await {
-                        Ok(prompt) => format!("System prompt '{}':\n{}", prompt_id, prompt),
-                        Err(e) => format!("Error getting prompt: {}", e),
-                    }
-                }
-                
-                _ => format!("Unknown prompt subcommand: {}", args[1]),
-            }
-        }
-        
-        // Note: enable/disable would require additional gRPC methods not currently in the proto
-        "enable" => "AI enable/disable is not available through gRPC yet".to_string(),
-        "disable" => "AI enable/disable is not available through gRPC yet".to_string(),
-        
-        _ => format!("Unknown AI subcommand: {}", args[0]),
+        result
     }
 }

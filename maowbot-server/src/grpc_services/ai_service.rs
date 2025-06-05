@@ -9,6 +9,7 @@ use chrono::Utc;
 use tracing::{info, error, debug};
 use prost_types;
 use serde_json;
+use maowbot_ai::plugins::ai_service::AiService as AiServicePlugin;
 
 // Helper function to convert protobuf Struct to serde_json::Value
 fn struct_to_json_value(s: &prost_types::Struct) -> serde_json::Value {
@@ -91,6 +92,99 @@ impl AiServiceImpl {
 
 #[tonic::async_trait]
 impl AiService for AiServiceImpl {
+    async fn enable_ai(&self, _request: Request<EnableAiRequest>) -> Result<Response<EnableAiResponse>, Status> {
+        info!("Enabling AI service");
+        
+        let ai_api = self.ai_api.as_ref()
+            .ok_or_else(|| Status::failed_precondition("AI service not configured"))?;
+        
+        // Get the AI service and enable it
+        match ai_api.get_ai_service() {
+            Some(service) => {
+                    match service.set_enabled(true).await {
+                        Ok(_) => Ok(Response::new(EnableAiResponse {
+                            success: true,
+                            message: "AI service enabled successfully".to_string(),
+                        })),
+                        Err(e) => Ok(Response::new(EnableAiResponse {
+                            success: false,
+                            message: format!("Failed to enable AI service: {}", e),
+                        }))
+                    }
+            },
+            None => Ok(Response::new(EnableAiResponse {
+                success: false,
+                message: "AI service is not available".to_string(),
+            })),
+        }
+    }
+    
+    async fn disable_ai(&self, _request: Request<DisableAiRequest>) -> Result<Response<DisableAiResponse>, Status> {
+        info!("Disabling AI service");
+        
+        let ai_api = self.ai_api.as_ref()
+            .ok_or_else(|| Status::failed_precondition("AI service not configured"))?;
+        
+        // Get the AI service and disable it
+        match ai_api.get_ai_service() {
+            Some(service) => {
+                    match service.set_enabled(false).await {
+                        Ok(_) => Ok(Response::new(DisableAiResponse {
+                            success: true,
+                            message: "AI service disabled successfully".to_string(),
+                        })),
+                        Err(e) => Ok(Response::new(DisableAiResponse {
+                            success: false,
+                            message: format!("Failed to disable AI service: {}", e),
+                        }))
+                    }
+            },
+            None => Ok(Response::new(DisableAiResponse {
+                success: false,
+                message: "AI service is not available".to_string(),
+            })),
+        }
+    }
+    
+    async fn get_ai_status(&self, _request: Request<GetAiStatusRequest>) -> Result<Response<GetAiStatusResponse>, Status> {
+        debug!("Getting AI service status");
+        
+        let ai_api = self.ai_api.as_ref()
+            .ok_or_else(|| Status::failed_precondition("AI service not configured"))?;
+        
+        // Get the AI service status
+        match ai_api.get_ai_service() {
+            Some(service) => {
+                    let enabled = service.is_enabled().await;
+                    let active_provider = service.get_current_provider_config().await
+                        .ok()
+                        .flatten()
+                        .map(|config| config.provider_type)
+                        .unwrap_or_else(|| "none".to_string());
+                    
+                    // Collect some statistics
+                    let mut statistics = HashMap::new();
+                    statistics.insert("uptime".to_string(), "0".to_string()); // TODO: Track uptime
+                    statistics.insert("requests_processed".to_string(), "0".to_string()); // TODO: Track requests
+                    
+                    Ok(Response::new(GetAiStatusResponse {
+                        enabled,
+                        active_provider,
+                        active_models_count: 0, // TODO: Implement model counting
+                        active_agents_count: 0, // TODO: Implement agent counting
+                        statistics,
+                    }))
+            },
+            None => Ok(Response::new(GetAiStatusResponse {
+                enabled: false,
+                active_provider: "none".to_string(),
+                active_models_count: 0,
+                active_agents_count: 0,
+                statistics: HashMap::new(),
+            })),
+        }
+    }
+    
     async fn generate_chat(&self, request: Request<GenerateChatRequest>) -> Result<Response<GenerateChatResponse>, Status> {
         let req = request.into_inner();
         debug!("Generating chat with {} messages", req.messages.len());
@@ -657,5 +751,60 @@ impl AiService for AiServiceImpl {
         Ok(Response::new(GetModelPerformanceResponse {
             models: performance_data,
         }))
+    }
+    
+    async fn show_provider_keys(&self, request: Request<ShowProviderKeysRequest>) -> Result<Response<ShowProviderKeysResponse>, Status> {
+        let req = request.into_inner();
+        info!("Showing provider keys for: {:?}", req.provider_name);
+        
+        let ai_api = self.ai_api.as_ref()
+            .ok_or_else(|| Status::failed_precondition("AI service not configured"))?;
+        
+        // Get the AI service to access provider configurations
+        match ai_api.get_ai_service() {
+            Some(service) => {
+                    let mut provider_keys = Vec::new();
+                    
+                    // Get the current provider configuration
+                    if let Ok(Some(config)) = service.get_current_provider_config().await {
+                        // Check if we should include this provider
+                        if !req.provider_name.is_empty() && config.provider_type != req.provider_name {
+                            return Ok(Response::new(ShowProviderKeysResponse {
+                                keys: vec![],
+                            }));
+                        }
+                        
+                        let provider_name = config.provider_type;
+                        
+                        // Mask the API key - show only last 4 characters
+                        let masked_key = if config.api_key.len() > 4 {
+                            format!("...{}", &config.api_key[config.api_key.len() - 4..])
+                        } else {
+                            "****".to_string()
+                        };
+                        
+                        let api_base = config.api_base.unwrap_or_default();
+                        let is_active = true; // If we have a config, it's active
+                        
+                        provider_keys.push(ProviderKeyInfo {
+                            provider_name: provider_name.clone(),
+                            masked_key,
+                            api_base,
+                            is_active,
+                            configured_at: Some(prost_types::Timestamp {
+                                seconds: Utc::now().timestamp(),
+                                nanos: 0,
+                            }),
+                        });
+                    }
+                    
+                    Ok(Response::new(ShowProviderKeysResponse {
+                        keys: provider_keys,
+                    }))
+            },
+            None => Ok(Response::new(ShowProviderKeysResponse {
+                keys: vec![],
+            })),
+        }
     }
 }

@@ -233,7 +233,14 @@ pub async fn run_server(args: Args) -> Result<(), Error> {
             ctx.bot_config_repo.clone(),
             ctx.event_bus.clone(),
         )))
-        .add_service(AiServiceServer::new(AiServiceImpl::new()))
+        .add_service(AiServiceServer::new({
+            // Get the AI API implementation from the plugin manager
+            if let Some(ref ai_api_impl) = ctx.plugin_manager.ai_api_impl {
+                AiServiceImpl::new_with_api(Arc::new(ai_api_impl.clone()))
+            } else {
+                AiServiceImpl::new()
+            }
+        }))
         .add_service(CommandServiceServer::new(CommandServiceImpl::new(
             ctx.command_repo.clone(),
             ctx.command_usage_repo.clone(),

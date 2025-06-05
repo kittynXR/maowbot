@@ -10,46 +10,46 @@ Usage:
     Shows usage for the AI command (this text).
 
   ai enable
-    Enables AI processing for trigger prefixes.
+    Enables AI processing globally for the bot.
 
   ai disable
-    Disables AI processing for trigger prefixes.
+    Disables AI processing globally for the bot.
 
   ai status
-    Shows current AI configuration including enabled status and providers.
+    Shows current AI service status including enabled state, active provider,
+    and statistics.
 
-  ai openai --api-key <KEY> [--model <MODEL>] [--api-base <URL>]
+  ai provider list
+    Lists all configured AI providers and their status.
+
+  ai provider show [NAME]
+    Shows configured API keys (masked) for all providers or a specific provider.
+
+  ai configure openai --api-key <KEY> [--model <MODEL>] [--api-base <URL>]
     Configures the OpenAI provider with the specified API key and optional model.
     Default model: gpt-4
 
-  ai anthropic --api-key <KEY> [--model <MODEL>] [--api-base <URL>]
+  ai configure anthropic --api-key <KEY> [--model <MODEL>]
     Configures the Anthropic provider with the specified API key and optional model.
     Default model: claude-3-opus-20240229
 
   ai chat <MESSAGE>
     Sends a direct message to the configured AI provider and returns the response.
 
-  ai register <FUNCTION_NAME> <DESCRIPTION>
-    Registers a new function that the AI can call with the given name and description.
-
-  ai systemprompt <PROMPT>
-    Sets the system prompt used for AI interactions.
-
-  ai addtrigger <PREFIX>
-    Adds a new trigger prefix that will activate AI processing in chat.
-
-  ai removetrigger <PREFIX>
-    Removes a trigger prefix from the list of AI triggers.
-
-  ai listtriggers
-    Lists all configured trigger prefixes.
-
 Examples:
-  ai status
-  ai openai --api-key sk-abcdef123456 --model gpt-4
-  ai anthropic --api-key sk-ant-api123456 --model claude-3-sonnet-20240229
-  ai chat What is the weather like today?
-  ai systemprompt You are a helpful AI assistant for MaowBot.
-  ai addtrigger !ai
-  ai removetrigger hey maow
+  ai enable                                       # Enable AI processing
+  ai disable                                      # Disable AI processing
+  ai status                                       # Show current AI status
+  ai provider list                                # List all providers
+  ai provider show                                # Show all API keys (masked)
+  ai provider show openai                         # Show OpenAI API key info
+  ai configure openai --api-key sk-...            # Configure OpenAI
+  ai configure anthropic --api-key sk-ant-...     # Configure Anthropic
+  ai chat "Hello, how are you?"                  # Test chat
+
+Notes:
+  - API keys are stored securely and only shown masked (last 4 chars visible)
+  - You must configure at least one provider before using AI features
+  - The AI service must be enabled for AI features to work
+  - Custom API bases are useful for using OpenAI-compatible providers
 "#;
