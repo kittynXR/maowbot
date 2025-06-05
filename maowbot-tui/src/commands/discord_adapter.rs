@@ -3,7 +3,7 @@ use maowbot_common_ui::{GrpcClient, commands::discord::DiscordCommands};
 use maowbot_proto::maowbot::services::{ListActiveRuntimesRequest, ListCredentialsRequest};
 use maowbot_proto::maowbot::common::Platform;
 
-/// Get the connected Discord account name
+/// Get the connected Discord account name by looking up the actual username
 async fn get_connected_discord_account(client: &GrpcClient) -> Result<String, String> {
     // First check if we have any active Discord runtimes
     let request = ListActiveRuntimesRequest {
@@ -21,13 +21,44 @@ async fn get_connected_discord_account(client: &GrpcClient) -> Result<String, St
         return Err("No Discord connections active. Use 'connection start discord' first.".to_string());
     }
     
-    if runtimes.len() == 1 {
-        Ok(runtimes[0].account_name.clone())
-    } else {
-        // Multiple accounts connected - return the first one for now
-        // In the future, we could prompt the user to select
-        Ok(runtimes[0].account_name.clone())
+    // Get the account_name from the runtime (might be a UUID)
+    let runtime_account_name = runtimes[0].account_name.clone();
+    
+    // Look up the actual credential to get the username
+    let cred_request = ListCredentialsRequest {
+        platforms: vec![Platform::Discord as i32],
+        active_only: true,
+        include_expired: false,
+        page: None,
+    };
+    
+    let cred_response = client.credential.clone()
+        .list_credentials(cred_request)
+        .await
+        .map_err(|e| format!("Failed to list credentials: {}", e))?;
+    
+    let credentials = cred_response.into_inner().credentials;
+    
+    // Find the credential that matches our runtime
+    for cred_info in credentials {
+        if let Some(cred) = &cred_info.credential {
+            // Check if this credential matches our runtime (by user_id or direct match)
+            if cred.user_id == runtime_account_name || 
+               (cred_info.user.as_ref().map(|u| &u.global_username) == Some(&runtime_account_name)) {
+                // Return the username if available, otherwise the user_id
+                if let Some(user) = &cred_info.user {
+                    if !user.global_username.is_empty() {
+                        return Ok(user.global_username.clone());
+                    }
+                }
+                // Fallback to user_id if no username
+                return Ok(cred.user_id.clone());
+            }
+        }
     }
+    
+    // If we couldn't find a matching credential, use the runtime account name
+    Ok(runtime_account_name)
 }
 
 /// Prompt user to select a guild from a list
