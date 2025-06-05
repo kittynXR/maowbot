@@ -279,7 +279,32 @@ pub async fn handle_discord_command(args: &[&str], client: &GrpcClient) -> Strin
                     }
                 }
                 
-                _ => "Unknown list subcommand. Use: discord list (guilds|channels|roles|members|liveroles)".to_string(),
+                "events" => {
+                    let guild_id = if args.len() > 2 { Some(args[2]) } else { None };
+                    
+                    match DiscordCommands::list_event_configs(client, guild_id).await {
+                        Ok(result) => {
+                            if result.data.configs.is_empty() {
+                                "No Discord event configs found.".to_string()
+                            } else {
+                                let mut out = String::from("Discord event configs:\n");
+                                for config in result.data.configs {
+                                    out.push_str(&format!(
+                                        " - Event: '{}', Guild: '{}', Roles: {:?}, Enabled: {}\n",
+                                        config.event_name,
+                                        config.guild_id,
+                                        config.role_ids,
+                                        config.is_enabled
+                                    ));
+                                }
+                                out
+                            }
+                        }
+                        Err(e) => format!("Error listing event configs: {}", e),
+                    }
+                }
+                
+                _ => "Unknown list subcommand. Use: discord list (guilds|channels|roles|members|liveroles|events)".to_string(),
             }
         }
         
@@ -321,34 +346,10 @@ pub async fn handle_discord_command(args: &[&str], client: &GrpcClient) -> Strin
         
         "event" => {
             if args.len() < 2 {
-                return "Usage: discord event (list|addrole|delrole) [args...]".to_string();
+                return "Usage: discord event (add|remove|addrole|delrole) [args...]".to_string();
             }
             
             match args[1].to_lowercase().as_str() {
-                "list" => {
-                    let guild_id = if args.len() > 2 { Some(args[2]) } else { None };
-                    
-                    match DiscordCommands::list_event_configs(client, guild_id).await {
-                        Ok(result) => {
-                            if result.data.configs.is_empty() {
-                                "No Discord event configs found.".to_string()
-                            } else {
-                                let mut out = String::from("Discord event configs:\n");
-                                for config in result.data.configs {
-                                    out.push_str(&format!(
-                                        " - Event: '{}', Guild: '{}', Roles: {:?}, Enabled: {}\n",
-                                        config.event_name,
-                                        config.guild_id,
-                                        config.role_ids,
-                                        config.is_enabled
-                                    ));
-                                }
-                                out
-                            }
-                        }
-                        Err(e) => format!("Error listing event configs: {}", e),
-                    }
-                }
                 "add" => {
                     if args.len() < 4 {
                         return "Usage: discord event add <eventName> <channelId> [guildId]".to_string();
@@ -404,14 +405,28 @@ pub async fn handle_discord_command(args: &[&str], client: &GrpcClient) -> Strin
                     }
                 }
                 "addrole" => {
-                    if args.len() < 5 {
-                        return "Usage: discord event addrole <eventName> <roleId> <guildId>".to_string();
+                    if args.len() < 4 {
+                        return "Usage: discord event addrole <eventName> <roleId> [guildId]".to_string();
                     }
                     let event_name = args[2];
                     let role_id = args[3];
-                    let guild_id = args[4];
                     
-                    match DiscordCommands::add_event_role(client, event_name, role_id, guild_id).await {
+                    let guild_id = if args.len() >= 5 {
+                        args[4].to_string()
+                    } else {
+                        // Try to auto-detect guild
+                        let account_name = match get_connected_discord_account(client).await {
+                            Ok(name) => name,
+                            Err(e) => return e,
+                        };
+                        
+                        match select_guild_interactive(client, &account_name, "event addrole").await {
+                            Ok(id) => id,
+                            Err(e) => return e,
+                        }
+                    };
+                    
+                    match DiscordCommands::add_event_role(client, event_name, role_id, &guild_id).await {
                         Ok(_) => format!("Added role {} to event '{}' in guild {}.", role_id, event_name, guild_id),
                         Err(e) => format!("Error adding role: {}", e),
                     }
@@ -428,7 +443,7 @@ pub async fn handle_discord_command(args: &[&str], client: &GrpcClient) -> Strin
                         Err(e) => format!("Error removing role: {}", e),
                     }
                 }
-                _ => "Usage: discord event (list|add|remove|addrole|delrole) [args...]".to_string(),
+                _ => "Usage: discord event (add|remove|addrole|delrole) [args...]".to_string(),
             }
         }
         
@@ -516,11 +531,11 @@ fn show_usage() -> String {
   discord list roles [guildId] - List roles (auto-detects guild if only one)
   discord list members [guildId] - List members (auto-detects guild if only one)
   discord list liveroles - List all live role configurations
+  discord list events [guildId] - List Discord event configurations
   
-  discord event list [guildId] - List Discord event configurations
   discord event add <eventName> <channelId> [guildId] - Add event configuration
   discord event remove <eventName> <channelId> [guildId] - Remove event configuration
-  discord event addrole <eventName> <roleId> <guildId> - Add role to event
+  discord event addrole <eventName> <roleId> [guildId] - Add role to event (auto-detects guild if only one)
   discord event delrole <eventName> <roleId> - Remove role from event
   
   discord liverole add <guildId> <roleId> - Set role to assign when streaming

@@ -311,7 +311,7 @@ impl DiscordService for DiscordServiceImpl {
         let configs: Vec<EventConfig> = event_configs.into_iter()
             .map(|config| EventConfig {
                 event_name: config.event_name,
-                role_ids: vec![], // TODO: Get associated role IDs
+                role_ids: config.ping_roles.unwrap_or_default(),
                 guild_id: config.guild_id,
                 is_enabled: true,
             })

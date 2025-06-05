@@ -136,9 +136,11 @@ impl TuiCommandCompletionProvider {
                         "roles".to_string(),
                         "members".to_string(),
                         "liveroles".to_string(),
+                        "events".to_string(),
                     ]),
                     ("event".to_string(), vec![
-                        "list".to_string(),
+                        "add".to_string(),
+                        "remove".to_string(),
                         "addrole".to_string(),
                         "delrole".to_string(),
                     ]),
