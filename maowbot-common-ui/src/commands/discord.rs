@@ -4,7 +4,9 @@ use maowbot_proto::maowbot::services::{
     SendDiscordMessageRequest, GetGuildRequest, ListGuildsRequest,
     GetChannelRequest, ListChannelsRequest,
     GetMemberRequest, ListMembersRequest,
-    LiveRole, Guild, Channel, Member,
+    ListRolesRequest, ListEventConfigsRequest,
+    AddEventRoleRequest, RemoveEventRoleRequest,
+    LiveRole, Guild, Channel, Member, Role, EventConfig,
 };
 
 // Result structures
@@ -43,6 +45,14 @@ pub struct GetMemberResult {
 pub struct ListMembersResult {
     pub members: Vec<Member>,
     pub has_more: bool,
+}
+
+pub struct ListRolesResult {
+    pub roles: Vec<Role>,
+}
+
+pub struct ListEventConfigsResult {
+    pub configs: Vec<EventConfig>,
 }
 
 // Command handlers
@@ -282,6 +292,94 @@ impl DiscordCommands {
                 members: resp.members,
                 has_more: resp.has_more,
             },
+            warnings: vec![],
+        })
+    }
+
+    pub async fn list_roles(
+        client: &GrpcClient,
+        account_name: &str,
+        guild_id: &str,
+    ) -> Result<CommandResult<ListRolesResult>, CommandError> {
+        let request = ListRolesRequest {
+            account_name: account_name.to_string(),
+            guild_id: guild_id.to_string(),
+        };
+
+        let response = client.discord.clone()
+            .list_roles(request)
+            .await
+            .map_err(|e| CommandError::GrpcError(e.to_string()))?;
+
+        Ok(CommandResult {
+            data: ListRolesResult {
+                roles: response.into_inner().roles,
+            },
+            warnings: vec![],
+        })
+    }
+
+    pub async fn list_event_configs(
+        client: &GrpcClient,
+        guild_id: Option<&str>,
+    ) -> Result<CommandResult<ListEventConfigsResult>, CommandError> {
+        let request = ListEventConfigsRequest {
+            guild_id: guild_id.unwrap_or("").to_string(),
+        };
+
+        let response = client.discord.clone()
+            .list_event_configs(request)
+            .await
+            .map_err(|e| CommandError::GrpcError(e.to_string()))?;
+
+        Ok(CommandResult {
+            data: ListEventConfigsResult {
+                configs: response.into_inner().configs,
+            },
+            warnings: vec![],
+        })
+    }
+
+    pub async fn add_event_role(
+        client: &GrpcClient,
+        event_name: &str,
+        role_id: &str,
+        guild_id: &str,
+    ) -> Result<CommandResult<()>, CommandError> {
+        let request = AddEventRoleRequest {
+            event_name: event_name.to_string(),
+            role_id: role_id.to_string(),
+            guild_id: guild_id.to_string(),
+        };
+
+        client.discord.clone()
+            .add_event_role(request)
+            .await
+            .map_err(|e| CommandError::GrpcError(e.to_string()))?;
+
+        Ok(CommandResult {
+            data: (),
+            warnings: vec![],
+        })
+    }
+
+    pub async fn remove_event_role(
+        client: &GrpcClient,
+        event_name: &str,
+        role_id: &str,
+    ) -> Result<CommandResult<()>, CommandError> {
+        let request = RemoveEventRoleRequest {
+            event_name: event_name.to_string(),
+            role_id: role_id.to_string(),
+        };
+
+        client.discord.clone()
+            .remove_event_role(request)
+            .await
+            .map_err(|e| CommandError::GrpcError(e.to_string()))?;
+
+        Ok(CommandResult {
+            data: (),
             warnings: vec![],
         })
     }
