@@ -321,6 +321,40 @@ impl DiscordService for DiscordServiceImpl {
             configs,
         }))
     }
+    
+    async fn add_event_config(&self, request: Request<AddEventConfigRequest>) -> Result<Response<()>, Status> {
+        let req = request.into_inner();
+        info!("Adding Discord event config: {} for guild {} channel {}", req.event_name, req.guild_id, req.channel_id);
+        
+        let credential_id = if req.credential_id.is_empty() {
+            None
+        } else {
+            Some(Uuid::parse_str(&req.credential_id)
+                .map_err(|e| Status::invalid_argument(format!("Invalid credential ID: {}", e)))?)
+        };
+        
+        self.plugin_manager.add_discord_event_config(&req.event_name, &req.guild_id, &req.channel_id, credential_id).await
+            .map_err(|e| Status::internal(format!("Failed to add event config: {}", e)))?;
+        
+        Ok(Response::new(()))
+    }
+    
+    async fn remove_event_config(&self, request: Request<RemoveEventConfigRequest>) -> Result<Response<()>, Status> {
+        let req = request.into_inner();
+        info!("Removing Discord event config: {} for guild {} channel {}", req.event_name, req.guild_id, req.channel_id);
+        
+        let credential_id = if req.credential_id.is_empty() {
+            None
+        } else {
+            Some(Uuid::parse_str(&req.credential_id)
+                .map_err(|e| Status::invalid_argument(format!("Invalid credential ID: {}", e)))?)
+        };
+        
+        self.plugin_manager.remove_discord_event_config(&req.event_name, &req.guild_id, &req.channel_id, credential_id).await
+            .map_err(|e| Status::internal(format!("Failed to remove event config: {}", e)))?;
+        
+        Ok(Response::new(()))
+    }
     async fn add_event_role(&self, request: Request<AddEventRoleRequest>) -> Result<Response<()>, Status> {
         let req = request.into_inner();
         info!("Adding event role {} for event {}", req.role_id, req.event_name);

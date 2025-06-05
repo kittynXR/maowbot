@@ -349,6 +349,60 @@ pub async fn handle_discord_command(args: &[&str], client: &GrpcClient) -> Strin
                         Err(e) => format!("Error listing event configs: {}", e),
                     }
                 }
+                "add" => {
+                    if args.len() < 4 {
+                        return "Usage: discord event add <eventName> <channelId> [guildId]".to_string();
+                    }
+                    let event_name = args[2];
+                    let channel_id = args[3];
+                    
+                    let guild_id = if args.len() >= 5 {
+                        args[4].to_string()
+                    } else {
+                        // Try to auto-detect guild
+                        let account_name = match get_connected_discord_account(client).await {
+                            Ok(name) => name,
+                            Err(e) => return e,
+                        };
+                        
+                        match select_guild_interactive(client, &account_name, "event add").await {
+                            Ok(id) => id,
+                            Err(e) => return e,
+                        }
+                    };
+                    
+                    match DiscordCommands::add_event_config(client, event_name, &guild_id, channel_id, None).await {
+                        Ok(_) => format!("Added event config: event='{}' channel='{}' guild='{}'", event_name, channel_id, guild_id),
+                        Err(e) => format!("Error adding event config: {}", e),
+                    }
+                }
+                "remove" => {
+                    if args.len() < 4 {
+                        return "Usage: discord event remove <eventName> <channelId> [guildId]".to_string();
+                    }
+                    let event_name = args[2];
+                    let channel_id = args[3];
+                    
+                    let guild_id = if args.len() >= 5 {
+                        args[4].to_string()
+                    } else {
+                        // Try to auto-detect guild
+                        let account_name = match get_connected_discord_account(client).await {
+                            Ok(name) => name,
+                            Err(e) => return e,
+                        };
+                        
+                        match select_guild_interactive(client, &account_name, "event remove").await {
+                            Ok(id) => id,
+                            Err(e) => return e,
+                        }
+                    };
+                    
+                    match DiscordCommands::remove_event_config(client, event_name, &guild_id, channel_id, None).await {
+                        Ok(_) => format!("Removed event config: event='{}' channel='{}' guild='{}'", event_name, channel_id, guild_id),
+                        Err(e) => format!("Error removing event config: {}", e),
+                    }
+                }
                 "addrole" => {
                     if args.len() < 5 {
                         return "Usage: discord event addrole <eventName> <roleId> <guildId>".to_string();
@@ -374,7 +428,7 @@ pub async fn handle_discord_command(args: &[&str], client: &GrpcClient) -> Strin
                         Err(e) => format!("Error removing role: {}", e),
                     }
                 }
-                _ => "Usage: discord event (list|addrole|delrole) [args...]".to_string(),
+                _ => "Usage: discord event (list|add|remove|addrole|delrole) [args...]".to_string(),
             }
         }
         
@@ -464,6 +518,8 @@ fn show_usage() -> String {
   discord list liveroles - List all live role configurations
   
   discord event list [guildId] - List Discord event configurations
+  discord event add <eventName> <channelId> [guildId] - Add event configuration
+  discord event remove <eventName> <channelId> [guildId] - Remove event configuration
   discord event addrole <eventName> <roleId> <guildId> - Add role to event
   discord event delrole <eventName> <roleId> - Remove role from event
   

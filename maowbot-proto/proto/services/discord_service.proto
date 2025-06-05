@@ -32,6 +32,8 @@ service DiscordService {
   
   // Event Configuration
   rpc ListEventConfigs(ListEventConfigsRequest) returns (ListEventConfigsResponse);
+  rpc AddEventConfig(AddEventConfigRequest) returns (google.protobuf.Empty);
+  rpc RemoveEventConfig(RemoveEventConfigRequest) returns (google.protobuf.Empty);
   rpc AddEventRole(AddEventRoleRequest) returns (google.protobuf.Empty);
   rpc RemoveEventRole(RemoveEventRoleRequest) returns (google.protobuf.Empty);
   
@@ -302,6 +304,20 @@ message EventConfig {
   repeated string role_ids = 2;
   string guild_id = 3;
   bool is_enabled = 4;
+}
+
+message AddEventConfigRequest {
+  string event_name = 1;
+  string guild_id = 2;
+  string channel_id = 3;
+  string credential_id = 4; // Optional - UUID as string
+}
+
+message RemoveEventConfigRequest {
+  string event_name = 1;
+  string guild_id = 2;
+  string channel_id = 3;
+  string credential_id = 4; // Optional - UUID as string
 }
 
 message AddEventRoleRequest {

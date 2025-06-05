@@ -5,6 +5,7 @@ use maowbot_proto::maowbot::services::{
     GetChannelRequest, ListChannelsRequest,
     GetMemberRequest, ListMembersRequest,
     ListRolesRequest, ListEventConfigsRequest,
+    AddEventConfigRequest, RemoveEventConfigRequest,
     AddEventRoleRequest, RemoveEventRoleRequest,
     LiveRole, Guild, Channel, Member, Role, EventConfig,
 };
@@ -336,6 +337,56 @@ impl DiscordCommands {
             data: ListEventConfigsResult {
                 configs: response.into_inner().configs,
             },
+            warnings: vec![],
+        })
+    }
+
+    pub async fn add_event_config(
+        client: &GrpcClient,
+        event_name: &str,
+        guild_id: &str,
+        channel_id: &str,
+        credential_id: Option<&str>,
+    ) -> Result<CommandResult<()>, CommandError> {
+        let request = AddEventConfigRequest {
+            event_name: event_name.to_string(),
+            guild_id: guild_id.to_string(),
+            channel_id: channel_id.to_string(),
+            credential_id: credential_id.unwrap_or("").to_string(),
+        };
+
+        client.discord.clone()
+            .add_event_config(request)
+            .await
+            .map_err(|e| CommandError::GrpcError(e.to_string()))?;
+
+        Ok(CommandResult {
+            data: (),
+            warnings: vec![],
+        })
+    }
+
+    pub async fn remove_event_config(
+        client: &GrpcClient,
+        event_name: &str,
+        guild_id: &str,
+        channel_id: &str,
+        credential_id: Option<&str>,
+    ) -> Result<CommandResult<()>, CommandError> {
+        let request = RemoveEventConfigRequest {
+            event_name: event_name.to_string(),
+            guild_id: guild_id.to_string(),
+            channel_id: channel_id.to_string(),
+            credential_id: credential_id.unwrap_or("").to_string(),
+        };
+
+        client.discord.clone()
+            .remove_event_config(request)
+            .await
+            .map_err(|e| CommandError::GrpcError(e.to_string()))?;
+
+        Ok(CommandResult {
+            data: (),
             warnings: vec![],
         })
     }
