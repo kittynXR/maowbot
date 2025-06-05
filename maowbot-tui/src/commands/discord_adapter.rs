@@ -1,8 +1,68 @@
 // Discord command adapter for TUI
 use maowbot_common_ui::{GrpcClient, commands::discord::DiscordCommands};
+use maowbot_proto::maowbot::services::{ListActiveRuntimesRequest, ListCredentialsRequest};
+use maowbot_proto::maowbot::common::Platform;
 
-// TODO: This should be configurable or obtained from a service
-const DEFAULT_DISCORD_ACCOUNT: &str = "default";
+/// Get the connected Discord account name
+async fn get_connected_discord_account(client: &GrpcClient) -> Result<String, String> {
+    // First check if we have any active Discord runtimes
+    let request = ListActiveRuntimesRequest {
+        platforms: vec![Platform::Discord as i32],
+    };
+    
+    let response = client.platform.clone()
+        .list_active_runtimes(request)
+        .await
+        .map_err(|e| format!("Failed to list active runtimes: {}", e))?;
+    
+    let runtimes = response.into_inner().runtimes;
+    
+    if runtimes.is_empty() {
+        return Err("No Discord connections active. Use 'connection start discord' first.".to_string());
+    }
+    
+    if runtimes.len() == 1 {
+        Ok(runtimes[0].account_name.clone())
+    } else {
+        // Multiple accounts connected - return the first one for now
+        // In the future, we could prompt the user to select
+        Ok(runtimes[0].account_name.clone())
+    }
+}
+
+/// Prompt user to select a guild from a list
+async fn select_guild_interactive(
+    client: &GrpcClient,
+    account_name: &str,
+    purpose: &str,
+) -> Result<String, String> {
+    // List guilds for the account
+    match DiscordCommands::list_guilds(client, account_name).await {
+        Ok(result) => {
+            let guilds = &result.data.guilds;
+            
+            if guilds.is_empty() {
+                return Err("Bot is not in any Discord guilds.".to_string());
+            }
+            
+            if guilds.len() == 1 {
+                // Only one guild, use it automatically
+                Ok(guilds[0].guild_id.clone())
+            } else {
+                // Multiple guilds - list them and ask user to specify
+                let mut msg = format!("Multiple guilds found. Please specify guild ID for {}:\n", purpose);
+                for guild in guilds {
+                    msg.push_str(&format!("  - {} (ID: {})\n", guild.name, guild.guild_id));
+                }
+                msg.push_str("\nUsage: discord list ");
+                msg.push_str(purpose);
+                msg.push_str(" <guildId>");
+                Err(msg)
+            }
+        }
+        Err(e) => Err(format!("Failed to list guilds: {}", e)),
+    }
+}
 
 pub async fn handle_discord_command(args: &[&str], client: &GrpcClient) -> String {
     if args.is_empty() {
@@ -17,12 +77,18 @@ pub async fn handle_discord_command(args: &[&str], client: &GrpcClient) -> Strin
             
             match args[1].to_lowercase().as_str() {
                 "guilds" => {
-                    match DiscordCommands::list_guilds(client, DEFAULT_DISCORD_ACCOUNT).await {
+                    // Get connected Discord account
+                    let account_name = match get_connected_discord_account(client).await {
+                        Ok(name) => name,
+                        Err(e) => return e,
+                    };
+                    
+                    match DiscordCommands::list_guilds(client, &account_name).await {
                         Ok(result) => {
                             if result.data.guilds.is_empty() {
                                 "Bot is not in any Discord guilds.".to_string()
                             } else {
-                                let mut out = String::from("Discord guilds:\n");
+                                let mut out = format!("Discord guilds ({}@discord):\n", account_name);
                                 for guild in result.data.guilds {
                                     out.push_str(&format!(
                                         " - {} (ID: {}, Members: {})\n",
@@ -39,12 +105,27 @@ pub async fn handle_discord_command(args: &[&str], client: &GrpcClient) -> Strin
                 }
                 
                 "channels" => {
-                    if args.len() < 3 {
-                        return "Usage: discord list channels <guildId>".to_string();
-                    }
-                    let guild_id = args[2];
+                    let guild_id = if args.len() >= 3 {
+                        args[2].to_string()
+                    } else {
+                        // Try to auto-detect guild
+                        let account_name = match get_connected_discord_account(client).await {
+                            Ok(name) => name,
+                            Err(e) => return e,
+                        };
+                        
+                        match select_guild_interactive(client, &account_name, "channels").await {
+                            Ok(id) => id,
+                            Err(e) => return e,
+                        }
+                    };
                     
-                    match DiscordCommands::list_channels(client, DEFAULT_DISCORD_ACCOUNT, guild_id).await {
+                    let account_name = match get_connected_discord_account(client).await {
+                        Ok(name) => name,
+                        Err(e) => return e,
+                    };
+                    
+                    match DiscordCommands::list_channels(client, &account_name, &guild_id).await {
                         Ok(result) => {
                             if result.data.channels.is_empty() {
                                 format!("No channels found in guild {}", guild_id)
@@ -66,12 +147,27 @@ pub async fn handle_discord_command(args: &[&str], client: &GrpcClient) -> Strin
                 }
                 
                 "roles" => {
-                    if args.len() < 3 {
-                        return "Usage: discord list roles <guildId>".to_string();
-                    }
-                    let guild_id = args[2];
+                    let guild_id = if args.len() >= 3 {
+                        args[2].to_string()
+                    } else {
+                        // Try to auto-detect guild
+                        let account_name = match get_connected_discord_account(client).await {
+                            Ok(name) => name,
+                            Err(e) => return e,
+                        };
+                        
+                        match select_guild_interactive(client, &account_name, "roles").await {
+                            Ok(id) => id,
+                            Err(e) => return e,
+                        }
+                    };
                     
-                    match DiscordCommands::list_roles(client, DEFAULT_DISCORD_ACCOUNT, guild_id).await {
+                    let account_name = match get_connected_discord_account(client).await {
+                        Ok(name) => name,
+                        Err(e) => return e,
+                    };
+                    
+                    match DiscordCommands::list_roles(client, &account_name, &guild_id).await {
                         Ok(result) => {
                             if result.data.roles.is_empty() {
                                 format!("No roles found in guild {}", guild_id)
@@ -92,12 +188,27 @@ pub async fn handle_discord_command(args: &[&str], client: &GrpcClient) -> Strin
                 }
                 
                 "members" => {
-                    if args.len() < 3 {
-                        return "Usage: discord list members <guildId>".to_string();
-                    }
-                    let guild_id = args[2];
+                    let guild_id = if args.len() >= 3 {
+                        args[2].to_string()
+                    } else {
+                        // Try to auto-detect guild
+                        let account_name = match get_connected_discord_account(client).await {
+                            Ok(name) => name,
+                            Err(e) => return e,
+                        };
+                        
+                        match select_guild_interactive(client, &account_name, "members").await {
+                            Ok(id) => id,
+                            Err(e) => return e,
+                        }
+                    };
                     
-                    match DiscordCommands::list_members(client, DEFAULT_DISCORD_ACCOUNT, guild_id, 50).await {
+                    let account_name = match get_connected_discord_account(client).await {
+                        Ok(name) => name,
+                        Err(e) => return e,
+                    };
+                    
+                    match DiscordCommands::list_members(client, &account_name, &guild_id, 50).await {
                         Ok(result) => {
                             if result.data.members.is_empty() {
                                 format!("No members found in guild {}", guild_id)
@@ -243,7 +354,12 @@ pub async fn handle_discord_command(args: &[&str], client: &GrpcClient) -> Strin
             let channel_id = args[1];
             let message = args[2..].join(" ");
             
-            match DiscordCommands::send_message(client, DEFAULT_DISCORD_ACCOUNT, channel_id, &message).await {
+            let account_name = match get_connected_discord_account(client).await {
+                Ok(name) => name,
+                Err(e) => return e,
+            };
+            
+            match DiscordCommands::send_message(client, &account_name, channel_id, &message).await {
                 Ok(result) => format!("Message sent (ID: {})", result.data.message_id),
                 Err(e) => format!("Error sending message: {}", e),
             }
@@ -256,7 +372,12 @@ pub async fn handle_discord_command(args: &[&str], client: &GrpcClient) -> Strin
             let guild_id = args[1];
             let user_id = args[2];
             
-            match DiscordCommands::get_member(client, DEFAULT_DISCORD_ACCOUNT, guild_id, user_id).await {
+            let account_name = match get_connected_discord_account(client).await {
+                Ok(name) => name,
+                Err(e) => return e,
+            };
+            
+            match DiscordCommands::get_member(client, &account_name, guild_id, user_id).await {
                 Ok(result) => {
                     let member = &result.data.member;
                     let mut out = format!("Discord Member Info:\n");
@@ -306,9 +427,9 @@ pub async fn handle_discord_command(args: &[&str], client: &GrpcClient) -> Strin
 fn show_usage() -> String {
     "Discord Commands:
   discord list guilds - List all Discord guilds the bot is in
-  discord list channels <guildId> - List channels in a guild
-  discord list roles <guildId> - List all role IDs and names for the specified guild
-  discord list members <guildId> - List members in a guild
+  discord list channels [guildId] - List channels (auto-detects guild if only one)
+  discord list roles [guildId] - List roles (auto-detects guild if only one)
+  discord list members [guildId] - List members (auto-detects guild if only one)
   discord list liveroles - List all live role configurations
   
   discord event list [guildId] - List Discord event configurations
