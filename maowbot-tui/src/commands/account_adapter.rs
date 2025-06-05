@@ -180,11 +180,11 @@ pub async fn handle_account_command(args: &[&str], client: &GrpcClient) -> Strin
                         out.push_str("Stored platform credentials:\n");
                         for cred in result.credentials {
                             out.push_str(&format!(
-                                " - {} ({}) platform={} is_bot={} credential_id={}\n",
+                                " - {} platform={} is_bot={} user_id={} credential_id={}\n",
                                 cred.username,
-                                cred.user_id,
                                 cred.platform,
                                 cred.is_bot,
+                                cred.user_id,
                                 cred.credential_id
                             ));
                         }

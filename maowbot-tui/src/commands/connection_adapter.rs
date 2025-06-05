@@ -34,7 +34,7 @@ pub async fn handle_connection_command(
                         // Show available accounts
                         println!("Available accounts for {}:", platform);
                         for (idx, account) in accounts.iter().enumerate() {
-                            println!("  {}. {} ({})", idx + 1, account.user_name, account.display_name);
+                            println!("  {}. {} ({})", idx + 1, account.display_name, account.display_name);
                         }
                         println!("\nEnter account number (1-{}) or press Enter to start all:", accounts.len());
                         
@@ -52,8 +52,8 @@ pub async fn handle_connection_command(
                             // Start all accounts
                             let mut results = Vec::new();
                             for account in &accounts {
-                                // Pass user_name - server expects username not user_id
-                                match ConnectivityCommands::start_platform(client, platform, &account.user_name).await {
+                                // Pass display_name which contains the global_username
+                                match ConnectivityCommands::start_platform(client, platform, &account.display_name).await {
                                     Ok(result) => results.push(format!("✓ Started {} for {}", 
                                         result.platform, account.user_name)),
                                     Err(e) => results.push(format!("✗ Failed to start {} for {}: {}", 
@@ -64,8 +64,8 @@ pub async fn handle_connection_command(
                         } else if let Ok(num) = trimmed.parse::<usize>() {
                             if num > 0 && num <= accounts.len() {
                                 let selected = &accounts[num - 1];
-                                // Pass user_name - server expects username not user_id
-                                match ConnectivityCommands::start_platform(client, platform, &selected.user_name).await {
+                                // Pass display_name which contains the global_username
+                                match ConnectivityCommands::start_platform(client, platform, &selected.display_name).await {
                                     Ok(result) => return format!("Started {} runtime for account {}", 
                                         result.platform, selected.user_name),
                                     Err(e) => return format!("Error starting platform: {}", e),
