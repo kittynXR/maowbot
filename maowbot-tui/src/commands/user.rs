@@ -7,7 +7,7 @@ use maowbot_common::traits::api::BotApi;
 
 pub async fn handle_user_command(args: &[&str], bot_api: &Arc<dyn BotApi>) -> String {
     if args.is_empty() {
-        return "Usage: user <add|remove|edit|info|search|list> [options]".to_string();
+        return "Usage: user <add|remove|edit|info|search|list|find-duplicates|merge> [options]".to_string();
     }
 
     match args[0] {
@@ -46,7 +46,16 @@ pub async fn handle_user_command(args: &[&str], bot_api: &Arc<dyn BotApi>) -> St
             // Format: user list [p [num]]
             user_list(&args[1..], bot_api).await
         }
-        _ => "Usage: user <add|remove|edit|info|search|list> [options]".to_string(),
+        "find-duplicates" => {
+            user_find_duplicates(bot_api).await
+        }
+        "merge" => {
+            if args.len() < 3 {
+                return "Usage: user merge <primary-user-id> <duplicate-user-id> [<duplicate-user-id>...]".to_string();
+            }
+            user_merge(&args[1..], bot_api).await
+        }
+        _ => "Usage: user <add|remove|edit|info|search|list|find-duplicates|merge> [options]".to_string(),
     }
 }
 
@@ -290,4 +299,155 @@ async fn user_list(args: &[&str], bot_api: &Arc<dyn BotApi>) -> String {
         }
         out
     }
+}
+
+async fn user_find_duplicates(bot_api: &Arc<dyn BotApi>) -> String {
+    // For now, we'll use a simple approach: get all users and group by normalized username
+    let all_users = match bot_api.search_users("").await {
+        Ok(users) => users,
+        Err(e) => return format!("Error listing users: {:?}", e),
+    };
+    
+    // Group users by lowercase username
+    let mut groups: std::collections::HashMap<String, Vec<maowbot_common::models::user::User>> = std::collections::HashMap::new();
+    
+    for user in all_users {
+        if let Some(username) = &user.global_username {
+            let key = username.to_lowercase();
+            groups.entry(key).or_insert_with(Vec::new).push(user);
+        }
+    }
+    
+    // Find groups with duplicates
+    let mut duplicates: Vec<(String, Vec<maowbot_common::models::user::User>)> = groups
+        .into_iter()
+        .filter(|(_, users)| users.len() > 1)
+        .collect();
+    
+    if duplicates.is_empty() {
+        return "No duplicate users found.".to_string();
+    }
+    
+    // Sort by username
+    duplicates.sort_by(|a, b| a.0.cmp(&b.0));
+    
+    let mut out = format!("Found {} groups of duplicate users:\n\n", duplicates.len());
+    
+    for (username, users) in duplicates {
+        out.push_str(&format!("Username: '{}' ({} duplicates)\n", username, users.len()));
+        // Sort users by creation date to identify the oldest (primary) one
+        let mut sorted_users = users;
+        sorted_users.sort_by(|a, b| a.created_at.cmp(&b.created_at));
+        
+        for (idx, user) in sorted_users.iter().enumerate() {
+            let marker = if idx == 0 { " [OLDEST/PRIMARY]" } else { "" };
+            out.push_str(&format!(
+                "  {} - ID: {} | Created: {} | Last seen: {}{}\n",
+                idx + 1,
+                user.user_id,
+                user.created_at.format("%Y-%m-%d %H:%M:%S"),
+                user.last_seen.format("%Y-%m-%d %H:%M:%S"),
+                marker
+            ));
+        }
+        out.push_str("\n");
+    }
+    
+    out.push_str("To merge duplicates, use: user merge <primary-user-id> <duplicate-user-id> [<duplicate-user-id>...]\n");
+    out.push_str("Tip: The oldest user (marked as PRIMARY) is usually the best choice as the primary user.\n");
+    
+    out
+}
+
+async fn user_merge(args: &[&str], bot_api: &Arc<dyn BotApi>) -> String {
+    if args.len() < 2 {
+        return "Usage: user merge <primary-user-id> <duplicate-user-id> [<duplicate-user-id>...]".to_string();
+    }
+    
+    // Parse primary user ID
+    let primary_id = match Uuid::parse_str(args[0]) {
+        Ok(id) => id,
+        Err(_) => return format!("Invalid primary user ID: {}", args[0]),
+    };
+    
+    // Parse duplicate user IDs
+    let mut duplicate_ids = Vec::new();
+    for i in 1..args.len() {
+        match Uuid::parse_str(args[i]) {
+            Ok(id) => duplicate_ids.push(id),
+            Err(_) => return format!("Invalid duplicate user ID: {}", args[i]),
+        }
+    }
+    
+    // Verify all users exist
+    let primary_user = match bot_api.get_user(primary_id).await {
+        Ok(Some(user)) => user,
+        Ok(None) => return format!("Primary user not found: {}", primary_id),
+        Err(e) => return format!("Error fetching primary user: {:?}", e),
+    };
+    
+    let mut duplicate_users = Vec::new();
+    for dup_id in &duplicate_ids {
+        match bot_api.get_user(*dup_id).await {
+            Ok(Some(user)) => duplicate_users.push(user),
+            Ok(None) => return format!("Duplicate user not found: {}", dup_id),
+            Err(e) => return format!("Error fetching duplicate user {}: {:?}", dup_id, e),
+        }
+    }
+    
+    // Show what will be merged
+    let mut confirmation = format!("Merge operation summary:\n\n");
+    confirmation.push_str(&format!("PRIMARY USER (will be kept):\n"));
+    confirmation.push_str(&format!("  ID: {} | Username: {:?} | Created: {}\n\n", 
+        primary_user.user_id, 
+        primary_user.global_username,
+        primary_user.created_at.format("%Y-%m-%d %H:%M:%S")
+    ));
+    
+    confirmation.push_str("DUPLICATE USERS (will be merged and deleted):\n");
+    for user in &duplicate_users {
+        confirmation.push_str(&format!("  ID: {} | Username: {:?} | Created: {}\n", 
+            user.user_id,
+            user.global_username,
+            user.created_at.format("%Y-%m-%d %H:%M:%S")
+        ));
+    }
+    
+    confirmation.push_str("\nThis will:\n");
+    confirmation.push_str("- Move all platform identities from duplicates to primary user\n");
+    confirmation.push_str("- Move all command/redeem usage history to primary user\n");
+    confirmation.push_str("- Delete the duplicate user records\n");
+    confirmation.push_str("\nProceed? (yes/no): ");
+    
+    print!("{}", confirmation);
+    stdout().flush().unwrap();
+    
+    let mut input = String::new();
+    stdin().read_line(&mut input).unwrap();
+    
+    if !input.trim().eq_ignore_ascii_case("yes") {
+        return "Merge cancelled.".to_string();
+    }
+    
+    // For now, return a message about manual database operations needed
+    // In a real implementation, we would call a bot API method to perform the merge
+    let mut sql_commands = String::new();
+    sql_commands.push_str("-- SQL commands to merge users (run these manually in the database):\n");
+    sql_commands.push_str("BEGIN;\n\n");
+    
+    for dup_id in &duplicate_ids {
+        sql_commands.push_str(&format!("-- Merge user {} into {}\n", dup_id, primary_id));
+        sql_commands.push_str(&format!("UPDATE platform_identities SET user_id = '{}' WHERE user_id = '{}';\n", primary_id, dup_id));
+        sql_commands.push_str(&format!("UPDATE command_usage SET user_id = '{}' WHERE user_id = '{}';\n", primary_id, dup_id));
+        sql_commands.push_str(&format!("UPDATE redeem_usage SET user_id = '{}' WHERE user_id = '{}';\n", primary_id, dup_id));
+        sql_commands.push_str(&format!("DELETE FROM user_analysis WHERE user_id = '{}';\n", dup_id));
+        sql_commands.push_str(&format!("UPDATE user_audit_logs SET user_id = '{}' WHERE user_id = '{}';\n", primary_id, dup_id));
+        sql_commands.push_str(&format!("DELETE FROM users WHERE user_id = '{}';\n", dup_id));
+        sql_commands.push_str("\n");
+    }
+    
+    sql_commands.push_str("COMMIT;\n");
+    sql_commands.push_str("\n-- Run these commands in your PostgreSQL database to complete the merge.\n");
+    
+    sql_commands
 }

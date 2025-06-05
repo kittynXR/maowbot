@@ -158,7 +158,7 @@ impl PlatformIdentityRepo for PlatformIdentityRepository {
                 platform_data,      -- jsonb
                 created_at, last_updated
             FROM platform_identities
-            WHERE platform = $1 AND LOWER(platform_user_id) = LOWER($2)
+            WHERE platform = $1 AND (LOWER(platform_user_id) = LOWER($2) OR LOWER(platform_username) = LOWER($2))
             "#,
         )
             .bind(platform_str)

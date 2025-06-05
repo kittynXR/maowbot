@@ -144,3 +144,91 @@ impl UserRepo for UserRepository {
         Ok(rows)
     }
 }
+
+impl UserRepository {
+    /// Find duplicate users based on similar usernames
+    pub async fn find_duplicate_users(&self) -> Result<Vec<(String, Vec<User>)>, Error> {
+        // Get all users with usernames
+        let users = self.list_all().await?;
+        
+        // Group by lowercase username
+        let mut groups: std::collections::HashMap<String, Vec<User>> = std::collections::HashMap::new();
+        
+        for user in users {
+            if let Some(username) = &user.global_username {
+                let key = username.to_lowercase();
+                groups.entry(key).or_insert_with(Vec::new).push(user);
+            }
+        }
+        
+        // Filter to only groups with duplicates
+        let duplicates: Vec<(String, Vec<User>)> = groups
+            .into_iter()
+            .filter(|(_, users)| users.len() > 1)
+            .collect();
+        
+        Ok(duplicates)
+    }
+    
+    /// Merge duplicate users by reassigning all platform identities to the primary user
+    pub async fn merge_users(&self, primary_user_id: Uuid, duplicate_user_ids: Vec<Uuid>) -> Result<(), Error> {
+        let mut tx = self.pool.begin().await?;
+        
+        for dup_id in duplicate_user_ids {
+            // Update platform identities to point to primary user
+            sqlx::query(
+                "UPDATE platform_identities SET user_id = $1 WHERE user_id = $2"
+            )
+                .bind(primary_user_id)
+                .bind(dup_id)
+                .execute(&mut *tx)
+                .await?;
+            
+            // Update command usage
+            sqlx::query(
+                "UPDATE command_usage SET user_id = $1 WHERE user_id = $2"
+            )
+                .bind(primary_user_id)
+                .bind(dup_id)
+                .execute(&mut *tx)
+                .await?;
+            
+            // Update redeem usage
+            sqlx::query(
+                "UPDATE redeem_usage SET user_id = $1 WHERE user_id = $2"
+            )
+                .bind(primary_user_id)
+                .bind(dup_id)
+                .execute(&mut *tx)
+                .await?;
+            
+            // Update user analysis (delete duplicates, keep primary)
+            sqlx::query(
+                "DELETE FROM user_analysis WHERE user_id = $1"
+            )
+                .bind(dup_id)
+                .execute(&mut *tx)
+                .await?;
+            
+            // Update user audit logs
+            sqlx::query(
+                "UPDATE user_audit_logs SET user_id = $1 WHERE user_id = $2"
+            )
+                .bind(primary_user_id)
+                .bind(dup_id)
+                .execute(&mut *tx)
+                .await?;
+            
+            // Finally, delete the duplicate user
+            sqlx::query(
+                "DELETE FROM users WHERE user_id = $1"
+            )
+                .bind(dup_id)
+                .execute(&mut *tx)
+                .await?;
+        }
+        
+        tx.commit().await?;
+        Ok(())
+    }
+}
