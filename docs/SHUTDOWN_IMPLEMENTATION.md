@@ -58,7 +58,7 @@ To test the shutdown functionality:
 cargo run -p maowbot-server
 
 # In another terminal, issue shutdown
-echo "system shutdown" | cargo run -p maowbot-tui --bin maowbot-tui-grpc
+echo "system shutdown" | cargo run -p maowbot-tui --bin tui-grpc
 
 # Server should shut down gracefully after the grace period
 ```

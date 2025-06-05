@@ -23,4 +23,4 @@ echo "🚀 Starting MaowBot TUI (gRPC client)..."
 echo ""
 
 # Run with quiet output to suppress warnings
-RUSTFLAGS="-A warnings" cargo run --quiet --bin maowbot-tui-grpc
+RUSTFLAGS="-A warnings" cargo run --quiet --bin tui-grpc

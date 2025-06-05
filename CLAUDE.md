@@ -34,7 +34,7 @@ cd maowbot-server && cargo run
 RUST_LOG=debug cargo run
 
 # Run the standalone TUI client (requires server to be running)
-cargo run -p maowbot-tui --bin maowbot-tui-grpc
+cargo run -p maowbot-tui --bin tui-grpc
 # Or use the convenience script:
 ./run-tui.sh
 ```
@@ -69,7 +69,7 @@ cargo run -p maowbot-tui --bin maowbot-tui-grpc
    - Used by both TUI and future GUI applications
 
 5. **maowbot-tui**: Terminal User Interface
-   - Standalone gRPC client binary: `maowbot-tui-grpc`
+   - Standalone gRPC client binary: `tui-grpc`
    - Adapters that format common-ui results for console display
    - Modernized command structure with no legacy commands
    - Tab completion support via rustyline

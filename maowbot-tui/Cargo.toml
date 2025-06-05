@@ -42,5 +42,5 @@ crate-type = ["rlib"]
 path = "src/lib.rs"
 
 [[bin]]
-name = "maowbot-tui-grpc"
+name = "tui-grpc"
 path = "src/main.rs"

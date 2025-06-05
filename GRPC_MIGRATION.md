@@ -80,13 +80,13 @@ Previously converted:
 ### Standalone TUI Client
 ```bash
 # Run the standalone gRPC TUI client
-cargo run -p maowbot-tui --bin maowbot-tui-grpc
+cargo run -p maowbot-tui --bin tui-grpc
 
 # Or use the convenience script
 ./run-tui.sh
 
 # Connect to a specific server (future feature)
-cargo run -p maowbot-tui --bin maowbot-tui-grpc -- --server-addr https://192.168.1.100:9999
+cargo run -p maowbot-tui --bin tui-grpc -- --server-addr https://192.168.1.100:9999
 ```
 
 ### Server with Built-in TUI (Removed)

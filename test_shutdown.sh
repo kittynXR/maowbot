@@ -13,7 +13,7 @@ echo "Waiting for server to start..."
 sleep 5
 
 echo "Running TUI command to shutdown server..."
-echo "system shutdown testing 10" | cargo run -p maowbot-tui --bin maowbot-tui-grpc
+echo "system shutdown testing 10" | cargo run -p maowbot-tui --bin tui-grpc
 
 echo "Waiting for shutdown..."
 sleep 15

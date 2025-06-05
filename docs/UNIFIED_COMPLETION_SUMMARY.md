@@ -117,7 +117,7 @@ completion_engine.register_provider(
 
 To test tab completion:
 ```bash
-cargo run -p maowbot-tui --bin maowbot-tui-grpc
+cargo run -p maowbot-tui --bin tui-grpc
 ```
 
 Try:
