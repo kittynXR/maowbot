@@ -1,7 +1,7 @@
 use tonic::{Request, Response, Status};
 use prost_types;
 use maowbot_proto::maowbot::{
-    common::{Platform, PlatformCredential},
+    common::{Platform, PlatformCredential, User},
     services::{
         credential_service_server::CredentialService,
         RefreshResult, PlatformCredentials, PlatformHealth, OverallHealth,
@@ -11,10 +11,11 @@ use maowbot_proto::maowbot::{
 use maowbot_core::{
     auth::manager::AuthManager,
     repositories::postgres::credentials::PostgresCredentialsRepository,
+    repositories::postgres::user::UserRepository,
 };
 use tokio::sync::Mutex;
 use maowbot_common::models::platform::PlatformCredential as Credential;
-use maowbot_common::traits::repository_traits::CredentialsRepository;
+use maowbot_common::traits::repository_traits::{CredentialsRepository, UserRepo};
 use std::sync::Arc;
 use std::str::FromStr;
 use std::collections::HashMap;
@@ -25,16 +26,19 @@ use tracing::{info, debug};
 pub struct CredentialServiceImpl {
     auth_manager: Arc<Mutex<AuthManager>>,
     credential_repo: Arc<PostgresCredentialsRepository>,
+    user_repo: Arc<UserRepository>,
 }
 
 impl CredentialServiceImpl {
     pub fn new(
         auth_manager: Arc<Mutex<AuthManager>>,
         credential_repo: Arc<PostgresCredentialsRepository>,
+        user_repo: Arc<UserRepository>,
     ) -> Self {
         Self {
             auth_manager,
             credential_repo,
+            user_repo,
         }
     }
     
@@ -71,6 +75,22 @@ impl CredentialServiceImpl {
             is_bot: cred.is_bot,
             is_broadcaster: cred.is_broadcaster,
             is_teammate: cred.is_teammate,
+        }
+    }
+    
+    fn user_to_proto(user: &maowbot_common::models::user::User) -> User {
+        User {
+            user_id: user.user_id.to_string(),
+            global_username: user.global_username.clone().unwrap_or_default(),
+            created_at: Some(prost_types::Timestamp {
+                seconds: user.created_at.timestamp(),
+                nanos: user.created_at.timestamp_subsec_nanos() as i32,
+            }),
+            last_seen: Some(prost_types::Timestamp {
+                seconds: user.last_seen.timestamp(),
+                nanos: user.last_seen.timestamp_subsec_nanos() as i32,
+            }),
+            is_active: user.is_active,
         }
     }
 }
@@ -258,21 +278,34 @@ impl CredentialService for CredentialServiceImpl {
                 .collect()
         };
         
-        let credential_infos: Vec<CredentialInfo> = credentials.into_iter()
-            .map(|c| {
-                let status = if c.expires_at.map(|exp| exp < Utc::now()).unwrap_or(false) {
-                    CredentialStatus::Expired
-                } else {
-                    CredentialStatus::Active
-                };
-                
-                CredentialInfo {
-                    credential: Some(Self::credential_to_proto(&c)),
-                    status: status as i32,
-                    user: None, // TODO: Populate user if requested
+        // Convert credentials and lookup users
+        let mut credential_infos = Vec::new();
+        for cred in credentials {
+            let status = if cred.expires_at.map(|exp| exp < Utc::now()).unwrap_or(false) {
+                CredentialStatus::Expired
+            } else {
+                CredentialStatus::Active
+            };
+            
+            // Look up the user for this credential
+            let user_proto = match self.user_repo.get(cred.user_id).await {
+                Ok(Some(user)) => Some(Self::user_to_proto(&user)),
+                Ok(None) => {
+                    debug!("No user found for credential user_id: {}", cred.user_id);
+                    None
                 }
-            })
-            .collect();
+                Err(e) => {
+                    debug!("Error looking up user for credential: {}", e);
+                    None
+                }
+            };
+            
+            credential_infos.push(CredentialInfo {
+                credential: Some(Self::credential_to_proto(&cred)),
+                status: status as i32,
+                user: user_proto,
+            });
+        }
         
         Ok(Response::new(ListCredentialsResponse {
             credentials: credential_infos,

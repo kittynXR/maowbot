@@ -204,6 +204,7 @@ pub async fn run_server(args: Args) -> Result<(), Error> {
     let credential_service = CredentialServiceImpl::new(
         ctx.auth_manager.clone(),
         ctx.creds_repo.clone(),
+        ctx.plugin_manager.user_repo.clone(),
     );
     
     let platform_config_repo = Arc::new(maowbot_core::repositories::postgres::platform_config::PostgresPlatformConfigRepository::new(
