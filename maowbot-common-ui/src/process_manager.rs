@@ -393,8 +393,21 @@ impl ProcessManager {
 
     /// Ensure server is running and return connection info
     pub async fn ensure_server_running(&self) -> Result<String, Box<dyn std::error::Error>> {
-        if !self.is_running(ProcessType::Server).await {
-            self.start_server().await?;
+        // First check if any server is already listening on port 9999
+        match tokio::net::TcpStream::connect("127.0.0.1:9999").await {
+            Ok(_) => {
+                info!("Server already running on port 9999");
+                return Ok("https://127.0.0.1:9999".to_string());
+            }
+            Err(_) => {
+                // No server on port 9999, check if we have a managed process
+                if !self.is_running(ProcessType::Server).await {
+                    info!("No server found on port 9999, starting new server...");
+                    self.start_server().await?;
+                } else {
+                    info!("Managed server process exists but not listening on port 9999 yet");
+                }
+            }
         }
         
         // Return the server URL
@@ -405,5 +418,13 @@ impl ProcessManager {
 impl Default for ProcessManager {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl Drop for ProcessManager {
+    fn drop(&mut self) {
+        // Note: We can't do async operations in Drop, so we just log
+        // The TUI should explicitly call stop_all() if it wants to clean up
+        debug!("ProcessManager dropped - child processes may continue running");
     }
 }

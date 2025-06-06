@@ -4,9 +4,29 @@ use maowbot_tui::{commands::dispatch_grpc, SimpleTuiModule, completion::TuiCompl
 use std::sync::Arc;
 use rustyline::error::ReadlineError;
 use rustyline::Editor;
+use clap::Parser;
+
+#[derive(Parser, Debug)]
+#[command(author, version, about, long_about = None)]
+struct Args {
+    /// Stop the server when TUI exits
+    #[arg(long, default_value_t = false)]
+    stop_server_on_exit: bool,
+    
+    /// Don't start server automatically if not running
+    #[arg(long, default_value_t = false)]
+    no_autostart: bool,
+    
+    /// Server URL to connect to
+    #[arg(long, default_value = "https://127.0.0.1:9999")]
+    server_url: String,
+}
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Parse command line arguments
+    let args = Args::parse();
+    
     // Initialize logging
     tracing_subscriber::fmt::init();
 
@@ -15,9 +35,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Create process manager
     let process_manager = Arc::new(ProcessManager::new());
     
-    // Ensure server is running
-    println!("Checking server status...");
-    let server_url = process_manager.ensure_server_running().await?;
+    // Determine server URL
+    let server_url = if args.no_autostart {
+        println!("Connecting to existing server at {}...", args.server_url);
+        args.server_url.clone()
+    } else {
+        // Ensure server is running
+        println!("Checking server status...");
+        process_manager.ensure_server_running().await?
+    };
     
     println!("Connecting to gRPC server at {}...", server_url);
 
@@ -116,10 +142,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let _ = rl.save_history(&path);
     }
     
-    println!("Goodbye!");
+    // Stop server if requested
+    if args.stop_server_on_exit {
+        println!("Stopping server...");
+        if let Err(e) = process_manager.stop(maowbot_common_ui::ProcessType::Server).await {
+            eprintln!("Warning: Failed to stop server: {}", e);
+        }
+    } else if !args.no_autostart {
+        println!("Leaving server running for other clients.");
+        println!("Use --stop-server-on-exit to stop the server when TUI exits.");
+    }
     
-    // Stop server if we started it (optional - could make this configurable)
-    // For now, we'll leave the server running so other clients can connect
+    println!("Goodbye!");
     
     Ok(())
 }

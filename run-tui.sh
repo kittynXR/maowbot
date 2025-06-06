@@ -21,6 +21,12 @@ fi
 
 echo "🚀 Starting MaowBot TUI (gRPC client)..."
 echo ""
+echo "Options:"
+echo "  --stop-server-on-exit    Stop the server when TUI exits"
+echo "  --no-autostart          Don't start server automatically"
+echo "  --server-url <URL>      Connect to specific server URL"
+echo ""
 
 # Run with quiet output to suppress warnings
-RUSTFLAGS="-A warnings" cargo run --quiet --bin tui-grpc
+# Pass through any command line arguments
+RUSTFLAGS="-A warnings" cargo run --quiet --bin tui-grpc -- "$@"

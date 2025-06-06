@@ -36,6 +36,9 @@ rustyline = "14.0"
 rustyline-derive = "0.10"
 dirs = "5.0"
 
+# CLI argument parsing
+clap = { version = "4", features = ["derive"] }
+
 [lib]
 name = "maowbot_tui"
 crate-type = ["rlib"]
