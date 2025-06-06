@@ -150,12 +150,13 @@ pub struct VrchatDiscoveredPorts {
 /// This function starts the mDNS query listener, queries for VRChat services,
 /// and returns connection info if found; otherwise, it uses fallback ports.
 pub async fn discover_vrchat() -> Result<Option<VRChatConnectionInfo>> {
+    info!("Starting VRChat mDNS discovery (this runs in background)...");
     // Create your custom mDNS service
     let mut mdns = MdnsService::new()?;
     // Start the query listener to process inbound response packets
     mdns.start_query_listener();
     // Allow a bit of time for passive discovery before sending queries
-    tokio::time::sleep(time::Duration::from_millis(500)).await;
+    tokio::time::sleep(time::Duration::from_millis(200)).await;
     // First query for OSC UDP service
     debug!("Querying for _osc._udp.local with VRChat-Client filter");
     let discovered = mdns.query_for_service("_osc._udp.local", Some("VRChat-Client"))?;

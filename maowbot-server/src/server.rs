@@ -57,12 +57,16 @@ pub async fn run_server(args: Args) -> Result<(), Error> {
     // Build the global context
     let ctx = ServerContext::new(&args).await?;
 
-    // Start your OSC server on a free port:
-    if let Err(e) = ctx.osc_manager.start_all().await {
-        tracing::error!("Failed to start OSC/OSCQuery: {:?}", e);
-    } else {
-        tracing::info!("OSC and OSCQuery servers started successfully.");
-    }
+    // Start OSC server in background to avoid blocking server startup
+    let osc_manager_clone = ctx.osc_manager.clone();
+    tokio::spawn(async move {
+        tracing::info!("Starting OSC/OSCQuery services in background...");
+        if let Err(e) = osc_manager_clone.start_all().await {
+            tracing::error!("Failed to start OSC/OSCQuery: {:?}", e);
+        } else {
+            tracing::info!("OSC and OSCQuery servers started successfully.");
+        }
+    });
 
     // 1) Spawn DB logger
     let (db_logger_handle, _db_logger_control) = start_db_logger(&ctx);

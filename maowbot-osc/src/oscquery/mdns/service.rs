@@ -289,8 +289,9 @@ impl MdnsService {
         let dest = SocketAddr::new(IpAddr::V4(MDNS_MULTICAST_ADDR), MDNS_PORT);
         let _ = self.socket.send_to(&bytes, dest);
 
+        // Reduce blocking time from 2s to 500ms since we're in a background task now
         let start = Instant::now();
-        while start.elapsed() < Duration::from_secs(2) {
+        while start.elapsed() < Duration::from_millis(500) {
             std::thread::sleep(Duration::from_millis(50));
         }
 
