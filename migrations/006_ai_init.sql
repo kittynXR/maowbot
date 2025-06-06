@@ -187,8 +187,8 @@ INSERT INTO ai_models (model_id, provider_id, name, description, capabilities)
 VALUES (
     uuid_generate_v4(),
     (SELECT provider_id FROM ai_providers WHERE name = 'OpenAI'),
-    'gpt-3.5-turbo',
-    'Faster and more cost-effective GPT-3.5 model',
+    'gpt-4.1',
+    'Flagship model — well suited for problem solving across domains',
     '{"function_calling": true, "vision": false, "streaming": true}'
 );
 
@@ -197,7 +197,7 @@ INSERT INTO ai_models (model_id, provider_id, name, description, is_default, cap
 VALUES (
     uuid_generate_v4(),
     (SELECT provider_id FROM ai_providers WHERE name = 'Anthropic'),
-    'claude-3-opus-20240229',
+    'claude-4-opus-20250514',
     'Most capable Claude model with strong reasoning',
     true,
     '{"function_calling": true, "vision": true, "streaming": true}'
@@ -207,17 +207,8 @@ INSERT INTO ai_models (model_id, provider_id, name, description, capabilities)
 VALUES (
     uuid_generate_v4(),
     (SELECT provider_id FROM ai_providers WHERE name = 'Anthropic'),
-    'claude-3-sonnet-20240229',
+    'claude-4-sonnet-20250514',
     'Balanced Claude model with good performance and cost',
-    '{"function_calling": true, "vision": true, "streaming": true}'
-);
-
-INSERT INTO ai_models (model_id, provider_id, name, description, capabilities)
-VALUES (
-    uuid_generate_v4(),
-    (SELECT provider_id FROM ai_providers WHERE name = 'Anthropic'),
-    'claude-3-haiku-20240307',
-    'Fastest Claude model for quick responses',
     '{"function_calling": true, "vision": true, "streaming": true}'
 );
 
@@ -245,7 +236,7 @@ VALUES (
     uuid_generate_v4(),
     'Maow Assistant',
     'Default assistant for handling general chat queries',
-    (SELECT model_id FROM ai_models WHERE name = 'claude-3-sonnet-20240229'),
+    (SELECT model_id FROM ai_models WHERE name = 'claude-4-sonnet-20250514'),
     'You are Maow, a helpful AI assistant that responds to user queries in a friendly manner.',
     '{"can_search": true, "can_remember": true, "max_response_tokens": 1000}',
     true
@@ -270,7 +261,7 @@ VALUES (
     uuid_generate_v4(),
     'prefix',
     'hey maow',
-    (SELECT model_id FROM ai_models WHERE name = 'claude-3-sonnet-20240229'),
+    (SELECT model_id FROM ai_models WHERE name = 'claude-4-sonnet-20250514'),
     'You are Maow, a helpful AI assistant for a Twitch streamer. Respond to user queries in a friendly, helpful manner. Keep responses concise but informative.',
     true
 );
@@ -280,7 +271,7 @@ VALUES (
     uuid_generate_v4(),
     'prefix',
     '@maow',
-    (SELECT model_id FROM ai_models WHERE name = 'claude-3-sonnet-20240229'),
+    (SELECT model_id FROM ai_models WHERE name = 'claude-4-sonnet-20250514'),
     'You are Maow, a helpful AI assistant for a Twitch streamer. Respond to user queries in a friendly, helpful manner. Keep responses concise but informative.',
     true
 );

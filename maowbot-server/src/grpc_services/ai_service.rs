@@ -10,6 +10,7 @@ use tracing::{info, error, debug};
 use prost_types;
 use serde_json;
 use maowbot_ai::plugins::ai_service::AiService as AiServicePlugin;
+use std::any::Any;
 
 // Helper function to convert protobuf Struct to serde_json::Value
 fn struct_to_json_value(s: &prost_types::Struct) -> serde_json::Value {
@@ -331,40 +332,100 @@ impl AiService for AiServiceImpl {
         let req = request.into_inner();
         debug!("Listing providers - configured_only: {}", req.configured_only);
         
-        // TODO: Implement actual provider listing
-        // For now, return mock providers
-        let mut providers = vec![
-            ProviderInfo {
-                name: "openai".to_string(),
-                r#type: ProviderType::Openai as i32,
-                is_configured: true,
-                is_active: true,
-                supported_models: vec!["gpt-3.5-turbo".to_string(), "gpt-4".to_string()],
-                capabilities: vec!["chat".to_string(), "functions".to_string(), "embeddings".to_string()],
-                configured_at: Some(prost_types::Timestamp {
-                    seconds: Utc::now().timestamp() - 86400,
-                    nanos: 0,
-                }),
-            },
-            ProviderInfo {
-                name: "anthropic".to_string(),
-                r#type: ProviderType::Anthropic as i32,
-                is_configured: false,
-                is_active: false,
-                supported_models: vec!["claude-3-sonnet".to_string(), "claude-3-opus".to_string()],
-                capabilities: vec!["chat".to_string()],
-                configured_at: None,
-            },
-        ];
+        let ai_api = self.ai_api.as_ref()
+            .ok_or_else(|| Status::failed_precondition("AI service not configured"))?;
         
-        if req.configured_only {
-            providers.retain(|p| p.is_configured);
+        // Get the AI service to access provider configurations
+        let ai_service_arc = ai_api.get_ai_service();
+        if let Some(service) = ai_service_arc {
+            let provider_repo = service.get_provider_repo()
+                .ok_or_else(|| Status::internal("Provider repository not available"))?;
+            let credential_repo = service.get_ai_credential_repo()
+                .ok_or_else(|| Status::internal("Credential repository not available"))?;
+            
+            // Get all providers from database
+            match provider_repo.list_providers().await {
+                Ok(providers) => {
+                    let mut provider_infos = Vec::new();
+                    
+                    for provider in providers {
+                        // Check if provider has credentials configured
+                        let has_credentials = match credential_repo.list_credentials_for_provider(provider.provider_id).await {
+                            Ok(creds) => !creds.is_empty(),
+                            Err(_) => false,
+                        };
+                        
+                        let provider_type = match provider.name.to_lowercase().as_str() {
+                            "openai" => ProviderType::Openai as i32,
+                            "anthropic" => ProviderType::Anthropic as i32,
+                            _ => ProviderType::Custom as i32,
+                        };
+                        
+                        // Get supported models from AI service's internal provider
+                        let internal_providers = service.client.provider().get_all().await;
+                        let is_active = internal_providers.iter().any(|p| p.to_lowercase() == provider.name.to_lowercase());
+                        
+                        let mut supported_models = vec![];
+                        let mut capabilities = vec!["chat".to_string()];
+                        
+                        // Add provider-specific details
+                        match provider.name.as_str() {
+                            "OpenAI" => {
+                                supported_models = vec!["gpt-4o".to_string(), "gpt-4.1".to_string(), "gpt-4o-search-preview".to_string()];
+                                capabilities.extend(vec!["functions".to_string(), "embeddings".to_string(), "web_search".to_string()]);
+                            },
+                            "Anthropic" => {
+                                supported_models = vec!["claude-4-opus-20250514".to_string(), "claude-4-sonnet-20250514".to_string()];
+                                capabilities.push("vision".to_string());
+                            },
+                            _ => {}
+                        }
+                        
+                        provider_infos.push(ProviderInfo {
+                            name: provider.name.clone(),
+                            r#type: provider_type,
+                            is_configured: has_credentials,
+                            is_active,
+                            supported_models,
+                            capabilities,
+                            configured_at: if has_credentials {
+                                Some(prost_types::Timestamp {
+                                    seconds: provider.created_at.timestamp(),
+                                    nanos: 0,
+                                })
+                            } else {
+                                None
+                            },
+                        });
+                    }
+                    
+                    if req.configured_only {
+                        provider_infos.retain(|p| p.is_configured);
+                    }
+                    
+                    // Determine active provider
+                    let active_provider = provider_infos.iter()
+                        .find(|p| p.is_active)
+                        .map(|p| p.name.clone())
+                        .unwrap_or_else(|| "none".to_string());
+                    
+                    Ok(Response::new(ListProvidersResponse {
+                        providers: provider_infos,
+                        active_provider,
+                    }))
+                },
+                Err(e) => {
+                    error!("Error listing providers: {:?}", e);
+                    Err(Status::internal("Failed to list providers"))
+                }
+            }
+        } else {
+            // No AI service available, return empty list
+            Ok(Response::new(ListProvidersResponse {
+                providers: vec![],
+                active_provider: "none".to_string(),
+            }))
         }
-        
-        Ok(Response::new(ListProvidersResponse {
-            providers,
-            active_provider: "openai".to_string(),
-        }))
     }
     async fn test_provider(&self, request: Request<TestProviderRequest>) -> Result<Response<TestProviderResponse>, Status> {
         let req = request.into_inner();
@@ -755,56 +816,119 @@ impl AiService for AiServiceImpl {
     
     async fn show_provider_keys(&self, request: Request<ShowProviderKeysRequest>) -> Result<Response<ShowProviderKeysResponse>, Status> {
         let req = request.into_inner();
-        info!("Showing provider keys for: {:?}", req.provider_name);
+        info!("🔍 GRPC AI SERVICE: Showing provider keys for: '{}'", req.provider_name);
         
         let ai_api = self.ai_api.as_ref()
             .ok_or_else(|| Status::failed_precondition("AI service not configured"))?;
         
         // Get the AI service to access provider configurations
-        match ai_api.get_ai_service() {
-            Some(service) => {
+        info!("🔍 GRPC AI SERVICE: Getting AI service from API");
+        let ai_service_arc = ai_api.get_ai_service();
+        if let Some(service) = ai_service_arc {
+            info!("🔍 GRPC AI SERVICE: AI service found, getting repositories");
                     let mut provider_keys = Vec::new();
                     
-                    // Get the current provider configuration
-                    if let Ok(Some(config)) = service.get_current_provider_config().await {
-                        // Check if we should include this provider
-                        if !req.provider_name.is_empty() && config.provider_type != req.provider_name {
-                            return Ok(Response::new(ShowProviderKeysResponse {
-                                keys: vec![],
-                            }));
-                        }
-                        
-                        let provider_name = config.provider_type;
-                        
-                        // Mask the API key - show only last 4 characters
-                        let masked_key = if config.api_key.len() > 4 {
-                            format!("...{}", &config.api_key[config.api_key.len() - 4..])
-                        } else {
-                            "****".to_string()
+                    // Get the provider and credential repositories
+                    let provider_repo = service.get_provider_repo()
+                        .ok_or_else(|| Status::internal("Provider repository not available"))?;
+                    let credential_repo = service.get_ai_credential_repo()
+                        .ok_or_else(|| Status::internal("Credential repository not available"))?;
+                    
+                    // If a specific provider name is requested, get that provider
+                    if !req.provider_name.is_empty() {
+                        // Normalize the provider name for case-insensitive matching
+                        let normalized_name = match req.provider_name.to_lowercase().as_str() {
+                            "openai" => "OpenAI",
+                            "anthropic" => "Anthropic",
+                            _ => &req.provider_name,
                         };
                         
-                        let api_base = config.api_base.unwrap_or_default();
-                        let is_active = true; // If we have a config, it's active
-                        
-                        provider_keys.push(ProviderKeyInfo {
-                            provider_name: provider_name.clone(),
-                            masked_key,
-                            api_base,
-                            is_active,
-                            configured_at: Some(prost_types::Timestamp {
-                                seconds: Utc::now().timestamp(),
-                                nanos: 0,
-                            }),
-                        });
+                        match provider_repo.get_provider_by_name(normalized_name).await {
+                            Ok(Some(provider)) => {
+                                // Get credentials for this provider
+                                match credential_repo.list_credentials_for_provider(provider.provider_id).await {
+                                    Ok(credentials) => {
+                                        for cred in credentials {
+                                            // Mask the API key - show only last 4 characters
+                                            let masked_key = if cred.api_key.len() > 4 {
+                                                format!("...{}", &cred.api_key[cred.api_key.len() - 4..])
+                                            } else {
+                                                "****".to_string()
+                                            };
+                                            
+                                            provider_keys.push(ProviderKeyInfo {
+                                                provider_name: provider.name.clone(),
+                                                masked_key,
+                                                api_base: cred.api_base.unwrap_or_default(),
+                                                is_active: cred.is_default,
+                                                configured_at: Some(prost_types::Timestamp {
+                                                    seconds: cred.created_at.timestamp(),
+                                                    nanos: 0,
+                                                }),
+                                            });
+                                        }
+                                    },
+                                    Err(e) => {
+                                        error!("Error fetching credentials: {:?}", e);
+                                    }
+                                }
+                            },
+                            Ok(None) => {
+                                // Provider not found
+                                debug!("Provider '{}' not found", req.provider_name);
+                            },
+                            Err(e) => {
+                                error!("Error fetching provider: {:?}", e);
+                            }
+                        }
+                    } else {
+                        // List all providers and their credentials
+                        match provider_repo.list_providers().await {
+                            Ok(providers) => {
+                                for provider in providers {
+                                    // Get credentials for each provider
+                                    match credential_repo.list_credentials_for_provider(provider.provider_id).await {
+                                        Ok(credentials) => {
+                                            for cred in credentials {
+                                                // Mask the API key - show only last 4 characters
+                                                let masked_key = if cred.api_key.len() > 4 {
+                                                    format!("...{}", &cred.api_key[cred.api_key.len() - 4..])
+                                                } else {
+                                                    "****".to_string()
+                                                };
+                                                
+                                                provider_keys.push(ProviderKeyInfo {
+                                                    provider_name: provider.name.clone(),
+                                                    masked_key,
+                                                    api_base: cred.api_base.unwrap_or_default(),
+                                                    is_active: cred.is_default,
+                                                    configured_at: Some(prost_types::Timestamp {
+                                                        seconds: cred.created_at.timestamp(),
+                                                        nanos: 0,
+                                                    }),
+                                                });
+                                            }
+                                        },
+                                        Err(e) => {
+                                            error!("Error fetching credentials for provider {}: {:?}", provider.name, e);
+                                        }
+                                    }
+                                }
+                            },
+                            Err(e) => {
+                                error!("Error listing providers: {:?}", e);
+                                return Err(Status::internal("Failed to list providers"));
+                            }
+                        }
                     }
                     
                     Ok(Response::new(ShowProviderKeysResponse {
                         keys: provider_keys,
                     }))
-            },
-            None => Ok(Response::new(ShowProviderKeysResponse {
+        } else {
+            Ok(Response::new(ShowProviderKeysResponse {
                 keys: vec![],
-            })),
+            }))
         }
     }
 }

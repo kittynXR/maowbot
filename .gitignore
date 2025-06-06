@@ -1,3 +1,18 @@
 /target/
 /vendor/
 *.rs.bk
+
+# Certificate files and directories
+certs/
+*.crt
+*.key
+*.pem
+
+# Test scripts and files
+test_*.sh
+test_*.py
+test_ai_grpc.rs
+check_ai_db.sh
+
+# Log files
+*.log

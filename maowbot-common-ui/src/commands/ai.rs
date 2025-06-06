@@ -85,17 +85,34 @@ impl AiCommands {
     ) -> Result<String> {
         let mut config = prost_types::Struct::default();
         
+        // Add provider_type (capitalize first letter of provider_name)
+        let provider_type = provider_name.chars()
+            .take(1)
+            .flat_map(char::to_uppercase)
+            .chain(provider_name.chars().skip(1))
+            .collect::<String>();
+        config.fields.insert("provider_type".to_string(), prost_types::Value {
+            kind: Some(prost_types::value::Kind::StringValue(provider_type)),
+        });
+        
         // Add API key
         config.fields.insert("api_key".to_string(), prost_types::Value {
             kind: Some(prost_types::value::Kind::StringValue(api_key)),
         });
         
-        // Add model if provided
-        if let Some(model) = model {
-            config.fields.insert("model".to_string(), prost_types::Value {
-                kind: Some(prost_types::value::Kind::StringValue(model)),
-            });
-        }
+        // Add default_model - use provided model or sensible default
+        let default_model = if let Some(model) = model {
+            model
+        } else {
+            match provider_name.to_lowercase().as_str() {
+                "openai" => "gpt-4.1".to_string(),
+                "anthropic" => "claude-4-sonnet-20250514".to_string(),
+                _ => "default-model".to_string()
+            }
+        };
+        config.fields.insert("default_model".to_string(), prost_types::Value {
+            kind: Some(prost_types::value::Kind::StringValue(default_model)),
+        });
         
         // Add API base if provided
         if let Some(api_base) = api_base {
@@ -103,6 +120,12 @@ impl AiCommands {
                 kind: Some(prost_types::value::Kind::StringValue(api_base)),
             });
         }
+        
+        // Add empty options field
+        let options_struct = prost_types::Struct::default();
+        config.fields.insert("options".to_string(), prost_types::Value {
+            kind: Some(prost_types::value::Kind::StructValue(options_struct)),
+        });
         
         let response = client.ai
             .configure_provider(ConfigureProviderRequest {

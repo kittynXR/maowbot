@@ -452,8 +452,12 @@ impl AiService {
             
             let now = Utc::now();
             
-            // Check if provider exists
-            let provider_name = config.provider_type.clone();
+            // Check if provider exists - normalize provider name for database lookup
+            let provider_name = match config.provider_type.to_lowercase().as_str() {
+                "openai" => "OpenAI".to_string(),
+                "anthropic" => "Anthropic".to_string(),
+                _ => config.provider_type.clone(),
+            };
             let maybe_provider = provider_repo.get_provider_by_name(&provider_name).await?;
             
             let provider_id = if let Some(provider) = maybe_provider {
