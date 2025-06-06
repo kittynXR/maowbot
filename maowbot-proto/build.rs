@@ -18,6 +18,7 @@ fn main() {
         "proto/services/ai_service.proto",
         "proto/services/command_service.proto",
         "proto/services/redeem_service.proto",
+        "proto/services/autostart_service.proto",
     ];
     
     protos.extend(service_protos);

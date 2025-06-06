@@ -103,6 +103,11 @@ pub struct PluginManager {
     // ---------------------------------------
     pub osc_toggle_repo: Option<Arc<dyn maowbot_common::traits::osc_toggle_traits::OscToggleRepository + Send + Sync>>,
     pub osc_toggle_service: Option<Arc<crate::services::osc_toggle_service::OscToggleService>>,
+    
+    // ---------------------------------------
+    // NEW: Autostart repository
+    // ---------------------------------------
+    pub autostart_repo: Arc<dyn crate::repositories::postgres::autostart::AutostartRepository + Send + Sync>,
 }
 
 impl PluginManager {
@@ -123,6 +128,7 @@ impl PluginManager {
         redeem_usage_repo: Arc<dyn RedeemUsageRepository + Send + Sync>,
         credentials_repo: Arc<dyn CredentialsRepository + Send + Sync>,
         ai_api_impl: Option<crate::plugins::manager::ai_api_impl::AiApiImpl>,
+        autostart_repo: Arc<dyn crate::repositories::postgres::autostart::AutostartRepository + Send + Sync>,
     ) -> Self {
         let manager = Self {
             plugins: Arc::new(AsyncMutex::new(Vec::new())),
@@ -153,6 +159,7 @@ impl PluginManager {
             ai_api_impl, // AI service implementation
             osc_toggle_repo: None, // OSC toggle repository
             osc_toggle_service: None, // OSC toggle service
+            autostart_repo,
         };
         manager.load_plugin_states();
         manager

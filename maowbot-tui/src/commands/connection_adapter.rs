@@ -1,9 +1,9 @@
 // Connection command adapter for TUI - consolidates start/stop/autostart/chat
-use maowbot_common_ui::{GrpcClient, commands::connectivity::{ConnectivityCommands, AutostartConfig}};
+use maowbot_common_ui::{GrpcClient, commands::connectivity::ConnectivityCommands};
 use crate::tui_module_simple::SimpleTuiModule;
 use std::sync::Arc;
 use maowbot_proto::maowbot::services::{
-    GetConfigRequest, ListActiveRuntimesRequest, ListCredentialsRequest,
+    ListActiveRuntimesRequest, ListCredentialsRequest,
 };
 
 pub async fn handle_connection_command(
@@ -143,47 +143,22 @@ pub async fn handle_connection_command(
                 }
                 
                 "list" => {
-                    // Get autostart config
-                    let get_request = GetConfigRequest {
-                        key: "autostart".to_string(),
-                        include_metadata: false,
-                    };
-                    
-                    let mut config_client = client.config.clone();
-                    match config_client.get_config(get_request).await {
-                        Ok(response) => {
-                            let config_value = response.into_inner()
-                                .config
-                                .map(|c| c.value)
-                                .unwrap_or_default();
-                                
-                            if config_value.is_empty() {
-                                return "No autostart configurations found.".to_string();
-                            }
-                            
-                            match serde_json::from_str::<AutostartConfig>(&config_value) {
-                                Ok(config) => {
-                                    let mut output = "Autostart configurations:\n".to_string();
-                                    
-                                    for account in &config.twitch_irc {
-                                        output.push_str(&format!("  twitch-irc - {} [ON]\n", account));
-                                    }
-                                    for account in &config.twitch_eventsub {
-                                        output.push_str(&format!("  twitch-eventsub - {} [ON]\n", account));
-                                    }
-                                    for account in &config.discord {
-                                        output.push_str(&format!("  discord - {} [ON]\n", account));
-                                    }
-                                    for account in &config.vrchat {
-                                        output.push_str(&format!("  vrchat - {} [ON]\n", account));
-                                    }
-                                    
-                                    output
+                    match ConnectivityCommands::list_autostart_entries(client).await {
+                        Ok(entries) => {
+                            if entries.is_empty() {
+                                "No autostart configurations found.".to_string()
+                            } else {
+                                let mut output = "Autostart configurations:\n".to_string();
+                                for (platform, account, enabled) in entries {
+                                    output.push_str(&format!("  {} - {} [{}]\n", 
+                                        platform, account,
+                                        if enabled { "ON" } else { "OFF" }
+                                    ));
                                 }
-                                Err(e) => format!("Error parsing autostart config: {}", e),
+                                output
                             }
                         }
-                        Err(e) => format!("Error getting autostart config: {}", e),
+                        Err(e) => format!("Error listing autostart configurations: {}", e),
                     }
                 }
                 

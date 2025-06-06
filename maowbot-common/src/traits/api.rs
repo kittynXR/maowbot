@@ -29,6 +29,7 @@ PluginApi
 + BotConfigApi
 + DiscordApi
 + AiApi
++ AutostartApi
 {
 }
 
@@ -46,7 +47,8 @@ where
     + DripApi
     + BotConfigApi
     + DiscordApi
-    + AiApi,
+    + AiApi
+    + AutostartApi,
 {
     // marker
 }
@@ -277,6 +279,18 @@ pub trait BotConfigApi: Send + Sync {
     ) -> Result<Option<(String, Option<serde_json::Value>)>, Error>;
 
     async fn delete_config_kv(&self, config_key: &str, config_value: &str) -> Result<(), Error>;
+}
+
+#[async_trait]
+pub trait AutostartApi: Send + Sync {
+    /// Get all autostart entries (enabled and disabled)
+    async fn list_autostart_entries(&self) -> Result<Vec<(String, String, bool)>, Error>;
+    
+    /// Enable/disable autostart for a platform/account
+    async fn set_autostart(&self, platform: &str, account: &str, enabled: bool) -> Result<(), Error>;
+    
+    /// Check if a platform/account is set to autostart
+    async fn is_autostart_enabled(&self, platform: &str, account: &str) -> Result<bool, Error>;
 }
 
 /// ---------------------------------------------------------------------------

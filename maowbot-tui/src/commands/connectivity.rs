@@ -57,28 +57,9 @@ async fn handle_autostart_cmd(args: &[&str], bot_api: &Arc<dyn BotApi>) -> Strin
         _ => return "Usage: autostart <on/off> <platform> <account>".to_string(),
     };
 
-    // Retrieve current autostart JSON
-    let current_val = match bot_api.get_bot_config_value("autostart").await {
-        Ok(Some(s)) => s,
-        _ => String::new(),
-    };
-
-    // Parse or create a blank AutostartConfig
-    let mut config_obj = match serde_json::from_str::<maowbot_core::tasks::autostart::AutostartConfig>(&current_val) {
-        Ok(cfg) => cfg,
-        Err(_) => maowbot_core::tasks::autostart::AutostartConfig::new(),
-    };
-
-    // Flip it on/off
-    config_obj.set_platform_account(platform, account, on);
-
-    // Save back to bot_config
-    let new_str = match serde_json::to_string_pretty(&config_obj) {
-        Ok(s) => s,
-        Err(e) => return format!("Error serializing autostart => {:?}", e),
-    };
-    if let Err(e) = bot_api.set_bot_config_value("autostart", &new_str).await {
-        return format!("Error saving autostart => {:?}", e);
+    // Use the new AutostartApi trait methods
+    if let Err(e) = bot_api.set_autostart(platform, account, on).await {
+        return format!("Error setting autostart => {:?}", e);
     }
 
     if on {

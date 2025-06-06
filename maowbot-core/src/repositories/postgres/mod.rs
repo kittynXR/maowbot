@@ -2,6 +2,7 @@ pub mod user;
 pub mod platform_identity;
 pub mod credentials;
 pub mod analytics;
+pub mod autostart;
 pub mod link_requests;
 pub mod user_audit_log;
 pub mod user_analysis;

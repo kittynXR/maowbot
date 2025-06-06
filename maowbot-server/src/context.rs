@@ -29,6 +29,7 @@ use maowbot_core::auth::manager::AuthManager;
 use maowbot_core::auth::user_manager::DefaultUserManager;
 use maowbot_core::cache::message_cache::ChatCache;
 use maowbot_core::repositories::postgres::analytics::PostgresAnalyticsRepository;
+use maowbot_core::repositories::postgres::autostart::{PostgresAutostartRepository, AutostartRepository};
 use maowbot_core::repositories::postgres::bot_config::PostgresBotConfigRepository;
 use maowbot_core::repositories::postgres::command_usage::PostgresCommandUsageRepository;
 use maowbot_core::repositories::postgres::commands::PostgresCommandRepository;
@@ -61,6 +62,7 @@ pub struct ServerContext {
     /// The raw references in case you need them.
     pub creds_repo: Arc<PostgresCredentialsRepository>,
     pub bot_config_repo: Arc<PostgresBotConfigRepository>,
+    pub autostart_repo: Arc<dyn AutostartRepository + Send + Sync>,
     pub command_repo: Arc<dyn CommandRepository + Send + Sync>,
     pub command_usage_repo: Arc<dyn CommandUsageRepository + Send + Sync>,
     pub redeem_repo: Arc<dyn RedeemRepository + Send + Sync>,
@@ -138,6 +140,7 @@ impl ServerContext {
         let cmd_usage_repo = Arc::new(PostgresCommandUsageRepository::new(db.pool().clone()));
         let redeem_repo = Arc::new(PostgresRedeemRepository::new(db.pool().clone()));
         let redeem_usage_repo = Arc::new(PostgresRedeemUsageRepository::new(db.pool().clone()));
+        let autostart_repo = Arc::new(PostgresAutostartRepository::new(db.pool().clone()));
 
         // 4) Auth Manager
         let auth_manager = AuthManager::new(
@@ -327,6 +330,7 @@ impl ServerContext {
             redeem_usage_repo.clone(),
             creds_repo_arc.clone(),
             Some(ai_api_impl.clone()),
+            autostart_repo.clone(),
         );
         // Let plugin manager see the event bus
         plugin_manager.set_event_bus(event_bus.clone());
@@ -432,6 +436,7 @@ impl ServerContext {
             redeem_service,
             creds_repo: creds_repo_arc,
             bot_config_repo: bot_config_repo,
+            autostart_repo: autostart_repo as Arc<dyn AutostartRepository + Send + Sync>,
             command_repo: cmd_repo,
             command_usage_repo: cmd_usage_repo.clone(),
             redeem_repo: redeem_repo.clone(),

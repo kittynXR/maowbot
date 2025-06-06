@@ -12,6 +12,7 @@ use maowbot_proto::maowbot::services::{
     twitch_service_client::TwitchServiceClient,
     discord_service_client::DiscordServiceClient,
     vr_chat_service_client::VrChatServiceClient,
+    autostart_service_client::AutostartServiceClient,
 };
 use std::time::Duration;
 
@@ -29,6 +30,7 @@ pub struct GrpcClient {
     pub twitch: TwitchServiceClient<Channel>,
     pub discord: DiscordServiceClient<Channel>,
     pub vrchat: VrChatServiceClient<Channel>,
+    pub autostart: AutostartServiceClient<Channel>,
 }
 
 impl GrpcClient {
@@ -74,6 +76,7 @@ impl GrpcClient {
             twitch: TwitchServiceClient::new(channel.clone()),
             discord: DiscordServiceClient::new(channel.clone()),
             vrchat: VrChatServiceClient::new(channel.clone()),
+            autostart: AutostartServiceClient::new(channel.clone()),
         })
     }
     
@@ -113,6 +116,7 @@ impl GrpcClient {
             twitch: TwitchServiceClient::new(channel.clone()),
             discord: DiscordServiceClient::new(channel.clone()),
             vrchat: VrChatServiceClient::new(channel.clone()),
+            autostart: AutostartServiceClient::new(channel.clone()),
         })
     }
 }

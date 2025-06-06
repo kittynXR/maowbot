@@ -23,6 +23,7 @@ pub mod help_drip;
 pub mod help_test_harness;
 pub mod help_simulate;
 pub mod help_system;
+pub mod help_osc;
 
 fn show_general_help() -> String {
     let text = r#"MaowBot TUI - Available Commands:
@@ -51,6 +52,7 @@ Platform-Specific:
   twitch                 Twitch-specific commands (join, part, message, etc.)
   vrchat                 VRChat integration (world, avatar, instance)
   drip                   VRChat avatar parameters and outfits
+  osc                    OSC service control for VRChat parameters and chatbox
 
 System & Development:
   plugin                 Plugin management (enable, disable, remove)
@@ -93,6 +95,7 @@ pub fn show_command_help(command: &str) -> String {
         "discord" => "Discord commands are not yet fully implemented via gRPC.".to_owned(),
         "vrchat" => help_vrchat::VRCHAT_HELP_TEXT.to_owned(),
         "drip" => help_drip::DRIP_HELP_TEXT.to_owned(),
+        "osc" => help_osc::OSC_HELP_TEXT.to_owned(),
 
         // System & Development
         "plugin" => help_plugin::PLUGIN_HELP_TEXT.to_owned(),

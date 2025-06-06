@@ -2,11 +2,10 @@ use crate::GrpcClient;
 use super::CommandError;
 use maowbot_proto::maowbot::services::{
     StartPlatformRuntimeRequest, StopPlatformRuntimeRequest, RuntimeConfig,
-    JoinChannelRequest, GetConfigRequest, SetConfigRequest,
-    ListCredentialsRequest, GetUserRequest,
+    JoinChannelRequest, ListCredentialsRequest, GetUserRequest,
+    ListAutostartEntriesRequest, SetAutostartRequest,
 };
-use std::collections::{HashMap, HashSet};
-use serde::{Serialize, Deserialize};
+use std::collections::HashMap;
 
 /// Result of autostart configuration
 pub struct AutostartResult {
@@ -39,62 +38,57 @@ pub struct PlatformAccountInfo {
 pub struct ConnectivityCommands;
 
 impl ConnectivityCommands {
-    /// Configure autostart for a platform account
+    /// Configure autostart for a platform account using the gRPC service
     pub async fn configure_autostart(
         client: &GrpcClient,
         enable: bool,
         platform: &str,
         account: &str,
     ) -> Result<AutostartResult, CommandError> {
-        // Get current autostart config
-        let get_request = GetConfigRequest {
-            key: "autostart".to_string(),
-            include_metadata: false,
+        let request = SetAutostartRequest {
+            platform: platform.to_string(),
+            account_name: account.to_string(),
+            enabled: enable,
         };
         
-        let mut config_client = client.config.clone();
-        let current_val = match config_client.get_config(get_request).await {
-            Ok(response) => {
-                response.into_inner()
-                    .config
-                    .map(|c| c.value)
-                    .unwrap_or_default()
-            }
-            Err(_) => String::new(),
-        };
-        
-        // Parse or create autostart config
-        let mut config_obj: AutostartConfig = if current_val.is_empty() {
-            AutostartConfig::new()
-        } else {
-            serde_json::from_str(&current_val)
-                .unwrap_or_else(|_| AutostartConfig::new())
-        };
-        
-        // Update the config
-        config_obj.set_platform_account(platform, account, enable);
-        
-        // Save back to bot_config
-        let new_str = serde_json::to_string_pretty(&config_obj)
-            .map_err(|e| CommandError::DataError(format!("Failed to serialize autostart config: {}", e)))?;
-            
-        let set_request = SetConfigRequest {
-            key: "autostart".to_string(),
-            value: new_str,
-            metadata: None,
-            validate_only: false,
-        };
-        
-        config_client
-            .set_config(set_request)
+        let mut autostart_client = client.autostart.clone();
+        let response = autostart_client
+            .set_autostart(request)
             .await
-            .map_err(|e| CommandError::GrpcError(format!("Failed to save autostart config: {}", e)))?;
+            .map_err(|e| CommandError::GrpcError(format!("Failed to set autostart: {}", e)))?;
             
+        let response = response.into_inner();
+        
+        if !response.success {
+            return Err(CommandError::GrpcError(response.message));
+        }
+        
         Ok(AutostartResult {
             platform: platform.to_string(),
             account: account.to_string(),
             enabled: enable,
         })
+    }
+    
+    /// List autostart entries
+    pub async fn list_autostart_entries(
+        client: &GrpcClient,
+    ) -> Result<Vec<(String, String, bool)>, CommandError> {
+        let request = ListAutostartEntriesRequest {
+            enabled_only: false,
+        };
+        
+        let mut autostart_client = client.autostart.clone();
+        let response = autostart_client
+            .list_autostart_entries(request)
+            .await
+            .map_err(|e| CommandError::GrpcError(format!("Failed to list autostart entries: {}", e)))?;
+            
+        let response = response.into_inner();
+        
+        Ok(response.entries.into_iter()
+            .map(|e| (e.platform, e.account_name, e.enabled))
+            .collect())
     }
     
     /// Start a platform runtime
@@ -245,43 +239,5 @@ impl ConnectivityCommands {
             .map_err(|e| CommandError::GrpcError(format!("Failed to join channel: {}", e)))?;
             
         Ok(())
-    }
-}
-
-// AutostartConfig structure matching the core implementation
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct AutostartConfig {
-    pub twitch_irc: Vec<String>,
-    pub twitch_eventsub: Vec<String>,
-    pub discord: Vec<String>,
-    pub vrchat: Vec<String>,
-}
-
-impl AutostartConfig {
-    pub fn new() -> Self {
-        Self {
-            twitch_irc: Vec::new(),
-            twitch_eventsub: Vec::new(),
-            discord: Vec::new(),
-            vrchat: Vec::new(),
-        }
-    }
-    
-    pub fn set_platform_account(&mut self, platform: &str, account: &str, enable: bool) {
-        let list = match platform.to_lowercase().as_str() {
-            "twitch-irc" => &mut self.twitch_irc,
-            "twitch-eventsub" => &mut self.twitch_eventsub,
-            "discord" => &mut self.discord,
-            "vrchat" => &mut self.vrchat,
-            _ => return,
-        };
-        
-        if enable {
-            if !list.iter().any(|a| a.eq_ignore_ascii_case(account)) {
-                list.push(account.to_string());
-            }
-        } else {
-            list.retain(|a| !a.eq_ignore_ascii_case(account));
-        }
     }
 }

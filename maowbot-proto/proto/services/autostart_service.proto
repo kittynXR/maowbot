@@ -1,0 +1,66 @@
+syntax = "proto3";
+
+package maowbot.services;
+
+// Autostart service for managing platform connection autostart configuration
+service AutostartService {
+    // List all autostart entries
+    rpc ListAutostartEntries(ListAutostartEntriesRequest) returns (ListAutostartEntriesResponse);
+    
+    // Enable or disable autostart for a platform/account
+    rpc SetAutostart(SetAutostartRequest) returns (SetAutostartResponse);
+    
+    // Check if a specific platform/account is set to autostart
+    rpc IsAutostartEnabled(IsAutostartEnabledRequest) returns (IsAutostartEnabledResponse);
+    
+    // Remove an autostart entry completely
+    rpc RemoveAutostart(RemoveAutostartRequest) returns (RemoveAutostartResponse);
+}
+
+message AutostartEntry {
+    int32 id = 1;
+    string platform = 2;
+    string account_name = 3;
+    bool enabled = 4;
+    string created_at = 5;
+    string updated_at = 6;
+}
+
+message ListAutostartEntriesRequest {
+    // If true, only return enabled entries
+    bool enabled_only = 1;
+}
+
+message ListAutostartEntriesResponse {
+    repeated AutostartEntry entries = 1;
+}
+
+message SetAutostartRequest {
+    string platform = 1;
+    string account_name = 2;
+    bool enabled = 3;
+}
+
+message SetAutostartResponse {
+    bool success = 1;
+    string message = 2;
+}
+
+message IsAutostartEnabledRequest {
+    string platform = 1;
+    string account_name = 2;
+}
+
+message IsAutostartEnabledResponse {
+    bool enabled = 1;
+}
+
+message RemoveAutostartRequest {
+    string platform = 1;
+    string account_name = 2;
+}
+
+message RemoveAutostartResponse {
+    bool success = 1;
+    string message = 2;
+}

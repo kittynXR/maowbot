@@ -149,8 +149,15 @@ impl ConfigService for ConfigServiceImpl {
         };
         
         // Save the config
-        self.bot_config_repo.set_value_kv_meta(&req.key, &req.value, meta_json).await
-            .map_err(|e| Status::internal(format!("Failed to set config: {}", e)))?;
+        // If metadata is provided, use set_value_kv_meta, otherwise use simple set_value
+        if meta_json.is_some() {
+            self.bot_config_repo.set_value_kv_meta(&req.key, &req.value, meta_json).await
+                .map_err(|e| Status::internal(format!("Failed to set config: {}", e)))?;
+        } else {
+            // For simple key-value pairs without metadata, use set_value
+            self.bot_config_repo.set_value(&req.key, &req.value).await
+                .map_err(|e| Status::internal(format!("Failed to set config: {}", e)))?;
+        }
         
         // Build response
         let now = Utc::now();

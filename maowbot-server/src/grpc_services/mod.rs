@@ -12,6 +12,7 @@ pub mod twitch_service;
 pub mod discord_service;
 pub mod vrchat_service;
 pub mod osc_service;
+pub mod autostart_service;
 
 // Re-export service implementations
 pub use user_service::UserServiceImpl;
@@ -26,3 +27,4 @@ pub use twitch_service::TwitchServiceImpl;
 pub use discord_service::DiscordServiceImpl;
 pub use vrchat_service::VRChatServiceImpl;
 pub use osc_service::OscServiceImpl;
+pub use autostart_service::AutostartServiceImpl;

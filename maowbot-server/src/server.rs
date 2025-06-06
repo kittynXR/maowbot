@@ -38,6 +38,7 @@ use maowbot_proto::maowbot::services::{
     discord_service_server::DiscordServiceServer,
     vr_chat_service_server::VrChatServiceServer,
     osc_service_server::OscServiceServer,
+    autostart_service_server::AutostartServiceServer,
 };
 
 use crate::Args;
@@ -111,7 +112,7 @@ pub async fn run_server(args: Args) -> Result<(), Error> {
     let bot_api = Arc::new(BotApiWrapper::new(ctx.plugin_manager.clone()));
     
     // 4) Autostart any configured accounts
-    if let Err(e) = run_autostart(bot_api.as_ref(), bot_api.clone()).await {
+    if let Err(e) = run_autostart(ctx.autostart_repo.as_ref(), bot_api.clone()).await {
         error!("Autostart error => {:?}", e);
     }
     
@@ -268,6 +269,9 @@ pub async fn run_server(args: Args) -> Result<(), Error> {
             Arc::new(maowbot_core::repositories::postgres::osc_toggle::PostgresOscToggleRepository::new(
                 ctx.db.pool().clone()
             )),
+        )))
+        .add_service(AutostartServiceServer::new(AutostartServiceImpl::new(
+            ctx.autostart_repo.clone(),
         )))
         .serve(addr);
 
@@ -1041,5 +1045,20 @@ impl maowbot_common::traits::api::DiscordApi for BotApiWrapper {
     
     async fn remove_role_from_discord_user(&self, account_name: &str, guild_id: &str, user_id: &str, role_id: &str) -> Result<(), maowbot_common::error::Error> {
         self.plugin_manager.remove_role_from_discord_user(account_name, guild_id, user_id, role_id).await
+    }
+}
+
+#[async_trait]
+impl maowbot_common::traits::api::AutostartApi for BotApiWrapper {
+    async fn list_autostart_entries(&self) -> Result<Vec<(String, String, bool)>, maowbot_common::error::Error> {
+        self.plugin_manager.list_autostart_entries().await
+    }
+    
+    async fn set_autostart(&self, platform: &str, account: &str, enabled: bool) -> Result<(), maowbot_common::error::Error> {
+        self.plugin_manager.set_autostart(platform, account, enabled).await
+    }
+    
+    async fn is_autostart_enabled(&self, platform: &str, account: &str) -> Result<bool, maowbot_common::error::Error> {
+        self.plugin_manager.is_autostart_enabled(platform, account).await
     }
 }
