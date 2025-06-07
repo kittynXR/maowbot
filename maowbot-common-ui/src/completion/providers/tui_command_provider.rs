@@ -162,6 +162,39 @@ impl TuiCommandCompletionProvider {
                 description: "VRChat avatar parameters".to_string(),
                 nested_subcommands: None,
             },
+            CommandInfo {
+                name: "obs".to_string(),
+                subcommands: vec![
+                    "version", "list", "select", "source", "start", "stop", "status", "instance"
+                ].into_iter().map(String::from).collect(),
+                description: "OBS Studio integration".to_string(),
+                nested_subcommands: Some(vec![
+                    ("list".to_string(), vec![
+                        "scenes".to_string(),
+                        "sources".to_string(),
+                    ]),
+                    ("select".to_string(), vec![
+                        "scene".to_string(),
+                        "source".to_string(),
+                    ]),
+                    ("source".to_string(), vec![
+                        "refresh".to_string(),
+                        "hide".to_string(),
+                        "show".to_string(),
+                    ]),
+                    ("start".to_string(), vec![
+                        "stream".to_string(),
+                        "record".to_string(),
+                    ]),
+                    ("stop".to_string(), vec![
+                        "stream".to_string(),
+                        "record".to_string(),
+                    ]),
+                    ("instance".to_string(), vec![
+                        "set".to_string(),
+                    ]),
+                ]),
+            },
             
             // System & Development
             CommandInfo {

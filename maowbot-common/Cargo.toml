@@ -6,6 +6,7 @@ edition = "2024"
 
 [dependencies]
 maowbot-proto = { path = "../maowbot-proto" }
+maowbot-obs = { path = "../maowbot-obs" }
 
 twilight = {  workspace = true }
 twilight-gateway = {  workspace = true }

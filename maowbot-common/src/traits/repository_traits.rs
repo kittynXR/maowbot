@@ -381,3 +381,13 @@ pub trait DiscordRepository {
     async fn delete_live_role(&self, guild_id: &str) -> Result<(), Error>;
     async fn list_live_roles(&self) -> Result<Vec<DiscordLiveRoleRecord>, Error>;
 }
+
+/// Repository trait for managing OBS instances
+#[async_trait]
+pub trait ObsRepository: Send + Sync {
+    async fn get_instance(&self, instance_number: u32) -> Result<Option<maowbot_obs::ObsInstance>, Error>;
+    async fn update_instance(&self, instance: &maowbot_obs::ObsInstance) -> Result<(), Error>;
+    async fn set_connection_status(&self, instance_number: u32, connected: bool) -> Result<(), Error>;
+    async fn list_instances(&self) -> Result<Vec<maowbot_obs::ObsInstance>, Error>;
+    async fn get_connection_info(&self, instance_number: u32) -> Result<Option<(bool, Option<DateTime<Utc>>)>, Error>;
+}

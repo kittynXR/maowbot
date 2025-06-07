@@ -71,6 +71,10 @@ impl AuthManager {
             Platform::VRChat => Box::new(VRChatAuthenticator::new()),
             Platform::TwitchIRC => Box::new(TwitchIrcAuthenticator::new(client_id, client_secret)),
             Platform::TwitchEventSub => Box::new(TwitchEventSubAuthenticator::new(client_id, client_secret)),
+            Platform::OBS => {
+                // OBS doesn't use OAuth, so we can't create an authenticator this way
+                return Err(Error::Platform("OBS does not use OAuth authentication".into()));
+            }
         };
 
         new_auth.initialize().await?;
@@ -106,6 +110,10 @@ impl AuthManager {
             Platform::VRChat => Box::new(VRChatAuthenticator::new()),
             Platform::TwitchIRC => Box::new(TwitchIrcAuthenticator::new(client_id, client_secret)),
             Platform::TwitchEventSub => Box::new(TwitchEventSubAuthenticator::new(client_id, client_secret)),
+            Platform::OBS => {
+                // OBS doesn't use OAuth, so we can't create an authenticator this way
+                return Err(Error::Platform("OBS does not use OAuth authentication".into()));
+            }
         };
         authenticator.set_is_bot(is_bot);
         authenticator.initialize().await?;

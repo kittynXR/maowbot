@@ -1,0 +1,226 @@
+syntax = "proto3";
+
+package maowbot.services;
+
+import "google/protobuf/empty.proto";
+import "common.proto";
+
+service OBSService {
+    // Instance management
+    rpc ConfigureInstance(ConfigureInstanceRequest) returns (ConfigureInstanceResponse);
+    rpc ListInstances(ListInstancesRequest) returns (ListInstancesResponse);
+    rpc GetInstanceStatus(GetInstanceStatusRequest) returns (GetInstanceStatusResponse);
+    
+    // Scene operations
+    rpc ListScenes(ListScenesRequest) returns (ListScenesResponse);
+    rpc SelectScene(SelectSceneRequest) returns (SelectSceneResponse);
+    
+    // Source operations
+    rpc ListSources(ListSourcesRequest) returns (ListSourcesResponse);
+    rpc SelectSource(SelectSourceRequest) returns (SelectSourceResponse);
+    rpc ShowSource(ShowSourceRequest) returns (ShowSourceResponse);
+    rpc HideSource(HideSourceRequest) returns (HideSourceResponse);
+    rpc RefreshBrowserSource(RefreshBrowserSourceRequest) returns (RefreshBrowserSourceResponse);
+    
+    // Recording/Streaming
+    rpc StartStream(StartStreamRequest) returns (StartStreamResponse);
+    rpc StopStream(StopStreamRequest) returns (StopStreamResponse);
+    rpc GetStreamStatus(GetStreamStatusRequest) returns (GetStreamStatusResponse);
+    rpc StartRecording(StartRecordingRequest) returns (StartRecordingResponse);
+    rpc StopRecording(StopRecordingRequest) returns (StopRecordingResponse);
+    rpc GetRecordingStatus(GetRecordingStatusRequest) returns (GetRecordingStatusResponse);
+}
+
+// Instance management messages
+message ConfigureInstanceRequest {
+    uint32 instance_number = 1;
+    string host = 2;
+    uint32 port = 3;
+    bool use_ssl = 4;
+    optional string password = 5;
+    bool use_password = 6;
+}
+
+message ConfigureInstanceResponse {
+    bool success = 1;
+    optional string error_message = 2;
+}
+
+message ListInstancesRequest {
+    // Empty - list all instances
+}
+
+message ListInstancesResponse {
+    repeated ObsInstance instances = 1;
+}
+
+message ObsInstance {
+    uint32 instance_number = 1;
+    string host = 2;
+    uint32 port = 3;
+    bool use_ssl = 4;
+    bool has_password = 5;
+    bool is_connected = 6;
+    optional string last_connected_at = 7;
+    bool use_password = 8;
+}
+
+message GetInstanceStatusRequest {
+    uint32 instance_number = 1;
+}
+
+message GetInstanceStatusResponse {
+    bool is_connected = 1;
+    optional string version = 2;
+    optional string error_message = 3;
+}
+
+// Scene messages
+message ListScenesRequest {
+    uint32 instance_number = 1;
+}
+
+message ListScenesResponse {
+    repeated ObsScene scenes = 1;
+}
+
+message ObsScene {
+    string name = 1;
+    uint32 index = 2;
+    bool is_current = 3;
+}
+
+message SelectSceneRequest {
+    uint32 instance_number = 1;
+    oneof selector {
+        string scene_name = 2;
+        uint32 scene_index = 3;
+    }
+}
+
+message SelectSceneResponse {
+    bool success = 1;
+    optional string error_message = 2;
+}
+
+// Source messages
+message ListSourcesRequest {
+    uint32 instance_number = 1;
+}
+
+message ListSourcesResponse {
+    repeated ObsSource sources = 1;
+}
+
+message ObsSource {
+    string name = 1;
+    string id = 2;
+    string kind = 3;
+    bool is_visible = 4;
+    optional string scene_name = 5;
+    uint32 index = 6;
+}
+
+message SelectSourceRequest {
+    uint32 instance_number = 1;
+    oneof selector {
+        string source_name = 2;
+        uint32 source_index = 3;
+    }
+}
+
+message SelectSourceResponse {
+    bool success = 1;
+    string selected_source = 2;
+    optional string error_message = 3;
+}
+
+message ShowSourceRequest {
+    uint32 instance_number = 1;
+    string source_name = 2;
+    optional string scene_name = 3;
+}
+
+message ShowSourceResponse {
+    bool success = 1;
+    optional string error_message = 2;
+}
+
+message HideSourceRequest {
+    uint32 instance_number = 1;
+    string source_name = 2;
+    optional string scene_name = 3;
+}
+
+message HideSourceResponse {
+    bool success = 1;
+    optional string error_message = 2;
+}
+
+message RefreshBrowserSourceRequest {
+    uint32 instance_number = 1;
+    string source_name = 2;
+}
+
+message RefreshBrowserSourceResponse {
+    bool success = 1;
+    optional string error_message = 2;
+}
+
+// Streaming messages
+message StartStreamRequest {
+    uint32 instance_number = 1;
+}
+
+message StartStreamResponse {
+    bool success = 1;
+    optional string error_message = 2;
+}
+
+message StopStreamRequest {
+    uint32 instance_number = 1;
+}
+
+message StopStreamResponse {
+    bool success = 1;
+    optional string error_message = 2;
+}
+
+message GetStreamStatusRequest {
+    uint32 instance_number = 1;
+}
+
+message GetStreamStatusResponse {
+    bool is_streaming = 1;
+    optional uint64 stream_time_ms = 2;
+    optional uint64 bytes_sent = 3;
+}
+
+// Recording messages
+message StartRecordingRequest {
+    uint32 instance_number = 1;
+}
+
+message StartRecordingResponse {
+    bool success = 1;
+    optional string error_message = 2;
+}
+
+message StopRecordingRequest {
+    uint32 instance_number = 1;
+}
+
+message StopRecordingResponse {
+    bool success = 1;
+    optional string error_message = 2;
+}
+
+message GetRecordingStatusRequest {
+    uint32 instance_number = 1;
+}
+
+message GetRecordingStatusResponse {
+    bool is_recording = 1;
+    optional uint64 record_time_ms = 2;
+    optional uint64 bytes_written = 3;
+}

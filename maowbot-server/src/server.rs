@@ -39,6 +39,7 @@ use maowbot_proto::maowbot::services::{
     vr_chat_service_server::VrChatServiceServer,
     osc_service_server::OscServiceServer,
     autostart_service_server::AutostartServiceServer,
+    obs_service_server::ObsServiceServer,
 };
 
 use crate::Args;
@@ -276,6 +277,10 @@ pub async fn run_server(args: Args) -> Result<(), Error> {
         )))
         .add_service(AutostartServiceServer::new(AutostartServiceImpl::new(
             ctx.autostart_repo.clone(),
+        )))
+        .add_service(ObsServiceServer::new(ObsServiceImpl::new(
+            ctx.platform_manager.clone(),
+            ctx.obs_repo.clone(),
         )))
         .serve(addr);
 

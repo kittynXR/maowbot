@@ -14,6 +14,7 @@ enum Platform {
   PLATFORM_VRCHAT = 4;
   PLATFORM_VRCHAT_PIPELINE = 5;
   PLATFORM_TWITCH_HELIX = 6;
+  PLATFORM_OBS = 7;
 }
 
 enum ErrorCode {

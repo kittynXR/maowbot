@@ -42,6 +42,7 @@ use maowbot_core::repositories::postgres::redeem_usage::PostgresRedeemUsageRepos
 use maowbot_core::repositories::postgres::redeems::PostgresRedeemRepository;
 use maowbot_core::repositories::postgres::user::UserRepository;
 use maowbot_core::repositories::postgres::user_analysis::PostgresUserAnalysisRepository;
+use maowbot_core::repositories::postgres::obs::PostgresObsRepository;
 use maowbot_osc::MaowOscManager;
 use maowbot_osc::oscquery::OscQueryServer;
 use maowbot_osc::robo::RoboControlSystem;
@@ -67,6 +68,7 @@ pub struct ServerContext {
     pub command_usage_repo: Arc<dyn CommandUsageRepository + Send + Sync>,
     pub redeem_repo: Arc<dyn RedeemRepository + Send + Sync>,
     pub redeem_usage_repo: Arc<dyn RedeemUsageRepository + Send + Sync>,
+    pub obs_repo: Arc<PostgresObsRepository>,
 
     pub osc_manager: Arc<MaowOscManager>,
     pub robo_control: Arc<tokio::sync::Mutex<RoboControlSystem>>,
@@ -141,6 +143,7 @@ impl ServerContext {
         let redeem_repo = Arc::new(PostgresRedeemRepository::new(db.pool().clone()));
         let redeem_usage_repo = Arc::new(PostgresRedeemUsageRepository::new(db.pool().clone()));
         let autostart_repo = Arc::new(PostgresAutostartRepository::new(db.pool().clone()));
+        let obs_repo = Arc::new(PostgresObsRepository::new(db.pool().clone(), encryptor.clone()));
 
         // 4) Auth Manager
         let auth_manager = AuthManager::new(
@@ -187,6 +190,8 @@ impl ServerContext {
             event_bus.clone(),
             creds_repo_arc.clone(),
             discord_repo.clone(), // Pass Discord repository to PlatformManager
+            encryptor.clone(),
+            db.pool().clone(),
         ));
 
         // Command service - now with platform_manager
@@ -441,6 +446,7 @@ impl ServerContext {
             command_usage_repo: cmd_usage_repo.clone(),
             redeem_repo: redeem_repo.clone(),
             redeem_usage_repo: redeem_usage_repo.clone(),
+            obs_repo,
             osc_manager: osc_manager_arc.clone(),
             robo_control,
             oscquery_server: Arc::clone(&osc_manager_arc.oscquery_server),

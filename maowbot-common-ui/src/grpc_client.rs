@@ -13,6 +13,7 @@ use maowbot_proto::maowbot::services::{
     discord_service_client::DiscordServiceClient,
     vr_chat_service_client::VrChatServiceClient,
     autostart_service_client::AutostartServiceClient,
+    obs_service_client::ObsServiceClient,
 };
 use std::time::Duration;
 
@@ -31,6 +32,7 @@ pub struct GrpcClient {
     pub discord: DiscordServiceClient<Channel>,
     pub vrchat: VrChatServiceClient<Channel>,
     pub autostart: AutostartServiceClient<Channel>,
+    pub obs: ObsServiceClient<Channel>,
 }
 
 impl GrpcClient {
@@ -77,6 +79,7 @@ impl GrpcClient {
             discord: DiscordServiceClient::new(channel.clone()),
             vrchat: VrChatServiceClient::new(channel.clone()),
             autostart: AutostartServiceClient::new(channel.clone()),
+            obs: ObsServiceClient::new(channel.clone()),
         })
     }
     
@@ -117,6 +120,7 @@ impl GrpcClient {
             discord: DiscordServiceClient::new(channel.clone()),
             vrchat: VrChatServiceClient::new(channel.clone()),
             autostart: AutostartServiceClient::new(channel.clone()),
+            obs: ObsServiceClient::new(channel.clone()),
         })
     }
 }

@@ -23,6 +23,24 @@ pub async fn handle_connection_command(
             let platform = args[1];
             let account = args.get(2).map(|s| *s).unwrap_or("");
             
+            // Handle OBS instances specially
+            if platform == "obs" {
+                if account.is_empty() {
+                    return "Usage: connection start obs <instance_number>".to_string();
+                }
+                // Convert instance number to obs-N format
+                let instance_account = if account.starts_with("obs-") {
+                    account.to_string()
+                } else {
+                    format!("obs-{}", account)
+                };
+                
+                match ConnectivityCommands::start_platform(client, platform, &instance_account).await {
+                    Ok(result) => return format!("Started OBS instance {}", account),
+                    Err(e) => return format!("Error starting OBS instance: {}", e),
+                }
+            }
+            
             if account.is_empty() {
                 // List available accounts and prompt for selection
                 match ConnectivityCommands::list_platform_accounts(client, platform).await {
@@ -97,6 +115,21 @@ pub async fn handle_connection_command(
             
             if account.is_empty() {
                 return "Please specify an account to stop.".to_string();
+            }
+            
+            // Handle OBS instances specially
+            if platform == "obs" {
+                // Convert instance number to obs-N format
+                let instance_account = if account.starts_with("obs-") {
+                    account.to_string()
+                } else {
+                    format!("obs-{}", account)
+                };
+                
+                match ConnectivityCommands::stop_platform(client, platform, &instance_account).await {
+                    Ok(result) => return format!("Stopped OBS instance {}", account),
+                    Err(e) => return format!("Error stopping OBS instance: {}", e),
+                }
             }
             
             // Pass the account name directly
@@ -241,7 +274,7 @@ pub async fn handle_connection_command(
             }
             
             // Group by platform
-            let platforms = ["TwitchIrc", "TwitchEventSub", "Discord", "VRChat"];
+            let platforms = ["TwitchIrc", "TwitchEventSub", "Discord", "VRChat", "OBS"];
             
             for platform_name in &platforms {
                 output.push_str(&format!("{}:\n", platform_name));
@@ -256,6 +289,7 @@ pub async fn handle_connection_command(
                                     maowbot_proto::maowbot::common::Platform::TwitchEventsub => "TwitchEventSub",
                                     maowbot_proto::maowbot::common::Platform::Discord => "Discord",
                                     maowbot_proto::maowbot::common::Platform::Vrchat => "VRChat",
+                                    maowbot_proto::maowbot::common::Platform::Obs => "OBS",
                                     _ => return false,
                                 };
                                 display_name == *platform_name
@@ -287,31 +321,56 @@ pub async fn handle_connection_command(
                                 "TwitchEventSub" => "twitch-eventsub", 
                                 "Discord" => "discord",
                                 "VRChat" => "vrchat",
+                                "OBS" => "obs",
                                 _ => platform_name,
                             };
                             
-                            // Check if runtime is active for this account
-                            // Server might return either username or user_id as account_name
-                            let user_id = &cred.user_id;
-                            let is_running = active_runtimes.iter().any(|rt| {
-                                rt.platform == platform_runtime_name && 
-                                (rt.account_name == *username || rt.account_name == *user_id)
-                            });
-                            
-                            if is_running {
-                                let runtime = active_runtimes.iter()
-                                    .find(|rt| rt.platform == platform_runtime_name && 
-                                               (rt.account_name == *username || rt.account_name == *user_id))
-                                    .unwrap();
-                                output.push_str(&format!(
-                                    "  - {} ({}) [CONNECTED - {}s]\n",
-                                    username, display_name, runtime.uptime_seconds
-                                ));
+                            // Special handling for OBS instances
+                            if *platform_name == "OBS" {
+                                let is_running = active_runtimes.iter().any(|rt| {
+                                    rt.platform == platform_runtime_name && 
+                                    rt.account_name == *username
+                                });
+                                
+                                if is_running {
+                                    let runtime = active_runtimes.iter()
+                                        .find(|rt| rt.platform == platform_runtime_name && 
+                                                   rt.account_name == *username)
+                                        .unwrap();
+                                    output.push_str(&format!(
+                                        "  - Instance {} [CONNECTED - {}s]\n",
+                                        username.replace("obs-", ""), runtime.uptime_seconds
+                                    ));
+                                } else {
+                                    output.push_str(&format!(
+                                        "  - Instance {} [Available]\n",
+                                        username.replace("obs-", "")
+                                    ));
+                                }
                             } else {
-                                output.push_str(&format!(
-                                    "  - {} ({}) [Available]\n",
-                                    username, display_name
-                                ));
+                                // Check if runtime is active for this account
+                                // Server might return either username or user_id as account_name
+                                let user_id = &cred.user_id;
+                                let is_running = active_runtimes.iter().any(|rt| {
+                                    rt.platform == platform_runtime_name && 
+                                    (rt.account_name == *username || rt.account_name == *user_id)
+                                });
+                                
+                                if is_running {
+                                    let runtime = active_runtimes.iter()
+                                        .find(|rt| rt.platform == platform_runtime_name && 
+                                                   (rt.account_name == *username || rt.account_name == *user_id))
+                                        .unwrap();
+                                    output.push_str(&format!(
+                                        "  - {} ({}) [CONNECTED - {}s]\n",
+                                        username, display_name, runtime.uptime_seconds
+                                    ));
+                                } else {
+                                    output.push_str(&format!(
+                                        "  - {} ({}) [Available]\n",
+                                        username, display_name
+                                    ));
+                                }
                             }
                         }
                     }

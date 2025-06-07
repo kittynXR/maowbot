@@ -20,6 +20,7 @@ use super::drip_adapter;
 use super::member_adapter;
 use super::osc_adapter;
 use super::vrchat_adapter;
+use super::obs_adapter;
 use super::credential_adapter;
 use super::connection_adapter;
 use super::unified_user_adapter;
@@ -137,6 +138,11 @@ pub async fn dispatch_grpc(
 
         "vrchat" => {
             let msg = vrchat_adapter::handle_vrchat_command(args, client).await;
+            (false, Some(msg))
+        }
+        
+        "obs" => {
+            let msg = obs_adapter::handle_obs_command(args, client).await;
             (false, Some(msg))
         }
 

@@ -6,6 +6,7 @@ use tokio::sync::Mutex as AsyncMutex;
 use std::sync::Mutex;
 use twilight_cache_inmemory::InMemoryCache;
 use chrono::Utc;
+use sqlx::{Pool, Postgres};
 use maowbot_common::models::discord::DiscordEmbed;
 use maowbot_common::models::platform::{Platform, PlatformCredential};
 use maowbot_common::traits::platform_traits::{ChatPlatform, ConnectionStatus, PlatformIntegration};
@@ -13,7 +14,7 @@ use maowbot_common::traits::repository_traits::CredentialsRepository;
 use crate::eventbus::EventBus;
 use crate::services::message_service::MessageService;
 use crate::services::user_service::UserService;
-use crate::Error;
+use crate::{Error, crypto::Encryptor};
 
 use crate::platforms::discord::runtime::DiscordPlatform;
 use crate::platforms::twitch::client::TwitchHelixClient;
@@ -21,6 +22,7 @@ use crate::platforms::twitch::runtime::TwitchPlatform;
 use crate::platforms::vrchat_pipeline::runtime::VRChatPlatform;
 use crate::platforms::twitch_irc::runtime::TwitchIrcPlatform;
 use crate::platforms::twitch_eventsub::runtime::TwitchEventSubPlatform;
+use crate::platforms::obs::ObsRuntime;
 use crate::repositories::postgres::discord::PostgresDiscordRepository;
 
 pub struct PlatformRuntimeHandle {
@@ -32,6 +34,7 @@ pub struct PlatformRuntimeHandle {
     pub twitch_irc_instance: Option<Arc<AsyncMutex<TwitchIrcPlatform>>>,
     pub vrchat_instance: Option<Arc<AsyncMutex<VRChatPlatform>>>,
     pub discord_instance: Option<Arc<DiscordPlatform>>,
+    pub obs_instance: Option<Arc<ObsRuntime>>,
 }
 
 /// Manages starting/stopping platform runtimes, holding references to them, etc.
@@ -40,6 +43,8 @@ pub struct PlatformManager {
     user_svc: Arc<UserService>,
     event_bus: Arc<EventBus>,
     pub(crate) credentials_repo: Arc<dyn CredentialsRepository + Send + Sync>,
+    encryptor: Encryptor,
+    pool: Pool<Postgres>,
 
     pub active_runtimes: AsyncMutex<HashMap<(String, String), PlatformRuntimeHandle>>,
     pub discord_caches: AsyncMutex<HashMap<(String, String), Arc<InMemoryCache>>>,
@@ -55,12 +60,16 @@ impl PlatformManager {
         event_bus: Arc<EventBus>,
         credentials_repo: Arc<dyn CredentialsRepository + Send + Sync>,
         discord_repo: Arc<PostgresDiscordRepository>,
+        encryptor: Encryptor,
+        pool: Pool<Postgres>,
     ) -> Self {
         Self {
             message_service: Mutex::new(None),
             user_svc,
             event_bus,
             credentials_repo,
+            encryptor,
+            pool,
             active_runtimes: AsyncMutex::new(HashMap::new()),
             discord_caches: AsyncMutex::new(HashMap::new()),
             discord_repo,
@@ -122,15 +131,37 @@ impl PlatformManager {
         let platform = platform_str.parse::<Platform>()
             .map_err(|_| Error::Platform(format!("Unknown platform '{platform_str}'")))?;
 
-        let creds_opt = self.credentials_repo
-            .get_credentials(&platform, user.user_id)
-            .await?;
-        let creds = match creds_opt {
-            Some(c) => c,
-            None => {
-                return Err(Error::Auth(format!(
-                    "No credentials for user='{account_name}' and platform='{platform_str}'",
-                )));
+        // OBS doesn't use traditional credentials
+        let creds = if platform == Platform::OBS {
+            // Create a dummy credential for OBS
+            maowbot_common::models::platform::PlatformCredential {
+                credential_id: uuid::Uuid::new_v4(),
+                platform: Platform::OBS,
+                platform_id: None,
+                credential_type: maowbot_common::models::credential::CredentialType::APIKey,
+                user_id: user.user_id,
+                user_name: account_name.to_string(),
+                primary_token: format!("obs-instance-{}", account_name),
+                refresh_token: None,
+                additional_data: None,
+                expires_at: None,
+                created_at: chrono::Utc::now(),
+                updated_at: chrono::Utc::now(),
+                is_broadcaster: false,
+                is_teammate: false,
+                is_bot: false,
+            }
+        } else {
+            let creds_opt = self.credentials_repo
+                .get_credentials(&platform, user.user_id)
+                .await?;
+            match creds_opt {
+                Some(c) => c,
+                None => {
+                    return Err(Error::Auth(format!(
+                        "No credentials for user='{account_name}' and platform='{platform_str}'",
+                    )));
+                }
             }
         };
 
@@ -149,6 +180,15 @@ impl PlatformManager {
             Platform::VRChat => self.spawn_vrchat(creds).await?,
             Platform::TwitchIRC => self.spawn_twitch_irc(creds).await?,
             Platform::TwitchEventSub => self.spawn_twitch_eventsub(creds).await?,
+            Platform::OBS => {
+                // OBS uses instance numbers, not user credentials
+                // Extract instance number from account_name (e.g., "obs-1" -> 1)
+                let instance_num = account_name
+                    .strip_prefix("obs-")
+                    .and_then(|s| s.parse::<u32>().ok())
+                    .ok_or_else(|| Error::Platform(format!("Invalid OBS instance: {}", account_name)))?;
+                self.spawn_obs(instance_num, user.user_id).await?
+            }
         };
 
         {
@@ -301,6 +341,7 @@ impl PlatformManager {
             discord_instance: Some(cloned_discord),
             twitch_irc_instance: None,
             vrchat_instance: None,
+            obs_instance: None,
         })
     }
 
@@ -375,6 +416,7 @@ impl PlatformManager {
             twitch_irc_instance: None,
             vrchat_instance: None,
             discord_instance: None,
+            obs_instance: None,
         })
     }
 
@@ -431,6 +473,7 @@ impl PlatformManager {
             twitch_irc_instance: None,
             vrchat_instance: Some(arc_vrc),
             discord_instance: None,
+            obs_instance: None,
         })
     }
 
@@ -499,6 +542,7 @@ impl PlatformManager {
             twitch_irc_instance: Some(arc_irc),
             vrchat_instance: None,
             discord_instance: None,
+            obs_instance: None,
         })
     }
 
@@ -534,6 +578,39 @@ impl PlatformManager {
             twitch_irc_instance: None,
             vrchat_instance: None,
             discord_instance: None,
+            obs_instance: None,
+        })
+    }
+    
+    async fn spawn_obs(&self, instance_number: u32, user_id: uuid::Uuid) -> Result<PlatformRuntimeHandle, Error> {
+        let mut obs_runtime = ObsRuntime::new(
+            instance_number,
+            user_id,
+            self.pool.clone(),
+            self.event_bus.clone(),
+            self.encryptor.clone(),
+        ).await?;
+        
+        // Connect before creating the Arc
+        obs_runtime.connect().await?;
+        
+        let obs_arc = Arc::new(obs_runtime);
+        
+        // No need for a join_handle since the connection loop is already running
+        let join_handle = tokio::spawn(async move {
+            // The connection loop is already running inside obs_runtime
+            tokio::time::sleep(tokio::time::Duration::from_secs(0)).await;
+        });
+        
+        Ok(PlatformRuntimeHandle {
+            join_handle,
+            platform: "obs".into(),
+            user_id: user_id.to_string(),
+            started_at: Utc::now(),
+            twitch_irc_instance: None,
+            vrchat_instance: None,
+            discord_instance: None,
+            obs_instance: Some(obs_arc),
         })
     }
 
@@ -709,6 +786,31 @@ impl PlatformManager {
         Ok(())
     }
 
+    // -------------------------------------------------------------
+    // OBS helpers
+    // -------------------------------------------------------------
+    pub async fn get_obs_instance(&self, instance_number: u32) -> Result<Arc<ObsRuntime>, Error> {
+        // For OBS, we use "obs-<number>" as the account name
+        let account_name = format!("obs-{}", instance_number);
+        let user = self.user_svc.find_user_by_global_username(&account_name).await?;
+        let key = ("obs".to_string(), user.user_id.to_string());
+        
+        let guard = self.active_runtimes.lock().await;
+        if let Some(handle) = guard.get(&key) {
+            if let Some(obs_arc) = &handle.obs_instance {
+                Ok(Arc::clone(obs_arc))
+            } else {
+                Err(Error::Platform(format!(
+                    "No ObsRuntime instance found for obs-{}"
+                , instance_number)))
+            }
+        } else {
+            Err(Error::Platform(format!(
+                "No active OBS runtime for instance {}"
+            , instance_number)))
+        }
+    }
+    
     // -------------------------------------------------------------
     // VRChat helper
     // -------------------------------------------------------------

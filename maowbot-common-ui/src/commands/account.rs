@@ -15,6 +15,7 @@ fn platform_to_display_string(platform: Platform) -> &'static str {
         Platform::Discord => "Discord",
         Platform::Vrchat => "VRChat",
         Platform::VrchatPipeline => "VRChatPipeline",
+        Platform::Obs => "OBS",
         Platform::Unknown => "Unknown",
     }
 }

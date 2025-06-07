@@ -16,3 +16,4 @@ pub mod drip;
 pub mod discord;
 pub mod ai;
 pub mod osc_toggle;
+pub mod obs;

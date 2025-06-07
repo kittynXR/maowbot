@@ -24,6 +24,7 @@ pub mod help_test_harness;
 pub mod help_simulate;
 pub mod help_system;
 pub mod help_osc;
+pub mod help_obs;
 
 fn show_general_help() -> String {
     let text = r#"MaowBot TUI - Available Commands:
@@ -53,6 +54,7 @@ Platform-Specific:
   vrchat                 VRChat integration (world, avatar, instance)
   drip                   VRChat avatar parameters and outfits
   osc                    OSC service control for VRChat parameters and chatbox
+  obs                    OBS Studio control via WebSocket
 
 System & Development:
   plugin                 Plugin management (enable, disable, remove)
@@ -96,6 +98,7 @@ pub fn show_command_help(command: &str) -> String {
         "vrchat" => help_vrchat::VRCHAT_HELP_TEXT.to_owned(),
         "drip" => help_drip::DRIP_HELP_TEXT.to_owned(),
         "osc" => help_osc::OSC_HELP_TEXT.to_owned(),
+        "obs" => help_obs::OBS_HELP.to_owned(),
 
         // System & Development
         "plugin" => help_plugin::PLUGIN_HELP_TEXT.to_owned(),

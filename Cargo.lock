@@ -3514,6 +3514,7 @@ dependencies = [
  "http 1.3.1",
  "keyring",
  "libloading",
+ "maowbot-obs",
  "maowbot-proto",
  "rcgen",
  "reqwest",
@@ -3576,6 +3577,7 @@ dependencies = [
  "libloading",
  "maowbot-ai",
  "maowbot-common",
+ "maowbot-obs",
  "maowbot-proto",
  "maowbot_osc",
  "mockall",
@@ -3634,6 +3636,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "maowbot-obs"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "obws",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.12",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "maowbot-overlay"
 version = "0.1.0"
 dependencies = [
@@ -3680,6 +3696,7 @@ dependencies = [
  "maowbot-ai",
  "maowbot-common",
  "maowbot-core",
+ "maowbot-obs",
  "maowbot-proto",
  "maowbot-tui",
  "maowbot_osc",
@@ -4503,6 +4520,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "obws"
+version = "0.14.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "245cd220b1d4edd6ba01b30ef79d22dafb8b7acb4b00335297357053ba2c6c6e"
+dependencies = [
+ "base64 0.22.1",
+ "bitflags 2.9.1",
+ "futures-util",
+ "rgb",
+ "semver 1.0.26",
+ "serde",
+ "serde_json",
+ "serde_repr",
+ "serde_with",
+ "sha2 0.10.9",
+ "thiserror 2.0.12",
+ "time 0.3.41",
+ "tokio",
+ "tokio-tungstenite 0.26.2",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "once_cell"
 version = "1.21.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5303,6 +5344,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "rgb"
+version = "0.8.50"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "57397d16646700483b67d2dd6511d79318f9d057fdbd21a4066aeac8b41d310a"
+
+[[package]]
 name = "ring"
 version = "0.17.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5371,7 +5418,7 @@ version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "138e3e0acb6c9fb258b19b67cb8abd63c00679d2851805ea151465464fe9030a"
 dependencies = [
- "semver",
+ "semver 0.9.0",
 ]
 
 [[package]]
@@ -5614,6 +5661,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1d7eb9ef2c18661902cc47e535f9bc51b78acd254da71d375c2f6720d9a40403"
 dependencies = [
  "semver-parser",
+]
+
+[[package]]
+name = "semver"
+version = "1.0.26"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "56e6fa9c48d24d85fb3de5ad847117517440f6beceb7798af16b4a87d616b8d0"
+dependencies = [
+ "serde",
 ]
 
 [[package]]
