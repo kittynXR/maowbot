@@ -9,6 +9,10 @@ pub mod maowbot {
     
     pub mod services {
         tonic::include_proto!("maowbot.services");
+        
+        pub mod event_pipeline {
+            tonic::include_proto!("maowbot_proto.services.event_pipeline");
+        }
     }
 }
 

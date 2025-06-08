@@ -660,6 +660,7 @@ impl PluginManager {
                             user: pi.name.clone(),
                             text,
                             timestamp: chrono::Utc::now(),
+                            metadata: serde_json::Map::new(),
                         };
                         bus.publish(evt).await;
                     }

@@ -16,8 +16,15 @@ pub mod analytics;
 pub mod link_request;
 pub mod discord;
 pub mod ai;
+pub mod event_pipeline;
 
 pub use user_analysis::UserAnalysis;
 pub use command::{Command, CommandUsage};
 pub use redeem::{Redeem, RedeemUsage};
 pub use drip::{DripAvatar, DripFit, DripFitParam, DripProp};
+pub use event_pipeline::{
+    EventPipeline, PipelineFilter, PipelineAction, PipelineExecutionLog,
+    PipelineExecutionStatus, ActionExecutionResult, ActionExecutionStatus,
+    PipelineSharedData, EventTypeRegistry, EventHandlerRegistry, HandlerType,
+    CreatePipelineRequest, UpdatePipelineRequest, CreateFilterRequest, CreateActionRequest,
+};

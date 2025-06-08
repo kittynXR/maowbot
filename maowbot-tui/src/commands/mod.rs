@@ -18,6 +18,7 @@ mod drip;
 mod config;
 mod discord;
 mod obs;
+mod pipeline;
 pub mod system;
 pub mod test_grpc;
 pub mod user_grpc;
@@ -42,6 +43,7 @@ pub mod credential_adapter;
 pub mod connection_adapter;
 pub mod unified_user_adapter;
 pub mod diagnostics_adapter;
+pub mod pipeline_adapter;
 mod dispatch_grpc;
 pub mod test_harness;
 pub mod simulate;
@@ -230,6 +232,11 @@ pub async fn dispatch_async(
         "simulate" => {
             let msg = simulate::handle_simulate_command(args, bot_api, tui_module).await;
             (false, Some(msg))
+        }
+
+        "pipeline" => {
+            // Handled by gRPC dispatcher
+            (false, Some("Pipeline command should be handled by gRPC dispatcher".to_string()))
         }
 
         "quit" => {

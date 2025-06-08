@@ -9,6 +9,8 @@ pub mod db_logger_handle;
 use std::sync::Arc;
 use tokio::sync::{mpsc, watch, Mutex};
 use chrono::{DateTime, Utc};
+use serde::{Serialize, Deserialize};
+use maowbot_common::models::platform::Platform;
 
 /// Global event type that various parts of the bot can publish or subscribe to.
 /// Extend this enum with whatever events your system needs.
@@ -21,6 +23,7 @@ pub enum BotEvent {
         user: String,
         text: String,
         timestamp: DateTime<Utc>,
+        metadata: serde_json::Map<String, serde_json::Value>,
     },
 
     /// Periodic heartbeat event, or anything else you broadcast.
@@ -82,6 +85,59 @@ pub enum TwitchEventSubData {
     ChannelPointsCustomRewardRedemptionUpdate(
         crate::platforms::twitch_eventsub::events::ChannelPointsCustomRewardRedemption
     ),
+}
+
+impl BotEvent {
+    /// Get the event type as a string
+    pub fn event_type(&self) -> String {
+        match self {
+            BotEvent::ChatMessage { .. } => "chat_message".to_string(),
+            BotEvent::Tick => "tick".to_string(),
+            BotEvent::SystemMessage(_) => "system_message".to_string(),
+            BotEvent::TwitchEventSub(data) => match data {
+                TwitchEventSubData::StreamOnline(_) => "stream.online".to_string(),
+                TwitchEventSubData::StreamOffline(_) => "stream.offline".to_string(),
+                TwitchEventSubData::ChannelBitsUse(_) => "channel.bits_use".to_string(),
+                TwitchEventSubData::ChannelUpdate(_) => "channel.update".to_string(),
+                TwitchEventSubData::ChannelFollow(_) => "channel.follow".to_string(),
+                TwitchEventSubData::ChannelAdBreakBegin(_) => "channel.ad_break.begin".to_string(),
+                TwitchEventSubData::ChannelChatNotification(_) => "channel.chat.notification".to_string(),
+                TwitchEventSubData::ChannelSharedChatBegin(_) => "channel.shared_chat.begin".to_string(),
+                TwitchEventSubData::ChannelSharedChatUpdate(_) => "channel.shared_chat.update".to_string(),
+                TwitchEventSubData::ChannelSharedChatEnd(_) => "channel.shared_chat.end".to_string(),
+                TwitchEventSubData::ChannelSubscribe(_) => "channel.subscribe".to_string(),
+                TwitchEventSubData::ChannelSubscriptionEnd(_) => "channel.subscription.end".to_string(),
+                TwitchEventSubData::ChannelSubscriptionGift(_) => "channel.subscription.gift".to_string(),
+                TwitchEventSubData::ChannelSubscriptionMessage(_) => "channel.subscription.message".to_string(),
+                TwitchEventSubData::ChannelCheer(_) => "channel.cheer".to_string(),
+                TwitchEventSubData::ChannelRaid(_) => "channel.raid".to_string(),
+                TwitchEventSubData::ChannelBan(_) => "channel.ban".to_string(),
+                TwitchEventSubData::ChannelUnban(_) => "channel.unban".to_string(),
+                TwitchEventSubData::ChannelUnbanRequestCreate(_) => "channel.unban_request.create".to_string(),
+                TwitchEventSubData::ChannelUnbanRequestResolve(_) => "channel.unban_request.resolve".to_string(),
+                TwitchEventSubData::ChannelHypeTrainBegin(_) => "channel.hype_train.begin".to_string(),
+                TwitchEventSubData::ChannelHypeTrainProgress(_) => "channel.hype_train.progress".to_string(),
+                TwitchEventSubData::ChannelHypeTrainEnd(_) => "channel.hype_train.end".to_string(),
+                TwitchEventSubData::ChannelShoutoutCreate(_) => "channel.shoutout.create".to_string(),
+                TwitchEventSubData::ChannelShoutoutReceive(_) => "channel.shoutout.receive".to_string(),
+                TwitchEventSubData::ChannelPointsAutomaticRewardRedemptionAddV2(_) => "channel.channel_points_automatic_reward_redemption.add".to_string(),
+                TwitchEventSubData::ChannelPointsCustomRewardAdd(_) => "channel.channel_points_custom_reward.add".to_string(),
+                TwitchEventSubData::ChannelPointsCustomRewardUpdate(_) => "channel.channel_points_custom_reward.update".to_string(),
+                TwitchEventSubData::ChannelPointsCustomRewardRemove(_) => "channel.channel_points_custom_reward.remove".to_string(),
+                TwitchEventSubData::ChannelPointsCustomRewardRedemptionAdd(_) => "channel.channel_points_custom_reward_redemption.add".to_string(),
+                TwitchEventSubData::ChannelPointsCustomRewardRedemptionUpdate(_) => "channel.channel_points_custom_reward_redemption.update".to_string(),
+            }
+        }
+    }
+    
+    /// Get the platform for this event
+    pub fn platform(&self) -> Option<Platform> {
+        match self {
+            BotEvent::ChatMessage { platform, .. } => Some(Platform::from_string(platform)),
+            BotEvent::TwitchEventSub(_) => Some(Platform::TwitchEventSub),
+            _ => None,
+        }
+    }
 }
 
 /// Each subscriber gets its own `mpsc::Sender<BotEvent>` for guaranteed delivery.
@@ -154,6 +210,7 @@ impl EventBus {
             user: user.to_string(),
             text: text.to_string(),
             timestamp: Utc::now(),
+            metadata: serde_json::Map::new(),
         };
         self.publish(event).await;
     }

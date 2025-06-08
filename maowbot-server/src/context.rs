@@ -5,13 +5,14 @@
 use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock};
 use maowbot_core::db::Database;
-use maowbot_core::eventbus::EventBus;
+use maowbot_core::eventbus::{EventBus, db_logger_handle::DbLoggerControl};
 use maowbot_core::crypto::Encryptor;
 use maowbot_core::services::{message_service::MessageService, user_service::UserService, EventSubService};
 use maowbot_core::services::twitch::{
     command_service::CommandService,
     redeem_service::RedeemService,
 };
+use maowbot_core::services::event_pipeline_service::EventPipelineService;
 use maowbot_core::platforms::manager::PlatformManager;
 use maowbot_core::plugins::manager::PluginManager;
 use maowbot_core::Error;
@@ -20,7 +21,7 @@ use base64::Engine;
 use crate::Args;
 use crate::portable_postgres::*;
 use tracing::{info, error, warn};
-use rand::{thread_rng, Rng};
+use rand::{thread_rng, Rng, RngCore};
 use keyring::Entry;
 use base64;
 use maowbot_common::models::cache::{CacheConfig, TrimPolicy};
@@ -43,6 +44,7 @@ use maowbot_core::repositories::postgres::redeems::PostgresRedeemRepository;
 use maowbot_core::repositories::postgres::user::UserRepository;
 use maowbot_core::repositories::postgres::user_analysis::PostgresUserAnalysisRepository;
 use maowbot_core::repositories::postgres::obs::PostgresObsRepository;
+use maowbot_core::repositories::postgres::event_pipeline::PostgresEventPipelineRepository;
 use maowbot_osc::MaowOscManager;
 use maowbot_osc::oscquery::OscQueryServer;
 use maowbot_osc::robo::RoboControlSystem;
@@ -59,6 +61,7 @@ pub struct ServerContext {
     pub eventsub_service: Arc<EventSubService>,
     pub command_service: Arc<CommandService>,
     pub redeem_service: Arc<RedeemService>,
+    pub event_pipeline_service: Arc<EventPipelineService>,
 
     /// The raw references in case you need them.
     pub creds_repo: Arc<PostgresCredentialsRepository>,
@@ -74,6 +77,8 @@ pub struct ServerContext {
     pub robo_control: Arc<tokio::sync::Mutex<RoboControlSystem>>,
     pub oscquery_server: Arc<tokio::sync::Mutex<OscQueryServer>>,
     pub ai_service: Option<Arc<maowbot_ai::plugins::ai_service::AiService>>,
+    pub analytics_repo: Arc<dyn AnalyticsRepo + Send + Sync>,
+    pub db_logger_control: Option<DbLoggerControl>,
 }
 
 impl ServerContext {
@@ -181,6 +186,11 @@ impl ServerContext {
             ChatCache::new(user_analysis_repo.as_ref().clone(), cache_conf)
         ));
 
+        // Analytics repository for chat logging
+        let analytics_repo = Arc::new(maowbot_core::repositories::postgres::analytics::PostgresAnalyticsRepository::new(
+            db.pool().clone()
+        ));
+
         // Create a Discord repository
         let discord_repo = Arc::new(maowbot_core::repositories::postgres::discord::PostgresDiscordRepository::new(db.pool().clone()));
         
@@ -240,6 +250,31 @@ impl ServerContext {
             bot_config_repo.clone(),
             discord_repo.clone(),
         ));
+
+        // Event Pipeline Service
+        let event_pipeline_repo = Arc::new(PostgresEventPipelineRepository::new(db.pool().clone()));
+        let event_context = Arc::new(maowbot_core::services::event_context::EventContext::new(
+            platform_manager.clone(),
+            user_service.clone(),
+            redeem_service.clone(),
+            message_service.clone(),
+            Arc::new(maowbot_core::services::MessageSender::new(
+                creds_repo_arc.clone(),
+                platform_manager.clone(),
+            )),
+            Arc::new(maowbot_core::services::osc_toggle_service::OscToggleService::new(
+                osc_manager_holder.clone(),
+                Arc::new(maowbot_core::repositories::postgres::osc_toggle::PostgresOscToggleRepository::new(db.pool().clone())),
+            )),
+            bot_config_repo.clone(),
+            discord_repo.clone(),
+            creds_repo_arc.clone(),
+        ));
+        let event_pipeline_service = Arc::new(EventPipelineService::new(
+            event_bus.clone(),
+            event_context,
+            event_pipeline_repo,
+        ).await?);
 
         // Create the AI repositories
         info!("🧪 Creating AI repositories...");
@@ -324,7 +359,7 @@ impl ServerContext {
             user_repo_arc,
             drip_repo,
             discord_repo,
-            analytics_repo,
+            analytics_repo.clone(),
             user_analysis_repo,
             platform_identity_repo,
             platform_manager.clone(),
@@ -439,6 +474,7 @@ impl ServerContext {
             eventsub_service,
             command_service,
             redeem_service,
+            event_pipeline_service,
             creds_repo: creds_repo_arc,
             bot_config_repo: bot_config_repo,
             autostart_repo: autostart_repo as Arc<dyn AutostartRepository + Send + Sync>,
@@ -451,6 +487,8 @@ impl ServerContext {
             robo_control,
             oscquery_server: Arc::clone(&osc_manager_arc.oscquery_server),
             ai_service,
+            analytics_repo: analytics_repo as Arc<dyn AnalyticsRepo + Send + Sync>,
+            db_logger_control: None, // Will be set in server.rs after spawning
         })
     }
 
@@ -499,7 +537,7 @@ async fn maybe_create_owner_user(db: &Database) -> Result<(), Error> {
             r#"
             INSERT INTO bot_config (config_key, config_value)
             VALUES ('owner_user_id', $1)
-            ON CONFLICT (config_key, config_value) DO UPDATE
+            ON CONFLICT (config_key) DO UPDATE
                 SET config_value = EXCLUDED.config_value
             "#
         )

@@ -36,6 +36,7 @@ fn convert_event(evt: crate::eventbus::BotEvent) -> common_analytics::BotEvent {
             user,
             text,
             timestamp,
+            metadata: _,
         } => {
             common_analytics::BotEvent {
                 event_id: uuid::Uuid::new_v4(),

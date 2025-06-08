@@ -9,6 +9,14 @@ pub mod twitch;
 pub mod discord;
 pub mod osc_toggle_service;
 
+// New event handling system
+pub mod event_context;
+pub mod event_handler;
+pub mod event_registry;
+pub mod event_handlers;
+pub mod event_pipeline;
+pub mod event_pipeline_service;
+
 // Re-export anything you want from twitch here, if desired, e.g.:
 // pub use twitch::command_service::CommandService;
 pub use twitch::command_service::CommandService;

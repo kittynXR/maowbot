@@ -17,6 +17,7 @@ pub mod member;
 pub mod osc;
 pub mod vrchat;
 pub mod obs;
+pub mod pipeline;
 
 /// Result type that can include both data and warnings
 pub struct CommandResult<T> {

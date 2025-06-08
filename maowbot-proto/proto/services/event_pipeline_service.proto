@@ -1,0 +1,347 @@
+syntax = "proto3";
+
+package maowbot_proto.services.event_pipeline;
+
+import "common.proto";
+
+// Event Pipeline Service - Manage database-driven event processing pipelines
+service EventPipelineService {
+    // Pipeline Management
+    rpc CreatePipeline(CreatePipelineRequest) returns (CreatePipelineResponse);
+    rpc UpdatePipeline(UpdatePipelineRequest) returns (UpdatePipelineResponse);
+    rpc DeletePipeline(DeletePipelineRequest) returns (DeletePipelineResponse);
+    rpc GetPipeline(GetPipelineRequest) returns (GetPipelineResponse);
+    rpc ListPipelines(ListPipelinesRequest) returns (ListPipelinesResponse);
+    rpc TogglePipeline(TogglePipelineRequest) returns (TogglePipelineResponse);
+    
+    // Filter Management
+    rpc AddFilter(AddFilterRequest) returns (AddFilterResponse);
+    rpc UpdateFilter(UpdateFilterRequest) returns (UpdateFilterResponse);
+    rpc RemoveFilter(RemoveFilterRequest) returns (RemoveFilterResponse);
+    rpc ListFilters(ListFiltersRequest) returns (ListFiltersResponse);
+    
+    // Action Management
+    rpc AddAction(AddActionRequest) returns (AddActionResponse);
+    rpc UpdateAction(UpdateActionRequest) returns (UpdateActionResponse);
+    rpc RemoveAction(RemoveActionRequest) returns (RemoveActionResponse);
+    rpc ListActions(ListActionsRequest) returns (ListActionsResponse);
+    
+    // Registry - Get available filter and action types
+    rpc GetAvailableFilters(GetAvailableFiltersRequest) returns (GetAvailableFiltersResponse);
+    rpc GetAvailableActions(GetAvailableActionsRequest) returns (GetAvailableActionsResponse);
+    
+    // Execution History
+    rpc GetExecutionHistory(GetExecutionHistoryRequest) returns (GetExecutionHistoryResponse);
+    rpc GetExecutionDetails(GetExecutionDetailsRequest) returns (GetExecutionDetailsResponse);
+    
+    // Service Control
+    rpc ReloadPipelines(ReloadPipelinesRequest) returns (ReloadPipelinesResponse);
+}
+
+// Pipeline messages
+message Pipeline {
+    string pipeline_id = 1;
+    string name = 2;
+    string description = 3;
+    bool enabled = 4;
+    int32 priority = 5;
+    bool stop_on_match = 6;
+    bool stop_on_error = 7;
+    bool is_system = 8;
+    repeated string tags = 9;
+    string metadata = 10; // JSON metadata
+    int64 execution_count = 11;
+    int64 success_count = 12;
+    string last_executed = 13; // Optional timestamp
+    string created_at = 14;
+    string updated_at = 15;
+}
+
+message CreatePipelineRequest {
+    string name = 1;
+    string description = 2;
+    int32 priority = 3;
+    bool stop_on_match = 4;
+    bool stop_on_error = 5;
+    repeated string tags = 6;
+}
+
+message CreatePipelineResponse {
+    bool success = 1;
+    string message = 2;
+    Pipeline pipeline = 3;
+}
+
+message UpdatePipelineRequest {
+    string pipeline_id = 1;
+    optional string name = 2;
+    optional string description = 3;
+    optional int32 priority = 4;
+    optional bool stop_on_match = 5;
+    optional bool stop_on_error = 6;
+    optional bool enabled = 7;
+}
+
+message UpdatePipelineResponse {
+    bool success = 1;
+    string message = 2;
+    Pipeline pipeline = 3;
+}
+
+message DeletePipelineRequest {
+    string pipeline_id = 1;
+}
+
+message DeletePipelineResponse {
+    bool success = 1;
+    string message = 2;
+}
+
+message GetPipelineRequest {
+    string pipeline_id = 1;
+}
+
+message GetPipelineResponse {
+    bool success = 1;
+    string message = 2;
+    Pipeline pipeline = 3;
+}
+
+message ListPipelinesRequest {
+    bool include_disabled = 1;
+}
+
+message ListPipelinesResponse {
+    bool success = 1;
+    string message = 2;
+    repeated Pipeline pipelines = 3;
+}
+
+message TogglePipelineRequest {
+    string pipeline_id = 1;
+    bool enabled = 2;
+}
+
+message TogglePipelineResponse {
+    bool success = 1;
+    string message = 2;
+}
+
+// Filter messages
+message PipelineFilter {
+    string filter_id = 1;
+    string pipeline_id = 2;
+    string filter_type = 3;
+    string filter_config = 4; // JSON configuration
+    int32 filter_order = 5;
+    bool is_negated = 6;
+    bool is_required = 7;
+    string created_at = 8;
+    string updated_at = 9;
+}
+
+message AddFilterRequest {
+    string pipeline_id = 1;
+    string filter_type = 2;
+    string filter_config = 3; // JSON configuration
+    optional int32 filter_order = 4;
+    bool is_negated = 5;
+    bool is_required = 6;
+}
+
+message AddFilterResponse {
+    bool success = 1;
+    string message = 2;
+    PipelineFilter filter = 3;
+}
+
+message UpdateFilterRequest {
+    string filter_id = 1;
+    optional string filter_config = 2;
+    optional int32 filter_order = 3;
+    optional bool is_negated = 4;
+    optional bool is_required = 5;
+}
+
+message UpdateFilterResponse {
+    bool success = 1;
+    string message = 2;
+    PipelineFilter filter = 3;
+}
+
+message RemoveFilterRequest {
+    string filter_id = 1;
+}
+
+message RemoveFilterResponse {
+    bool success = 1;
+    string message = 2;
+}
+
+message ListFiltersRequest {
+    string pipeline_id = 1;
+}
+
+message ListFiltersResponse {
+    bool success = 1;
+    string message = 2;
+    repeated PipelineFilter filters = 3;
+}
+
+// Action messages
+message PipelineAction {
+    string action_id = 1;
+    string pipeline_id = 2;
+    string action_type = 3;
+    string action_config = 4; // JSON configuration
+    int32 action_order = 5;
+    bool continue_on_error = 6;
+    bool is_async = 7;
+    optional int32 timeout_ms = 8;
+    int32 retry_count = 9;
+    int32 retry_delay_ms = 10;
+    string created_at = 11;
+    string updated_at = 12;
+}
+
+message AddActionRequest {
+    string pipeline_id = 1;
+    string action_type = 2;
+    string action_config = 3; // JSON configuration
+    optional int32 action_order = 4;
+    bool continue_on_error = 5;
+    bool is_async = 6;
+    optional int32 timeout_ms = 7;
+    int32 retry_count = 8;
+    int32 retry_delay_ms = 9;
+}
+
+message AddActionResponse {
+    bool success = 1;
+    string message = 2;
+    PipelineAction action = 3;
+}
+
+message UpdateActionRequest {
+    string action_id = 1;
+    optional string action_config = 2;
+    optional int32 action_order = 3;
+    optional bool continue_on_error = 4;
+    optional bool is_async = 5;
+    optional int32 timeout_ms = 6;
+    optional int32 retry_count = 7;
+    optional int32 retry_delay_ms = 8;
+}
+
+message UpdateActionResponse {
+    bool success = 1;
+    string message = 2;
+    PipelineAction action = 3;
+}
+
+message RemoveActionRequest {
+    string action_id = 1;
+}
+
+message RemoveActionResponse {
+    bool success = 1;
+    string message = 2;
+}
+
+message ListActionsRequest {
+    string pipeline_id = 1;
+}
+
+message ListActionsResponse {
+    bool success = 1;
+    string message = 2;
+    repeated PipelineAction actions = 3;
+}
+
+// Registry messages
+message FilterType {
+    string id = 1;
+    string name = 2;
+    string description = 3;
+    string config_schema = 4; // JSON schema
+}
+
+message ActionType {
+    string id = 1;
+    string name = 2;
+    string description = 3;
+    string config_schema = 4; // JSON schema
+    bool is_parallelizable = 5;
+}
+
+message GetAvailableFiltersRequest {}
+
+message GetAvailableFiltersResponse {
+    bool success = 1;
+    string message = 2;
+    repeated FilterType filters = 3;
+}
+
+message GetAvailableActionsRequest {}
+
+message GetAvailableActionsResponse {
+    bool success = 1;
+    string message = 2;
+    repeated ActionType actions = 3;
+}
+
+// Execution history messages
+message ExecutionLog {
+    string execution_id = 1;
+    string pipeline_id = 2;
+    string pipeline_name = 3;
+    string event_type = 4;
+    string event_data = 5; // JSON
+    string status = 6;
+    string error_message = 7;
+    string started_at = 8;
+    string completed_at = 9;
+    repeated ActionResult action_results = 10;
+}
+
+message ActionResult {
+    string action_id = 1;
+    string action_type = 2;
+    string status = 3;
+    string output = 4; // JSON
+    string error = 5;
+    string started_at = 6;
+    string completed_at = 7;
+}
+
+message GetExecutionHistoryRequest {
+    optional string pipeline_id = 1;
+    optional int32 limit = 2;
+    optional int32 offset = 3;
+}
+
+message GetExecutionHistoryResponse {
+    bool success = 1;
+    string message = 2;
+    repeated ExecutionLog executions = 3;
+    int32 total_count = 4;
+}
+
+message GetExecutionDetailsRequest {
+    string execution_id = 1;
+}
+
+message GetExecutionDetailsResponse {
+    bool success = 1;
+    string message = 2;
+    ExecutionLog execution = 3;
+}
+
+// Service control messages
+message ReloadPipelinesRequest {}
+
+message ReloadPipelinesResponse {
+    bool success = 1;
+    string message = 2;
+    int32 pipelines_loaded = 3;
+}

@@ -3,6 +3,7 @@
 //! The main server logic: building the ServerContext and running the gRPC plugin service.
 
 use maowbot_core::tasks::credential_refresh::refresh_expiring_tokens;
+use maowbot_common::traits::repository_traits::BotConfigRepository;
 use std::sync::Arc;
 use std::net::SocketAddr;
 use std::time::Duration;
@@ -40,6 +41,7 @@ use maowbot_proto::maowbot::services::{
     osc_service_server::OscServiceServer,
     autostart_service_server::AutostartServiceServer,
     obs_service_server::ObsServiceServer,
+    event_pipeline::event_pipeline_service_server::EventPipelineServiceServer,
 };
 
 use crate::Args;
@@ -56,7 +58,7 @@ use maowbot_tui::TuiModule;
 
 pub async fn run_server(args: Args) -> Result<(), Error> {
     // Build the global context
-    let ctx = ServerContext::new(&args).await?;
+    let mut ctx = ServerContext::new(&args).await?;
 
     // Start OSC server in background to avoid blocking server startup
     let osc_manager_clone = ctx.osc_manager.clone();
@@ -70,7 +72,35 @@ pub async fn run_server(args: Args) -> Result<(), Error> {
     });
 
     // 1) Spawn DB logger
-    let (db_logger_handle, _db_logger_control) = start_db_logger(&ctx);
+    // Get configuration for db logger
+    let buffer_size = ctx.bot_config_repo.get_value("chat_logging.batch_size").await
+        .ok()
+        .flatten()
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(100);
+    
+    let flush_interval = ctx.bot_config_repo.get_value("chat_logging.flush_interval_seconds").await
+        .ok()
+        .flatten()
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(5);
+    
+    info!("Starting DB logger with buffer_size={}, flush_interval={}s", buffer_size, flush_interval);
+    
+    // Create a concrete analytics repo for the db logger
+    let analytics_repo_for_logger = maowbot_core::repositories::postgres::analytics::PostgresAnalyticsRepository::new(
+        ctx.db.pool().clone()
+    );
+    
+    let (db_logger_handle, db_logger_control) = spawn_db_logger_task(
+        &ctx.event_bus,
+        analytics_repo_for_logger,
+        buffer_size,
+        flush_interval,
+    );
+    ctx.db_logger_control = Some(db_logger_control);
+    
+    let ctx = Arc::new(ctx);
     // 2) Spawn maintenance
     let _maintenance_task = spawn_biweekly_maintenance_task(
         ctx.db.clone(),
@@ -190,6 +220,12 @@ pub async fn run_server(args: Args) -> Result<(), Error> {
         eventsub_svc_clone.start().await;
     });
 
+    // Start the event pipeline service
+    let event_pipeline_svc_clone = ctx.event_pipeline_service.clone();
+    tokio::spawn(async move {
+        event_pipeline_svc_clone.start().await;
+    });
+
     // 6) Start the gRPC server
     let identity = load_or_generate_certs()?;
     let tls_config = ServerTlsConfig::new().identity(identity);
@@ -282,6 +318,9 @@ pub async fn run_server(args: Args) -> Result<(), Error> {
             ctx.platform_manager.clone(),
             ctx.obs_repo.clone(),
         )))
+        .add_service(EventPipelineServiceServer::new(EventPipelineServiceImpl::new(
+            ctx.clone(),
+        )))
         .serve(addr);
 
     let event_bus = ctx.event_bus.clone();
@@ -345,16 +384,6 @@ pub async fn run_server(args: Args) -> Result<(), Error> {
     std::process::exit(0)
 }
 
-/// Spawns the DB-logger task, returns (JoinHandle, DbLoggerControl).
-fn start_db_logger(ctx: &ServerContext) -> (tokio::task::JoinHandle<()>, DbLoggerControl) {
-    let (jh, control) = spawn_db_logger_task(
-        &ctx.event_bus,
-        maowbot_core::repositories::postgres::analytics::PostgresAnalyticsRepository::new(ctx.db.pool().clone()),
-        100,
-        5,
-    );
-    (jh, control)
-}
 
 /// Load or generate self-signed TLS cert for gRPC.
 fn load_or_generate_certs() -> Result<Identity, Error> {

@@ -51,11 +51,15 @@ pub async fn run_biweekly_maintenance(
 ) -> Result<(), Error> {
     info!("Starting biweekly maintenance tasks...");
 
-    // 1) Create partitions
+    // 1) Create partitions for all partitioned tables
     run_partition_maintenance(db).await?;
     info!("Partition creation done...");
 
-    // 2) User analysis
+    // 2) Drop old partitions based on retention policies
+    run_partition_cleanup(db).await?;
+    info!("Partition cleanup done...");
+
+    // 3) User analysis
     run_analysis(db, user_analysis_repo).await?;
     info!("Analysis done...");
 
@@ -63,8 +67,7 @@ pub async fn run_biweekly_maintenance(
     Ok(())
 }
 
-/// Creates partitions for the current and next month.
-/// (Does NOT drop or clean old partitions.)
+/// Creates partitions for all partitioned tables for current and next month.
 pub async fn run_partition_maintenance(db: &Database) -> Result<(), Error> {
     info!("Running partition maintenance (creation only)...");
     let pool = db.pool();
@@ -95,8 +98,32 @@ pub async fn run_partition_maintenance(db: &Database) -> Result<(), Error> {
             })?
     };
 
-    create_month_partition_if_needed(pool, this_month_first).await?;
-    create_month_partition_if_needed(pool, next_month).await?;
+    // Create partitions for all partitioned tables
+    let partitioned_tables = vec![
+        ("chat_messages", "timestamp"),
+        ("analytics_events", "created_at"),
+        ("command_usage", "executed_at"),
+        ("redeem_usage", "redeemed_at"),
+        ("pipeline_execution_log", "started_at"),
+    ];
+
+    for (table_name, time_column) in partitioned_tables {
+        match create_month_partition_if_needed(pool, table_name, time_column, this_month_first).await {
+            Ok(_) => {},
+            Err(e) => {
+                error!("Failed to create partition for {} (current month): {:?}", table_name, e);
+                // Continue with other tables even if one fails
+            }
+        }
+        
+        match create_month_partition_if_needed(pool, table_name, time_column, next_month).await {
+            Ok(_) => {},
+            Err(e) => {
+                error!("Failed to create partition for {} (next month): {:?}", table_name, e);
+                // Continue with other tables even if one fails
+            }
+        }
+    }
 
     Ok(())
 }
@@ -104,11 +131,13 @@ pub async fn run_partition_maintenance(db: &Database) -> Result<(), Error> {
 /// Creates a new partition for the given month's first day if it doesn't already exist.
 async fn create_month_partition_if_needed(
     pool: &Pool<Postgres>,
+    table_name: &str,
+    time_column: &str,
     first_day: NaiveDate
 ) -> Result<(), Error> {
     let year = first_day.year();
     let month = first_day.month();
-    let partition_name = format!("chat_messages_{:04}{:02}", year, month);
+    let partition_name = format!("{}_{:04}{:02}", table_name, year, month);
 
     let next_month = if month == 12 {
         NaiveDate::from_ymd_opt(year + 1, 1, 1)
@@ -145,16 +174,95 @@ async fn create_month_partition_if_needed(
     let create_sql = format!(
         r#"
         CREATE TABLE IF NOT EXISTS {partition}
-        PARTITION OF chat_messages
+        PARTITION OF {parent_table}
         FOR VALUES FROM ('{start}') TO ('{end}');
         "#,
         partition = partition_name,
+        parent_table = table_name,
         start = range_start,
         end = range_end
     );
 
     sqlx::query(&create_sql).execute(pool).await?;
     info!("Ensured partition: {}", partition_name);
+    Ok(())
+}
+
+/// Drops old partitions based on retention policies
+pub async fn run_partition_cleanup(db: &Database) -> Result<(), Error> {
+    info!("Running partition cleanup...");
+    let pool = db.pool();
+    
+    // Get default retention days from config
+    let default_retention: i64 = sqlx::query_scalar(
+        "SELECT COALESCE(config_value::bigint, 30) FROM bot_config WHERE config_key = 'chat_logging.default_retention_days'"
+    )
+    .fetch_optional(pool)
+    .await?
+    .unwrap_or(30);
+    
+    // Get all partitioned tables and their retention policies
+    let retention_configs: Vec<(String, i64)> = vec![
+        ("chat_messages".to_string(), default_retention),
+        ("analytics_events".to_string(), 90), // Keep analytics for 3 months
+        ("command_usage".to_string(), 30),
+        ("redeem_usage".to_string(), 30),
+        ("pipeline_execution_log".to_string(), 7), // Only keep pipeline logs for 7 days
+    ];
+    
+    let now = Utc::now();
+    
+    for (base_table, retention_days) in retention_configs {
+        let cutoff_date = now - chrono::Duration::days(retention_days);
+        
+        // Find partitions older than retention period
+        let old_partitions: Vec<String> = sqlx::query_scalar(
+            r#"
+            SELECT tablename 
+            FROM pg_tables 
+            WHERE schemaname = 'public' 
+            AND tablename LIKE $1
+            AND tablename ~ '[0-9]{6}$'
+            ORDER BY tablename
+            "#
+        )
+        .bind(format!("{}_%", base_table))
+        .fetch_all(pool)
+        .await?;
+        
+        for partition in old_partitions {
+            // Extract year and month from partition name (format: tablename_YYYYMM)
+            if let Some(date_part) = partition.split('_').last() {
+                if date_part.len() == 6 {
+                    if let (Ok(year), Ok(month)) = (
+                        date_part[0..4].parse::<i32>(),
+                        date_part[4..6].parse::<u32>()
+                    ) {
+                        let partition_date = NaiveDate::from_ymd_opt(year, month, 1);
+                        if let Some(date) = partition_date {
+                            if date < cutoff_date.naive_utc().date() {
+                                // Check if pre-drop pipeline should be executed
+                                if base_table == "chat_messages" {
+                                    // TODO: Execute pre-drop pipeline if configured
+                                    // This would process/archive the data before dropping
+                                }
+                                
+                                // Drop the old partition
+                                match sqlx::query(&format!("DROP TABLE IF EXISTS {} CASCADE", partition))
+                                    .execute(pool)
+                                    .await
+                                {
+                                    Ok(_) => info!("Dropped old partition: {}", partition),
+                                    Err(e) => error!("Failed to drop partition {}: {:?}", partition, e),
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
     Ok(())
 }
 

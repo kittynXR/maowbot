@@ -14,6 +14,7 @@ pub mod vrchat_service;
 pub mod osc_service;
 pub mod autostart_service;
 pub mod obs_service;
+pub mod event_pipeline_service;
 
 // Re-export service implementations
 pub use user_service::UserServiceImpl;
@@ -30,3 +31,4 @@ pub use vrchat_service::VRChatServiceImpl;
 pub use osc_service::OscServiceImpl;
 pub use autostart_service::AutostartServiceImpl;
 pub use obs_service::ObsServiceImpl;
+pub use event_pipeline_service::EventPipelineServiceImpl;

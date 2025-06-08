@@ -20,6 +20,7 @@ fn main() {
         "proto/services/redeem_service.proto",
         "proto/services/autostart_service.proto",
         "proto/services/obs_service.proto",
+        "proto/services/event_pipeline_service.proto",
     ];
     
     protos.extend(service_protos);

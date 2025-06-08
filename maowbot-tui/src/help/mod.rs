@@ -25,6 +25,7 @@ pub mod help_simulate;
 pub mod help_system;
 pub mod help_osc;
 pub mod help_obs;
+pub mod help_pipeline;
 
 fn show_general_help() -> String {
     let text = r#"MaowBot TUI - Available Commands:
@@ -48,6 +49,7 @@ Content Management:
   command                Manage chat commands (cooldowns, responses, enable/disable)
   redeem                 Manage channel point redeems
   config                 Bot configuration (list, set, delete, export, import)
+  pipeline               Event pipeline management (filters, actions, history)
 
 Platform-Specific:
   twitch                 Twitch-specific commands (join, part, message, etc.)
@@ -91,6 +93,7 @@ pub fn show_command_help(command: &str) -> String {
         "command" => help_command::COMMAND_HELP_TEXT.to_owned(),
         "redeem" => help_redeem::REDEEM_HELP_TEXT.to_owned(),
         "config" => help_config::CONFIG_HELP_TEXT.to_owned(),
+        "pipeline" => help_pipeline::help_pipeline(),
 
         // Platform-Specific
         "twitch" => help_twitch::TWITCH_HELP_TEXT.to_owned(),

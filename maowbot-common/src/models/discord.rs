@@ -79,6 +79,7 @@ impl DiscordColor {
     pub const GOLD: Self = Self(0xF1C40F);
     pub const ORANGE: Self = Self(0xE67E22);
     pub const TWITCH_PURPLE: Self = Self(0x6441A5);
+    pub const DARK_GREY: Self = Self(0x2C2F33);
 }
 
 /// Represents a field in a Discord embed

@@ -121,6 +121,7 @@ impl MessageService {
             user: user.user_id.to_string(),
             text: text.to_string(),
             timestamp: Utc::now(),
+            metadata: serde_json::Map::new(),
         };
         self.event_bus.publish(event).await;
         info!("💬 MESSAGE SERVICE: Chat event published successfully");

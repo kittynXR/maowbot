@@ -59,6 +59,13 @@ impl From<String> for Platform {
     }
 }
 
+impl Platform {
+    /// Convert a string to Platform, with a more explicit method name
+    pub fn from_string(s: &str) -> Self {
+        s.parse().unwrap_or(Platform::Twitch)
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct PlatformIdentity {
     pub platform_identity_id: Uuid,

@@ -112,6 +112,15 @@ impl TuiCommandCompletionProvider {
                 description: "Configuration management".to_string(),
                 nested_subcommands: None,
             },
+            CommandInfo {
+                name: "pipeline".to_string(),
+                subcommands: vec!["list", "create", "delete", "toggle", "show", "filter", "action", "history", "reload"].into_iter().map(String::from).collect(),
+                description: "Event pipeline management".to_string(),
+                nested_subcommands: Some(vec![
+                    ("filter".to_string(), vec!["add".to_string(), "remove".to_string(), "list".to_string(), "types".to_string()]),
+                    ("action".to_string(), vec!["add".to_string(), "remove".to_string(), "list".to_string(), "types".to_string()]),
+                ]),
+            },
             
             // Platform-Specific
             CommandInfo {

@@ -26,6 +26,7 @@ use super::connection_adapter;
 use super::unified_user_adapter;
 use super::diagnostics_adapter;
 use super::system;
+use super::pipeline_adapter;
 
 pub async fn dispatch_grpc(
     line: &str,
@@ -164,6 +165,11 @@ pub async fn dispatch_grpc(
         
         "diagnostics" | "diag" => {
             let msg = diagnostics_adapter::handle_diagnostics_command(args, client).await;
+            (false, Some(msg))
+        }
+
+        "pipeline" => {
+            let msg = pipeline_adapter::handle_pipeline_command(args, client).await;
             (false, Some(msg))
         }
 

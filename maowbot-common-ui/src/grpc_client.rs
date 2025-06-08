@@ -14,6 +14,7 @@ use maowbot_proto::maowbot::services::{
     vr_chat_service_client::VrChatServiceClient,
     autostart_service_client::AutostartServiceClient,
     obs_service_client::ObsServiceClient,
+    event_pipeline::event_pipeline_service_client::EventPipelineServiceClient,
 };
 use std::time::Duration;
 
@@ -33,6 +34,7 @@ pub struct GrpcClient {
     pub vrchat: VrChatServiceClient<Channel>,
     pub autostart: AutostartServiceClient<Channel>,
     pub obs: ObsServiceClient<Channel>,
+    pub pipeline: EventPipelineServiceClient<Channel>,
 }
 
 impl GrpcClient {
@@ -80,6 +82,7 @@ impl GrpcClient {
             vrchat: VrChatServiceClient::new(channel.clone()),
             autostart: AutostartServiceClient::new(channel.clone()),
             obs: ObsServiceClient::new(channel.clone()),
+            pipeline: EventPipelineServiceClient::new(channel.clone()),
         })
     }
     
@@ -121,6 +124,7 @@ impl GrpcClient {
             vrchat: VrChatServiceClient::new(channel.clone()),
             autostart: AutostartServiceClient::new(channel.clone()),
             obs: ObsServiceClient::new(channel.clone()),
+            pipeline: EventPipelineServiceClient::new(channel.clone()),
         })
     }
 }
