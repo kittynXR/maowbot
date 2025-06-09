@@ -115,7 +115,7 @@ CREATE TABLE platform_credentials (
     user_name       TEXT NOT NULL,
     primary_token   TEXT NOT NULL, -- Should be encrypted in application
     refresh_token   TEXT,          -- Should be encrypted in application
-    additional_data JSONB,
+    additional_data TEXT,
     expires_at      TIMESTAMPTZ,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -126,7 +126,9 @@ CREATE TABLE platform_credentials (
     -- Validate platform values
     CONSTRAINT platform_cred_check CHECK (platform IN ('twitch', 'twitch-irc', 'twitch-eventsub', 'discord', 'vrchat', 'obs')),
     -- Validate credential types
-    CONSTRAINT credential_type_check CHECK (credential_type IN ('oauth', 'api_key', 'password', 'token'))
+    CONSTRAINT credential_type_check CHECK (credential_type IN ('oauth2', 'apikey', 'bearer', 'jwt', 'vc', 'interactive2fa')),
+    -- Ensure unique credential per platform per user
+    CONSTRAINT platform_credentials_unique UNIQUE(platform, user_id)
 );
 
 CREATE INDEX idx_platform_credentials_platform ON platform_credentials(platform);

@@ -27,7 +27,7 @@ pub enum Platform {
 impl fmt::Display for Platform {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Platform::Twitch => write!(f, "twitch-helix"),
+            Platform::Twitch => write!(f, "twitch"),
             Platform::Discord => write!(f, "discord"),
             Platform::VRChat => write!(f, "vrchat"),
             Platform::TwitchIRC => write!(f, "twitch-irc"),
