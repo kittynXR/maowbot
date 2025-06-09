@@ -53,7 +53,8 @@ impl PlatformServiceImpl {
     
     fn platform_str_to_proto(platform_str: &str) -> i32 {
         match platform_str.to_lowercase().as_str() {
-            "twitch" | "twitch-irc" => Platform::TwitchIrc as i32,
+            "twitch" => Platform::TwitchHelix as i32,
+            "twitch-irc" => Platform::TwitchIrc as i32,
             "twitch-eventsub" => Platform::TwitchEventsub as i32,
             "discord" => Platform::Discord as i32,
             "vrchat" => Platform::Vrchat as i32,
@@ -70,7 +71,7 @@ impl PlatformServiceImpl {
             Ok(Platform::Discord) => Ok("discord".to_string()),
             Ok(Platform::Vrchat) => Ok("vrchat".to_string()),
             Ok(Platform::VrchatPipeline) => Ok("vrchat-pipeline".to_string()),
-            Ok(Platform::TwitchHelix) => Ok("twitch-helix".to_string()),
+            Ok(Platform::TwitchHelix) => Ok("twitch".to_string()),
             _ => Err(Status::invalid_argument("Invalid platform")),
         }
     }

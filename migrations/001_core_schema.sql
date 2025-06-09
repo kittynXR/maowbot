@@ -145,7 +145,7 @@ CREATE TABLE platform_config (
     created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     
-    CONSTRAINT platform_config_check CHECK (platform IN ('twitch', 'discord', 'vrchat', 'obs'))
+    CONSTRAINT platform_config_check CHECK (platform IN ('twitch', 'twitch-irc', 'twitch-eventsub', 'discord', 'vrchat', 'obs'))
 );
 
 ---------------------------------------------------------------------------
