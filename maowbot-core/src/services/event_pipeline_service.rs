@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use std::collections::HashMap;
 use tokio::sync::RwLock;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info, warn, trace};
 use chrono::Utc;
 use uuid::Uuid;
 
@@ -250,7 +250,7 @@ impl EventPipelineService {
         let event_type = event.event_type();
         let platform = event.platform().map(|p| p.to_string()).unwrap_or_default();
         
-        debug!("Processing event {} from platform {} through pipelines", event_type, platform);
+        trace!("Processing event {} from platform {} through pipelines", event_type, platform);
         
         let pipelines = pipelines.read().await;
         
@@ -280,11 +280,11 @@ impl EventPipelineService {
             for (db_filter, filter) in &loaded_pipeline.filters {
                 match filter.apply(&event, &context).await {
                     Ok(FilterResult::Pass) => {
-                        debug!("Pipeline {}: Filter {} passed", 
+                        trace!("Pipeline {}: Filter {} passed", 
                                loaded_pipeline.pipeline.name, db_filter.filter_type);
                     }
                     Ok(FilterResult::Reject) => {
-                        debug!("Pipeline {}: Filter {} rejected", 
+                        trace!("Pipeline {}: Filter {} rejected", 
                                loaded_pipeline.pipeline.name, db_filter.filter_type);
                         all_filters_pass = false;
                         break;
@@ -324,7 +324,7 @@ impl EventPipelineService {
                 
                 match action.execute(&mut action_context).await {
                     Ok(ActionResult::Success(data)) => {
-                        debug!("Pipeline {}: Action {} succeeded", 
+                        trace!("Pipeline {}: Action {} succeeded", 
                                loaded_pipeline.pipeline.name, db_action.action_type);
                         
                         // Record success

@@ -48,7 +48,7 @@ use crate::Args;
 use crate::context::ServerContext;
 use crate::portable_postgres::*;
 use maowbot_core::tasks::biweekly_maintenance::{
-    spawn_biweekly_maintenance_task
+    spawn_biweekly_maintenance_task, run_partition_maintenance
 };
 use maowbot_core::tasks::credential_refresh::refresh_all_refreshable_credentials;
 use maowbot_core::tasks::autostart::run_autostart;
@@ -107,6 +107,13 @@ pub async fn run_server(args: Args) -> Result<(), Error> {
         maowbot_core::repositories::postgres::user_analysis::PostgresUserAnalysisRepository::new(ctx.db.pool().clone()),
         ctx.event_bus.clone()
     );
+
+    // Run partition maintenance immediately on startup to ensure partitions exist
+    info!("Running partition maintenance on startup...");
+    if let Err(e) = run_partition_maintenance(&ctx.db).await {
+        error!("Failed to run partition maintenance on startup: {:?}", e);
+        // Continue startup even if partition maintenance fails
+    }
 
     redeem_sync::sync_channel_redeems(
         &ctx.redeem_service,

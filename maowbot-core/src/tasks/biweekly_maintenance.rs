@@ -3,7 +3,7 @@
 use std::sync::Arc;
 use chrono::{DateTime, Utc, NaiveDate, Datelike};
 use sqlx::{Pool, Postgres, Row};
-use tracing::{info, error};
+use tracing::{info, error, debug};
 use std::time::Duration;
 use sqlx::error::BoxDynError;
 use uuid::Uuid;
@@ -155,13 +155,15 @@ async fn create_month_partition_if_needed(
             })?
     };
 
+    // Convert NaiveDate to DateTime<Utc> for timezone-aware timestamps
     let range_start = first_day
         .and_hms_opt(0, 0, 0)
         .ok_or_else(|| {
             Error::Database(sqlx::Error::Configuration(
                 BoxDynError::from("Invalid partition start timestamp.".to_string()),
             ))
-        })?;
+        })?
+        .and_utc();
 
     let range_end = next_month
         .and_hms_opt(0, 0, 0)
@@ -169,18 +171,24 @@ async fn create_month_partition_if_needed(
             Error::Database(sqlx::Error::Configuration(
                 BoxDynError::from("Invalid partition end timestamp.".to_string()),
             ))
-        })?;
+        })?
+        .and_utc();
 
+    // Format timestamps as UTC to ensure partitions work regardless of server timezone
+    let start_str = range_start.format("%Y-%m-%d %H:%M:%S").to_string();
+    let end_str = range_end.format("%Y-%m-%d %H:%M:%S").to_string();
+    
     let create_sql = format!(
         r#"
         CREATE TABLE IF NOT EXISTS {partition}
         PARTITION OF {parent_table}
-        FOR VALUES FROM ('{start}') TO ('{end}');
+        FOR VALUES FROM (TIMESTAMP '{start}' AT TIME ZONE 'UTC') 
+                      TO (TIMESTAMP '{end}' AT TIME ZONE 'UTC');
         "#,
         partition = partition_name,
         parent_table = table_name,
-        start = range_start,
-        end = range_end
+        start = start_str,
+        end = end_str
     );
 
     sqlx::query(&create_sql).execute(pool).await?;
@@ -238,22 +246,37 @@ pub async fn run_partition_cleanup(db: &Database) -> Result<(), Error> {
                         date_part[0..4].parse::<i32>(),
                         date_part[4..6].parse::<u32>()
                     ) {
-                        let partition_date = NaiveDate::from_ymd_opt(year, month, 1);
-                        if let Some(date) = partition_date {
-                            if date < cutoff_date.naive_utc().date() {
-                                // Check if pre-drop pipeline should be executed
-                                if base_table == "chat_messages" {
-                                    // TODO: Execute pre-drop pipeline if configured
-                                    // This would process/archive the data before dropping
-                                }
+                        let partition_start = NaiveDate::from_ymd_opt(year, month, 1);
+                        if let Some(partition_start_date) = partition_start {
+                            // Calculate the last day of the partition's month
+                            let next_month = if month == 12 {
+                                NaiveDate::from_ymd_opt(year + 1, 1, 1)
+                            } else {
+                                NaiveDate::from_ymd_opt(year, month + 1, 1)
+                            };
+                            
+                            if let Some(partition_end) = next_month {
+                                // Only drop if the entire partition is older than cutoff
+                                // AND the partition doesn't cover the current date
+                                let current_date = now.naive_utc().date();
                                 
-                                // Drop the old partition
-                                match sqlx::query(&format!("DROP TABLE IF EXISTS {} CASCADE", partition))
-                                    .execute(pool)
-                                    .await
-                                {
-                                    Ok(_) => info!("Dropped old partition: {}", partition),
-                                    Err(e) => error!("Failed to drop partition {}: {:?}", partition, e),
+                                if partition_end <= cutoff_date.naive_utc().date() && partition_end <= current_date {
+                                    // Check if pre-drop pipeline should be executed
+                                    if base_table == "chat_messages" {
+                                        // TODO: Execute pre-drop pipeline if configured
+                                        // This would process/archive the data before dropping
+                                    }
+                                    
+                                    // Drop the old partition
+                                    match sqlx::query(&format!("DROP TABLE IF EXISTS {} CASCADE", partition))
+                                        .execute(pool)
+                                        .await
+                                    {
+                                        Ok(_) => info!("Dropped old partition: {}", partition),
+                                        Err(e) => error!("Failed to drop partition {}: {:?}", partition, e),
+                                    }
+                                } else {
+                                    debug!("Keeping partition {} - covers current date or within retention", partition);
                                 }
                             }
                         }
